@@ -1,1 +1,840 @@
-hi
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>we make offline learning work</title>
+<meta name="description" content="Education infrastructure for the 2.6 billion people the internet forgot. Content packs, mesh sync, and rugged classroom hardware that work with zero connectivity.">
+<style>
+  :root {
+    --paper: #faf7f0;
+    --paper-2: #f1ece0;
+    --ink: #1c1a15;
+    --ink-soft: #565043;
+    --ink-faint: #8a8271;
+    --green: #1f6f43;
+    --green-dark: #14522f;
+    --amber: #d9931f;
+    --amber-soft: #f5d9a8;
+    --line: #ddd5c4;
+    --card: #ffffff;
+    --radius: 14px;
+    --max: 1120px;
+    font-size: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, 'Times New Roman', serif;
+    line-height: 1.6;
+  }
+  h1, h2, h3, h4, .sans {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    letter-spacing: -0.01em;
+  }
+  a { color: var(--green); }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+  .eyebrow {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--amber);
+    margin-bottom: 12px;
+  }
+  section { padding: 80px 0; }
+  section h2 { font-size: 2.1rem; line-height: 1.15; margin-bottom: 16px; }
+  .lede { font-size: 1.15rem; color: var(--ink-soft); max-width: 640px; }
+
+  /* ---------- nav ---------- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(250,247,240,0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 64px;
+  }
+  .logo {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 800; font-size: 1.02rem; text-decoration: none;
+    color: var(--ink); display: flex; align-items: center; gap: 10px;
+  }
+  .logo-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: var(--green); color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 15px;
+  }
+  .nav-links { display: flex; gap: 26px; align-items: center; }
+  .nav-links a {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 0.9rem; text-decoration: none; color: var(--ink-soft);
+  }
+  .nav-links a:hover { color: var(--ink); }
+  .btn {
+    display: inline-block;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-weight: 700; font-size: 0.92rem;
+    padding: 12px 22px; border-radius: 999px;
+    text-decoration: none; border: none; cursor: pointer;
+  }
+  .btn-primary { background: var(--green); color: #fff !important; }
+  .btn-primary:hover { background: var(--green-dark); }
+  .btn-ghost { border: 1.5px solid var(--line); color: var(--ink) !important; background: transparent; }
+  .btn-ghost:hover { border-color: var(--ink-faint); }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 88px 0 64px; }
+  .hero-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 56px; align-items: center; }
+  .hero h1 { font-size: clamp(2.4rem, 5vw, 3.6rem); line-height: 1.05; margin-bottom: 22px; }
+  .hero h1 em { font-style: normal; color: var(--green); }
+  .hero p { font-size: 1.18rem; color: var(--ink-soft); margin-bottom: 30px; max-width: 520px; }
+  .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; }
+  .hero-note { margin-top: 18px; font-size: 0.85rem; color: var(--ink-faint); font-family: 'Helvetica Neue', Arial, sans-serif; }
+
+  /* ---------- image slots ---------- */
+  .img-slot {
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--paper-2);
+    border: 1px solid var(--line);
+    aspect-ratio: 4 / 3;
+    display: block;
+    position: relative;
+  }
+  .img-slot.square { aspect-ratio: 1 / 1; }
+  .img-slot.wide { aspect-ratio: 16 / 9; }
+  .img-slot svg { width: 100%; height: 100%; display: block; }
+  .img-slot .credit {
+    position: absolute; bottom: 8px; right: 10px;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 0.62rem; color: rgba(255,255,255,0.75);
+    background: rgba(0,0,0,0.25); padding: 2px 8px; border-radius: 999px;
+    pointer-events: none;
+  }
+
+  /* ---------- stats ---------- */
+  .stats { background: var(--ink); color: var(--paper); padding: 52px 0; }
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; text-align: center; }
+  .stat b { display: block; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 2.2rem; font-weight: 800; }
+  .stat span { font-size: 0.85rem; color: #b7ae99; font-family: 'Helvetica Neue', Arial, sans-serif; }
+
+  /* ---------- trusted ---------- */
+  .trusted { padding: 44px 0; border-bottom: 1px solid var(--line); }
+  .trusted p { text-align: center; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink-faint); margin-bottom: 22px; }
+  .trusted-row { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700; color: var(--ink-faint); font-size: 1.05rem; }
+  .trusted-row span { opacity: 0.75; }
+
+  /* ---------- problem ---------- */
+  .problem-grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 56px; align-items: center; }
+  .problem ul { margin: 22px 0 0 0; list-style: none; }
+  .problem li { padding: 14px 0; border-bottom: 1px solid var(--line); display: flex; gap: 14px; align-items: baseline; }
+  .problem li b { font-family: 'Helvetica Neue', Arial, sans-serif; color: var(--green); white-space: nowrap; }
+
+  /* ---------- how ---------- */
+  .how { background: var(--paper-2); }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; margin-top: 44px; }
+  .step {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 28px;
+  }
+  .step .num {
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 800;
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--amber-soft); color: var(--ink);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 18px;
+  }
+  .step h3 { font-size: 1.2rem; margin-bottom: 10px; }
+  .step p { font-size: 0.98rem; color: var(--ink-soft); }
+
+  /* ---------- features ---------- */
+  .features-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; margin-top: 44px; }
+  .feature {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 26px; background: var(--card);
+  }
+  .feature .icon { font-size: 1.6rem; margin-bottom: 14px; display: block; }
+  .feature h3 { font-size: 1.08rem; margin-bottom: 8px; }
+  .feature p { font-size: 0.94rem; color: var(--ink-soft); }
+
+  /* ---------- tech ---------- */
+  .tech { background: var(--ink); color: var(--paper); }
+  .tech h2, .tech h3 { color: #fff; }
+  .tech .lede { color: #b7ae99; }
+  .tech-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 48px; align-items: start; }
+  .tech-block { border-left: 3px solid var(--amber); padding-left: 20px; margin-bottom: 30px; }
+  .tech-block h3 { font-size: 1.05rem; margin-bottom: 8px; font-family: 'Helvetica Neue', Arial, sans-serif; }
+  .tech-block p { font-size: 0.95rem; color: #cfc7b4; }
+  .tech-block code {
+    font-family: 'SF Mono', Consolas, monospace; font-size: 0.85em;
+    background: rgba(255,255,255,0.08); padding: 1px 6px; border-radius: 4px;
+  }
+  .spec-table { width: 100%; border-collapse: collapse; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 0.9rem; margin-top: 8px; }
+  .spec-table td { padding: 10px 8px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+  .spec-table td:first-child { color: #b7ae99; width: 45%; }
+
+  /* ---------- cases ---------- */
+  .cases-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; margin-top: 44px; }
+  .case { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--card); display: flex; flex-direction: column; }
+  .case .img-slot { border: none; border-radius: 0; border-bottom: 1px solid var(--line); }
+  .case-body { padding: 22px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+  .case-body h3 { font-size: 1.08rem; }
+  .case-body p { font-size: 0.93rem; color: var(--ink-soft); flex: 1; }
+  .case-body .metric { font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 800; color: var(--green); font-size: 0.9rem; }
+
+  /* ---------- pricing ---------- */
+  .pricing { background: var(--paper-2); }
+  .price-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; margin-top: 44px; align-items: stretch; }
+  .plan { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 30px; display: flex; flex-direction: column; }
+  .plan.featured { border: 2px solid var(--green); position: relative; }
+  .plan .tag {
+    position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
+    background: var(--green); color: #fff; font-family: 'Helvetica Neue', Arial, sans-serif;
+    font-size: 0.72rem; font-weight: 700; padding: 4px 14px; border-radius: 999px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .plan h3 { font-size: 1.1rem; }
+  .plan .price { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 2.2rem; font-weight: 800; margin: 12px 0 2px; }
+  .plan .per { font-size: 0.82rem; color: var(--ink-faint); font-family: 'Helvetica Neue', Arial, sans-serif; margin-bottom: 18px; }
+  .plan ul { list-style: none; margin: 0 0 26px; flex: 1; }
+  .plan li { font-size: 0.92rem; color: var(--ink-soft); padding: 7px 0 7px 26px; position: relative; }
+  .plan li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 700; }
+
+  /* ---------- team ---------- */
+  .team-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 26px; margin-top: 44px; }
+  .person { text-align: center; }
+  .person .img-slot { margin-bottom: 14px; }
+  .person h3 { font-size: 1rem; }
+  .person span { font-size: 0.85rem; color: var(--ink-faint); font-family: 'Helvetica Neue', Arial, sans-serif; }
+
+  /* ---------- faq ---------- */
+  .faq details { border-bottom: 1px solid var(--line); padding: 20px 0; }
+  .faq summary {
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700;
+    cursor: pointer; font-size: 1.02rem; list-style: none;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; font-size: 1.4rem; color: var(--ink-faint); }
+  .faq details[open] summary::after { content: "–"; }
+  .faq details p { margin-top: 12px; color: var(--ink-soft); font-size: 0.98rem; max-width: 760px; }
+
+  /* ---------- journal ---------- */
+  .journal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; margin-top: 44px; }
+  .post { text-decoration: none; color: inherit; display: block; }
+  .post .img-slot { margin-bottom: 14px; }
+  .post .date { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 0.78rem; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.1em; }
+  .post h3 { font-size: 1.08rem; margin: 6px 0; }
+  .post p { font-size: 0.92rem; color: var(--ink-soft); }
+
+  /* ---------- cta ---------- */
+  .cta { background: var(--green); color: #fff; text-align: center; }
+  .cta h2 { color: #fff; font-size: 2.4rem; }
+  .cta p { color: #d3e6da; max-width: 560px; margin: 14px auto 32px; font-size: 1.1rem; }
+  .cta .btn { background: #fff; color: var(--green) !important; }
+
+  /* ---------- footer ---------- */
+  footer { background: var(--ink); color: #b7ae99; padding: 64px 0 40px; font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 0.9rem; }
+  .foot-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 40px; margin-bottom: 48px; }
+  .foot-grid h4 { color: #fff; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 14px; }
+  .foot-grid a { display: block; color: #b7ae99; text-decoration: none; padding: 4px 0; }
+  .foot-grid a:hover { color: #fff; }
+  .foot-bottom {
+    border-top: 1px solid rgba(255,255,255,0.12); padding-top: 26px;
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 18px;
+  }
+
+  /* the counter that is, as far as anyone knows, used for nothing */
+  .odometer {
+    display: inline-flex; align-items: center; gap: 10px;
+    border: 1px solid rgba(255,255,255,0.18); border-radius: 8px;
+    padding: 8px 14px; background: rgba(255,255,255,0.04);
+  }
+  .odometer .digits {
+    font-family: 'SF Mono', Consolas, monospace; font-size: 1.05rem;
+    color: var(--amber); letter-spacing: 0.2em; font-weight: 700;
+    transition: transform 0.12s ease;
+  }
+  .odometer .digits.bump { transform: scale(1.25); }
+  .odometer small { font-size: 0.7rem; color: #8a8271; max-width: 150px; line-height: 1.3; }
+
+  @media (max-width: 900px) {
+    .hero-grid, .problem-grid, .tech-grid { grid-template-columns: 1fr; }
+    .steps, .features-grid, .cases-grid, .price-grid, .journal-grid { grid-template-columns: 1fr; }
+    .team-grid { grid-template-columns: repeat(2, 1fr); }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .foot-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="logo" href="#top"><span class="logo-mark">⇅</span>we make offline learning work</a>
+    <nav class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#platform">Platform</a>
+      <a href="#tech">Technology</a>
+      <a href="#cases">Field results</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+      <a class="btn btn-primary" href="#cta">Request a pilot</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow">Education infrastructure · est. 2021</div>
+      <h1>The internet reaches 5.4 billion people.<br><em>We teach the rest.</em></h1>
+      <p>2.6 billion people still live beyond reliable connectivity. Our content packs, mesh sync protocol, and rugged classroom hardware deliver a full modern curriculum with <strong>zero</strong> bars of signal — and quietly catch up the moment any device touches the network.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="#cta">Request a pilot</a>
+        <a class="btn btn-ghost" href="#tech">Read the technical brief</a>
+      </div>
+      <div class="hero-note">Deployed in 41 countries · No account required for learners · Open curriculum formats</div>
+    </div>
+    <div class="img-slot" data-theme="classroom"></div>
+  </div>
+</section>
+
+<!-- ============ STATS ============ -->
+<div class="stats">
+  <div class="wrap stats-grid">
+    <div class="stat"><b>1.9M</b><span>active learners</span></div>
+    <div class="stat"><b>12,400</b><span>classrooms equipped</span></div>
+    <div class="stat"><b>41</b><span>countries deployed</span></div>
+    <div class="stat"><b>99.2%</b><span>eventual sync success</span></div>
+  </div>
+</div>
+
+<!-- ============ TRUSTED ============ -->
+<div class="trusted">
+  <div class="wrap">
+    <p>Working alongside</p>
+    <div class="trusted-row">
+      <span>UNESCO-aligned programs</span><span>Ministry of Education pilots</span><span>Rural school districts</span><span>Refugee education NGOs</span><span>Community libraries</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PROBLEM ============ -->
+<section class="problem" id="problem">
+  <div class="wrap problem-grid">
+    <div class="img-slot" data-theme="globe"></div>
+    <div>
+      <div class="eyebrow">The problem</div>
+      <h2>"Just put it online" is not a strategy for a third of humanity.</h2>
+      <p class="lede">EdTech quietly assumes broadband. Where that assumption fails, learning platforms fail with it — silently, and at enormous scale.</p>
+      <ul>
+        <li><b>2.6 B</b><span>people have no meaningful internet access, concentrated in rural and low-income regions.</span></li>
+        <li><b>463 M</b><span>students couldn't be reached by remote learning during recent school closures — most because of connectivity, not devices.</span></li>
+        <li><b>$8–14 / GB</b><span>effective mobile data cost in the least-connected markets, versus pennies in wealthy ones. Streaming video lectures is economically absurd.</span></li>
+        <li><b>6–20 hrs / wk</b><span>typical grid electricity availability in many rural schools we serve. Everything we ship is built for intermittent power.</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW ============ -->
+<section class="how" id="how">
+  <div class="wrap">
+    <div class="eyebrow">How it works</div>
+    <h2>Pack. Deploy. Sync — whenever the network shows up.</h2>
+    <p class="lede">The entire platform is designed around one rule: the network is a bonus, never a dependency.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <h3>Pack the curriculum</h3>
+        <p>Educators assemble <strong>Content Packs</strong> — versioned, compressed bundles of lessons, video, exercises, and assessments. A full K-12 year in 3 languages fits in under 48 GB. Packs are signed, deduplicated at the block level, and diffable, so an update ships only what changed.</p>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <h3>Deploy to the edge</h3>
+        <p>A <strong>Hearth Hub</strong> — our solar-tolerant classroom server — broadcasts the pack over local Wi-Fi to any device: donated tablets, teachers' phones, or our e-ink readers. No accounts, no app stores, no SIM cards. A classroom is live 20 minutes after unboxing.</p>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <h3>Sync opportunistically</h3>
+        <p>Progress, assessments, and teacher notes queue locally. When <em>any</em> device in the mesh touches connectivity — a teacher visiting town, a bus with a hub driving past — the whole classroom's data rides along, encrypted, in kilobytes. We call it <strong>sneakernet with manners</strong>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PLATFORM / FEATURES ============ -->
+<section id="platform">
+  <div class="wrap">
+    <div class="eyebrow">The platform</div>
+    <h2>Everything a connected classroom has. Nothing a connection requires.</h2>
+    <div class="features-grid">
+      <div class="feature"><span class="icon">📦</span><h3>Content Packs</h3><p>Open-format (ZIM, xAPI, EPUB, H5P) bundles with block-level dedup. Ministries and NGOs can author their own; our tooling validates, compresses, and signs them.</p></div>
+      <div class="feature"><span class="icon">🕸️</span><h3>Hearth Mesh</h3><p>Hubs within radio range form a self-healing mesh and gossip pack updates and progress data peer-to-peer. One connected hub eventually updates an entire district.</p></div>
+      <div class="feature"><span class="icon">🔋</span><h3>Power-realistic hardware</h3><p>Hearth Hub idles at 4 W, runs 14+ hours on its internal battery, and charges from solar, grid, or a motorcycle battery. E-ink readers last 3 weeks per charge.</p></div>
+      <div class="feature"><span class="icon">🧠</span><h3>Adaptive learning, on-device</h3><p>Our spaced-repetition and mastery engine runs entirely locally — a 40 MB model, not a cloud API. Learners get a personalized path with zero connectivity.</p></div>
+      <div class="feature"><span class="icon">🧑‍🏫</span><h3>Teacher dashboard</h3><p>Attendance, mastery heatmaps, and at-risk flags computed on the hub itself. Teachers see this on any browser on the local network — no login wall in front of a lesson, ever.</p></div>
+      <div class="feature"><span class="icon">🔐</span><h3>Privacy by physics</h3><p>Learner data is pseudonymous, encrypted at rest, and never leaves the region's designated sync server. The default state of all data is: it stays in the classroom.</p></div>
+      <div class="feature"><span class="icon">🌍</span><h3>34 languages</h3><p>Full UI and core curriculum localization, including right-to-left scripts and audio-first modes for early or low-literacy readers.</p></div>
+      <div class="feature"><span class="icon">✍️</span><h3>Offline assessments</h3><p>Timed tests with local integrity checks; results are cryptographically timestamped so certifications remain valid even when submitted weeks later.</p></div>
+      <div class="feature"><span class="icon">🛠️</span><h3>Repairable by design</h3><p>Standard screws, socketed storage, published schematics, and a spare-parts kit in every district shipment. Median field repair time: 11 minutes.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TECH DEEP DIVE ============ -->
+<section class="tech" id="tech">
+  <div class="wrap">
+    <div class="eyebrow">Technical brief</div>
+    <h2>The boring, load-bearing details.</h2>
+    <p class="lede">Offline-first is not a feature flag. It's a different set of physics. Here is how we handle them.</p>
+    <div class="tech-grid">
+      <div>
+        <div class="tech-block">
+          <h3>Delta sync protocol</h3>
+          <p>Packs are content-addressed Merkle DAGs. A device advertises its root hashes; peers respond with only missing blocks. A typical monthly curriculum update transfers <code>~140 MB</code> instead of re-shipping <code>48 GB</code>. Transfers resume mid-block after power loss.</p>
+        </div>
+        <div class="tech-block">
+          <h3>Conflict resolution</h3>
+          <p>Learner progress is modeled as CRDTs (grow-only sets for completions, LWW-registers for preferences, PN-counters for attempt tallies), so weeks-divergent devices merge deterministically with no server arbitration and no lost work.</p>
+        </div>
+        <div class="tech-block">
+          <h3>Opportunistic transport</h3>
+          <p>The sync daemon treats every channel as a courier: Wi-Fi Direct, hub-to-hub 900 MHz radio, USB drives (yes, really — signed and verified), and finally the internet if it appears. Priority queues put assessment results ahead of telemetry, always.</p>
+        </div>
+        <div class="tech-block">
+          <h3>Storage honesty</h3>
+          <p>Flash on cheap devices lies about writes. We journal everything, checksum every block on read, and keep <code>2</code> rotating pack generations so a corrupt update can never brick a classroom mid-semester.</p>
+        </div>
+      </div>
+      <div>
+        <div class="img-slot wide" data-theme="circuit" style="margin-bottom:26px"></div>
+        <h3 class="sans" style="margin-bottom:6px">Hearth Hub v3 — field specs</h3>
+        <table class="spec-table">
+          <tr><td>Idle / peak draw</td><td>4 W / 11 W</td></tr>
+          <tr><td>Internal battery</td><td>14 h continuous teaching</td></tr>
+          <tr><td>Storage</td><td>2 TB (socketed, mirrored)</td></tr>
+          <tr><td>Concurrent devices</td><td>120 over local Wi-Fi</td></tr>
+          <tr><td>Mesh radio range</td><td>1.8 km line-of-sight (900 MHz)</td></tr>
+          <tr><td>Operating temp</td><td>−10 °C to 55 °C, dust-sealed</td></tr>
+          <tr><td>Cold boot to serving</td><td>34 seconds</td></tr>
+          <tr><td>Field-replaceable parts</td><td>9 (screwdriver included)</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CASES ============ -->
+<section id="cases">
+  <div class="wrap">
+    <div class="eyebrow">Field results</div>
+    <h2>What happens when the platform never says "reconnecting…"</h2>
+    <div class="cases-grid">
+      <article class="case">
+        <div class="img-slot wide" data-theme="mountains"></div>
+        <div class="case-body">
+          <h3>Highland district, 63 schools</h3>
+          <p>A district with 9 hours of weekly grid power moved its entire grade 4–8 math sequence onto Hearth Hubs. Teachers used mastery heatmaps to re-group students weekly.</p>
+          <span class="metric">+31% mastery on national assessment, one school year</span>
+        </div>
+      </article>
+      <article class="case">
+        <div class="img-slot wide" data-theme="library"></div>
+        <div class="case-body">
+          <h3>Mobile library network</h3>
+          <p>Twelve motorcycle librarians carry pocket hubs between 47 villages. Each stop syncs the village mesh in under 4 minutes while books are exchanged.</p>
+          <span class="metric">38,000 learners reached with zero fixed infrastructure</span>
+        </div>
+      </article>
+      <article class="case">
+        <div class="img-slot wide" data-theme="desert"></div>
+        <div class="case-body">
+          <h3>Displacement camp, 3-year program</h3>
+          <p>Certification continuity across borders: assessments taken offline were cryptographically timestamped and honored by the receiving country's ministry.</p>
+          <span class="metric">4,100 certificates issued that survived a border crossing</span>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRICING ============ -->
+<section class="pricing" id="pricing">
+  <div class="wrap">
+    <div class="eyebrow">Pricing</div>
+    <h2>Priced for ministries, not for markups.</h2>
+    <p class="lede">Hardware at cost + a flat per-classroom platform fee. No per-seat pricing — counting seats punishes exactly the classrooms we exist for.</p>
+    <div class="price-grid">
+      <div class="plan">
+        <h3>Pilot</h3>
+        <div class="price">$0</div>
+        <div class="per">3 classrooms · 6 months</div>
+        <ul>
+          <li>2 Hearth Hubs on loan</li>
+          <li>Core curriculum packs (math, literacy, science)</li>
+          <li>Remote onboarding for teachers</li>
+          <li>Full data export at any time</li>
+        </ul>
+        <a class="btn btn-ghost" href="#cta">Apply for a pilot</a>
+      </div>
+      <div class="plan featured">
+        <span class="tag">Most deployed</span>
+        <h3>District</h3>
+        <div class="price">$14</div>
+        <div class="per">per classroom / month · hardware at cost</div>
+        <ul>
+          <li>Everything in Pilot, permanent</li>
+          <li>Custom content pack authoring tools</li>
+          <li>Mesh + regional sync server</li>
+          <li>Teacher training program (in person)</li>
+          <li>Spare-parts kit & repair guides</li>
+        </ul>
+        <a class="btn btn-primary" href="#cta">Talk to deployment</a>
+      </div>
+      <div class="plan">
+        <h3>National</h3>
+        <div class="price">Custom</div>
+        <div class="per">ministries & multi-region NGOs</div>
+        <ul>
+          <li>Sovereign sync infrastructure in-country</li>
+          <li>Curriculum alignment & translation support</li>
+          <li>Local assembly & repair partnerships</li>
+          <li>Long-term outcome evaluation design</li>
+        </ul>
+        <a class="btn btn-ghost" href="#cta">Start a conversation</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TEAM ============ -->
+<section id="team">
+  <div class="wrap">
+    <div class="eyebrow">Team</div>
+    <h2>Built by people who taught where the map goes quiet.</h2>
+    <p class="lede">Former rural teachers, mesh-network engineers, and one person who has personally repaired 212 hubs.</p>
+    <div class="team-grid">
+      <div class="person"><div class="img-slot square" data-theme="portrait1"></div><h3>A. Okafor</h3><span>Co-founder · Curriculum</span></div>
+      <div class="person"><div class="img-slot square" data-theme="portrait2"></div><h3>M. Reyes</h3><span>Co-founder · Hardware</span></div>
+      <div class="person"><div class="img-slot square" data-theme="portrait3"></div><h3>T. Sokhela</h3><span>Sync Protocol Lead</span></div>
+      <div class="person"><div class="img-slot square" data-theme="portrait4"></div><h3>J. Lindqvist</h3><span>Field Operations</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="faq" id="faq">
+  <div class="wrap">
+    <div class="eyebrow">FAQ</div>
+    <h2>Questions we actually get asked.</h2>
+    <div style="margin-top:28px">
+      <details>
+        <summary>Does "offline" mean the content gets stale?</summary>
+        <p>No. Packs are versioned and delta-synced: when any device in a mesh touches connectivity, only changed blocks propagate outward — typically ~140 MB for a monthly full-curriculum update. A district's most remote classroom is usually current within two weeks of an update, with no one doing anything on purpose.</p>
+      </details>
+      <details>
+        <summary>What devices do learners need?</summary>
+        <p>Anything with a browser: donated tablets, shared family phones, school desktops. The hub serves everything over local Wi-Fi. For device-poor classrooms we supply e-ink readers with 3-week battery life at cost.</p>
+      </details>
+      <details>
+        <summary>How do certifications work without a server to verify them?</summary>
+        <p>Assessment results are hashed and timestamped on-device against the hub's secure clock, then countersigned when they eventually reach the regional sync server. The certificate is verifiable from the paper printout alone — a QR code contains the signed proof.</p>
+      </details>
+      <details>
+        <summary>Who owns the learner data?</summary>
+        <p>The school, then the ministry — never us. Data is pseudonymous by default, stays on regional infrastructure, and every hub has a one-button full export in open formats. Our contracts forbid us from monetizing learner data, and our architecture makes it mostly impossible anyway.</p>
+      </details>
+      <details>
+        <summary>What happens when a hub breaks 400 km from a technician?</summary>
+        <p>Nine parts are field-replaceable with the included screwdriver, guided by an illustrated repair booklet (and an offline video series on the hub itself — which mirrors to neighboring hubs, so the repair guide survives the failure it documents). Median field repair: 11 minutes.</p>
+      </details>
+      <details>
+        <summary>Are you open source?</summary>
+        <p>The sync protocol, pack format, and hardware schematics are published. The adaptive-learning engine is source-available for ministries and auditors. We think infrastructure for public education should be inspectable by the public that depends on it.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============ JOURNAL ============ -->
+<section id="journal">
+  <div class="wrap">
+    <div class="eyebrow">Field journal</div>
+    <h2>Notes from the edge of the network.</h2>
+    <div class="journal-grid">
+      <a class="post" href="#journal">
+        <div class="img-slot wide" data-theme="radio"></div>
+        <span class="date">Aug 2026 · Engineering</span>
+        <h3>Why our sync daemon treats a USB stick as a first-class network interface</h3>
+        <p>The fastest link in many districts has a top speed of 40 km/h and stops for lunch. Design for it.</p>
+      </a>
+      <a class="post" href="#journal">
+        <div class="img-slot wide" data-theme="solar"></div>
+        <span class="date">Jul 2026 · Hardware</span>
+        <h3>Fourteen watt-hours per student per day: an energy budget for learning</h3>
+        <p>Every design review starts with the same question: what does this cost in sunlight?</p>
+      </a>
+      <a class="post" href="#journal">
+        <div class="img-slot wide" data-theme="books"></div>
+        <span class="date">Jun 2026 · Research</span>
+        <h3>What 12,000 offline classrooms taught us about spaced repetition</h3>
+        <p>Mastery data from devices that sync monthly turns out to be a beautiful natural experiment.</p>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CTA ============ -->
+<section class="cta" id="cta">
+  <div class="wrap">
+    <h2>Bring a classroom online.<br>Without bringing it online.</h2>
+    <p>Pilots are free, take one shipment and one afternoon, and come with a human who answers email slowly but thoroughly (they are often offline too).</p>
+    <a class="btn" href="mailto:pilots@offlinelearning.example">Request a pilot →</a>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>we make offline learning work</h4>
+        <p style="max-width:280px">Education infrastructure for the 2.6 billion people the internet forgot. The network is a bonus, never a dependency.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <a href="#how">How it works</a><a href="#platform">Platform</a><a href="#tech">Technology</a><a href="#pricing">Pricing</a>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <a href="#team">Team</a><a href="#journal">Field journal</a><a href="#cases">Field results</a><a href="#faq">FAQ</a>
+      </div>
+      <div>
+        <h4>Open</h4>
+        <a href="#tech">Sync protocol spec</a><a href="#tech">Pack format</a><a href="#tech">Hardware schematics</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2026 we make offline learning work. Most rights shared.</span>
+      <div class="odometer" id="mystery-odometer" title="nobody remembers installing this">
+        <span class="digits" id="mystery-counter">0000</span>
+        <small>we are not sure what this counts</small>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* =====================================================================
+     Imagery
+     Every .img-slot gets an inline-SVG "stock illustration" matching its
+     data-theme. Each slot also has a small independent chance of instead
+     receiving something... else. Clicking one of those increments the
+     otherwise-unused odometer in the footer. That is all it does.
+     ===================================================================== */
+
+  var SWAP_CHANCE = 0.28;
+
+  function svgWrap(inner, bg) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" role="img">' +
+           '<rect width="400" height="300" fill="' + bg + '"/>' + inner + '</svg>';
+  }
+
+  /* ---------- stock illustrations, one per theme ---------- */
+  var STOCK = {
+    classroom: function () {
+      return svgWrap(
+        '<rect x="40" y="60" width="320" height="150" rx="8" fill="#2e5d43"/>' +
+        '<rect x="55" y="75" width="290" height="120" rx="4" fill="#3e7a58"/>' +
+        '<text x="200" y="130" text-anchor="middle" font-family="Georgia" font-size="26" fill="#eaf3ec">a + b = learning</text>' +
+        '<text x="200" y="165" text-anchor="middle" font-family="Georgia" font-size="13" fill="#bcd8c6">no wifi required</text>' +
+        '<rect x="80" y="230" width="70" height="40" rx="5" fill="#c9b98f"/>' +
+        '<rect x="165" y="230" width="70" height="40" rx="5" fill="#c9b98f"/>' +
+        '<rect x="250" y="230" width="70" height="40" rx="5" fill="#c9b98f"/>',
+        '#f0e9d8');
+    },
+    globe: function () {
+      return svgWrap(
+        '<circle cx="200" cy="150" r="105" fill="#1f6f43"/>' +
+        '<path d="M110 130 q60 -40 180 -10 M100 170 q90 40 200 5 M200 45 q-45 100 0 210 M200 45 q45 100 0 210" stroke="#eaf3ec" stroke-width="3" fill="none" opacity="0.7"/>' +
+        '<circle cx="150" cy="120" r="6" fill="#f5d9a8"/><circle cx="255" cy="175" r="6" fill="#f5d9a8"/><circle cx="200" cy="220" r="6" fill="#f5d9a8"/>' +
+        '<path d="M150 120 L255 175 L200 220" stroke="#f5d9a8" stroke-width="2" stroke-dasharray="6 5" fill="none"/>',
+        '#e9e2d0');
+    },
+    circuit: function () {
+      return svgWrap(
+        '<path d="M30 150 H120 V80 H220 V150 H370 M120 150 V230 H260 V150" stroke="#d9931f" stroke-width="3" fill="none"/>' +
+        '<circle cx="120" cy="150" r="8" fill="#d9931f"/><circle cx="220" cy="150" r="8" fill="#d9931f"/><circle cx="260" cy="150" r="8" fill="#d9931f"/>' +
+        '<rect x="165" y="120" width="110" height="60" rx="6" fill="#2a2620" stroke="#d9931f" stroke-width="2"/>' +
+        '<text x="220" y="156" text-anchor="middle" font-family="monospace" font-size="16" fill="#f5d9a8">HEARTH v3</text>',
+        '#1c1a15');
+    },
+    mountains: function () {
+      return svgWrap(
+        '<path d="M0 240 L110 90 L190 210 L260 110 L400 250 V300 H0 Z" fill="#3e6b52"/>' +
+        '<path d="M110 90 L145 140 H80 Z" fill="#eef3ee"/>' +
+        '<circle cx="320" cy="70" r="30" fill="#f5d9a8"/>' +
+        '<rect x="170" y="235" width="60" height="35" rx="4" fill="#8a6f3e"/><path d="M165 235 L200 210 L235 235 Z" fill="#6e5730"/>',
+        '#dcebf0');
+    },
+    library: function () {
+      return svgWrap(
+        '<rect x="50" y="50" width="300" height="200" rx="8" fill="#7a5a34"/>' +
+        '<rect x="65" y="70" width="40" height="70" fill="#1f6f43"/><rect x="112" y="70" width="40" height="70" fill="#d9931f"/><rect x="159" y="70" width="40" height="70" fill="#8c3b2e"/><rect x="206" y="70" width="40" height="70" fill="#33556e"/><rect x="253" y="70" width="40" height="70" fill="#1f6f43"/><rect x="300" y="70" width="35" height="70" fill="#d9931f"/>' +
+        '<rect x="65" y="160" width="40" height="70" fill="#33556e"/><rect x="112" y="160" width="40" height="70" fill="#8c3b2e"/><rect x="159" y="160" width="40" height="70" fill="#1f6f43"/><rect x="206" y="160" width="40" height="70" fill="#d9931f"/><rect x="253" y="160" width="40" height="70" fill="#33556e"/><rect x="300" y="160" width="35" height="70" fill="#8c3b2e"/>',
+        '#efe7d4');
+    },
+    desert: function () {
+      return svgWrap(
+        '<circle cx="90" cy="80" r="34" fill="#f2c063"/>' +
+        '<path d="M0 220 Q120 180 220 215 T400 205 V300 H0 Z" fill="#d9b36a"/>' +
+        '<path d="M0 250 Q140 225 400 245 V300 H0 Z" fill="#c69a4d"/>' +
+        '<rect x="255" y="150" width="90" height="60" rx="6" fill="#f5efe0"/><path d="M248 150 L300 118 L352 150 Z" fill="#e2d7bd"/>',
+        '#f6e3c0');
+    },
+    radio: function () {
+      return svgWrap(
+        '<rect x="180" y="120" width="40" height="130" fill="#565043"/>' +
+        '<path d="M200 120 L160 250 M200 120 L240 250" stroke="#565043" stroke-width="6"/>' +
+        '<circle cx="200" cy="105" r="10" fill="#d9931f"/>' +
+        '<path d="M160 85 q40 -35 80 0 M140 60 q60 -55 120 0 M120 38 q80 -70 160 0" stroke="#d9931f" stroke-width="4" fill="none" opacity="0.75"/>',
+        '#e9e2d0');
+    },
+    solar: function () {
+      return svgWrap(
+        '<circle cx="330" cy="60" r="28" fill="#f2c063"/>' +
+        '<g transform="rotate(-12 200 170)"><rect x="90" y="110" width="220" height="120" rx="6" fill="#26456e"/>' +
+        '<path d="M90 150 H310 M90 190 H310 M145 110 V230 M200 110 V230 M255 110 V230" stroke="#dcebf0" stroke-width="3"/></g>' +
+        '<rect x="185" y="235" width="30" height="45" fill="#565043"/>',
+        '#efe7d4');
+    },
+    books: function () {
+      return svgWrap(
+        '<g transform="rotate(-8 200 160)"><rect x="120" y="180" width="170" height="26" rx="4" fill="#8c3b2e"/></g>' +
+        '<rect x="115" y="150" width="175" height="26" rx="4" fill="#1f6f43"/>' +
+        '<g transform="rotate(5 200 130)"><rect x="128" y="118" width="160" height="26" rx="4" fill="#33556e"/></g>' +
+        '<g transform="rotate(-3 200 100)"><rect x="140" y="88" width="140" height="26" rx="4" fill="#d9931f"/></g>' +
+        '<text x="200" y="255" text-anchor="middle" font-family="Georgia" font-size="14" fill="#8a8271">knowledge, pre-downloaded</text>',
+        '#f0e9d8');
+    },
+    portrait1: function () {
+      return svgWrap('<circle cx="200" cy="118" r="58" fill="#8a5a3b"/><path d="M95 300 Q200 195 305 300 Z" fill="#1f6f43"/><path d="M148 92 q52 -44 104 0 v-24 q-52 -30 -104 0 Z" fill="#2a2620"/>', '#e9e2d0');
+    },
+    portrait2: function () {
+      return svgWrap('<circle cx="200" cy="118" r="58" fill="#c98a5b"/><path d="M95 300 Q200 195 305 300 Z" fill="#33556e"/><rect x="150" y="98" width="100" height="14" rx="7" fill="#2a2620"/><circle cx="172" cy="105" r="17" fill="none" stroke="#2a2620" stroke-width="5"/><circle cx="228" cy="105" r="17" fill="none" stroke="#2a2620" stroke-width="5"/>', '#efe7d4');
+    },
+    portrait3: function () {
+      return svgWrap('<circle cx="200" cy="118" r="58" fill="#6e4a2f"/><path d="M95 300 Q200 195 305 300 Z" fill="#8c3b2e"/><path d="M142 100 a58 58 0 0 1 116 0 q-58 -34 -116 0 Z" fill="#2a2620"/>', '#f0e9d8');
+    },
+    portrait4: function () {
+      return svgWrap('<circle cx="200" cy="118" r="58" fill="#d8a878"/><path d="M95 300 Q200 195 305 300 Z" fill="#565043"/><path d="M142 118 q0 -70 58 -70 q58 0 58 70 q-14 -38 -58 -38 q-44 0 -58 38 Z" fill="#b8862f"/>', '#e9e2d0');
+    }
+  };
+
+  /* ---------- the other kind of "stock image" ---------- */
+  /* stylized homage renderings; recognition is left as an exercise */
+  function coverWrap(inner, bg) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" role="img">' +
+           '<rect width="400" height="400" fill="' + bg + '"/>' + inner + '</svg>';
+  }
+
+  var COVERS = [
+    { name: "Up 2 Më", svg: coverWrap(
+        '<ellipse cx="200" cy="205" rx="95" ry="130" fill="#3a3a3a" opacity="0.85"/>' +
+        '<ellipse cx="200" cy="120" rx="52" ry="58" fill="#4a4038" opacity="0.9"/>' +
+        '<text x="200" y="330" text-anchor="middle" font-family="Georgia" font-size="44" fill="#cfcfcf" opacity="0.9" style="letter-spacing:4px">Up 2 Më</text>',
+        '#141414') },
+    { name: "2 Alivë", svg: coverWrap(
+        '<ellipse cx="200" cy="185" rx="80" ry="105" fill="#20301c"/>' +
+        '<ellipse cx="172" cy="165" rx="16" ry="24" fill="#9fdc7a" opacity="0.9"/>' +
+        '<ellipse cx="228" cy="165" rx="16" ry="24" fill="#9fdc7a" opacity="0.9"/>' +
+        '<text x="200" y="345" text-anchor="middle" font-family="Georgia" font-size="46" fill="#b8e986" style="letter-spacing:3px">2 Alivë</text>',
+        '#0c1408') },
+    { name: "Lyfë", svg: coverWrap(
+        '<path d="M150 260 q0-55 50-55 q50 0 50 55 l-14 60 h-72 Z" fill="#5a1010"/>' +
+        '<circle cx="200" cy="165" r="52" fill="#6e1414"/>' +
+        '<path d="M168 150 q32 -22 64 0" stroke="#e8b7b7" stroke-width="5" fill="none"/>' +
+        '<text x="200" y="90" text-anchor="middle" font-family="Georgia" font-size="52" fill="#e05252" style="letter-spacing:6px">Lyfë</text>',
+        '#1a0505') },
+    { name: "AftërLyfë", svg: coverWrap(
+        '<circle cx="200" cy="190" r="85" fill="#2b2b33"/>' +
+        '<path d="M150 175 h34 v14 h-34 Z M216 175 h34 v14 h-34 Z" fill="#c4c9de"/>' +
+        '<path d="M165 235 q35 22 70 0" stroke="#c4c9de" stroke-width="6" fill="none"/>' +
+        '<text x="200" y="345" text-anchor="middle" font-family="Georgia" font-size="40" fill="#8f96b5" style="letter-spacing:4px">AftërLyfë</text>',
+        '#0d0d12') },
+    { name: "2093", svg: coverWrap(
+        '<rect x="120" y="90" width="160" height="220" rx="80" fill="#aeb6c4" opacity="0.25"/>' +
+        '<rect x="145" y="115" width="110" height="170" rx="55" fill="#dfe5ee" opacity="0.35"/>' +
+        '<text x="200" y="225" text-anchor="middle" font-family="monospace" font-size="88" fill="#e8edf5" style="letter-spacing:6px">2093</text>' +
+        '<text x="200" y="265" text-anchor="middle" font-family="monospace" font-size="16" fill="#7d879a">PSYCHO CEO</text>',
+        '#10131a') },
+    { name: "4L", svg: coverWrap(
+        '<path d="M200 80 q-70 15 -70 110 v40 h140 v-40 q0 -95 -70 -110 Z" fill="#c9a227"/>' +
+        '<rect x="188" y="60" width="24" height="26" rx="8" fill="#c9a227"/>' +
+        '<circle cx="200" cy="252" r="16" fill="#a9871f"/>' +
+        '<text x="200" y="345" text-anchor="middle" font-family="Georgia" font-size="60" fill="#e6c34a" style="letter-spacing:8px">4L</text>',
+        '#171204') },
+    { name: "Lyfestylë", svg: coverWrap(
+        '<rect x="90" y="90" width="220" height="220" rx="14" fill="#241a33"/>' +
+        '<circle cx="200" cy="180" r="55" fill="#3c2a55"/>' +
+        '<path d="M150 300 h100" stroke="#8f6fd0" stroke-width="8"/>' +
+        '<text x="200" y="355" text-anchor="middle" font-family="Georgia" font-size="36" fill="#a98ae0" style="letter-spacing:3px">Lyfestylë</text>',
+        '#120b1c') }
+  ];
+
+  /* ---------- the counter (purpose: unknown) ---------- */
+  var COUNT_KEY = "wmolw_mystery_count";
+  var counterEl = document.getElementById("mystery-counter");
+  var count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0;
+
+  function renderCount() {
+    counterEl.textContent = String(count).padStart(4, "0");
+  }
+
+  function bumpCount() {
+    count += 1;
+    try { localStorage.setItem(COUNT_KEY, String(count)); } catch (e) { /* offline-first: shrug */ }
+    renderCount();
+    counterEl.classList.remove("bump");
+    void counterEl.offsetWidth; /* restart the animation */
+    counterEl.classList.add("bump");
+  }
+
+  renderCount();
+
+  /* ---------- fill every image slot ---------- */
+  var slots = document.querySelectorAll(".img-slot");
+  Array.prototype.forEach.call(slots, function (slot) {
+    if (Math.random() < SWAP_CHANCE) {
+      var cover = COVERS[Math.floor(Math.random() * COVERS.length)];
+      slot.innerHTML = cover.svg + '<span class="credit">stock photo</span>';
+      slot.setAttribute("aria-label", "stock image");
+      slot.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        bumpCount();
+      });
+    } else {
+      var theme = slot.getAttribute("data-theme");
+      var draw = STOCK[theme] || STOCK.books;
+      slot.innerHTML = draw();
+      slot.setAttribute("aria-label", theme + " illustration");
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
