@@ -818,29 +818,85 @@
     counterEl.classList.remove("bump");
     void counterEl.offsetWidth; /* restart the animation */
     counterEl.classList.add("bump");
+    if (count === 3) openEasterEgg();
+  }
+
+  /* fires exactly once, the moment the odometer hits 3.
+     content of the popup is a placeholder for now — to be filled in later. */
+  function openEasterEgg() {
+    var w = window.open("about:blank", "_blank", "width=520,height=520");
+    if (!w) return; /* popup blocked: the odometer keeps its secrets */
+    w.document.write(
+      '<title>???</title>' +
+      '<body style="margin:0;display:flex;align-items:center;justify-content:center;' +
+      'min-height:100vh;background:#141414;color:#e6c34a;' +
+      "font-family:Georgia,serif;font-size:1.4rem;text-align:center\">" +
+      /* EASTER EGG CONTENT GOES HERE */
+      '<div>you found the thing the counter counts</div>' +
+      '</body>');
+    w.document.close();
   }
 
   renderCount();
 
+  /* ---------- occasional staff member ---------- */
+  var SAHUR_CHANCE = 0.25;
+  var SAHUR = {
+    name: "T. T. T. Sahur",
+    url: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcStsLAIZeFzzUjwDagV1P0b17jJp6Xwm8dYzIg75joMvc-7-XTQSYHxQJM&s=10",
+    svg: coverWrap(
+      '<ellipse cx="200" cy="365" rx="150" ry="26" fill="#2b1a0a"/>' +
+      '<circle cx="90" cy="90" r="34" fill="#f2c063" opacity="0.35"/>' +
+      '<rect x="146" y="60" width="108" height="235" rx="52" fill="#a9743c"/>' +
+      '<circle cx="180" cy="140" r="21" fill="#f5efe0"/><circle cx="222" cy="140" r="21" fill="#f5efe0"/>' +
+      '<circle cx="180" cy="140" r="9" fill="#1a0f05"/><circle cx="222" cy="140" r="9" fill="#1a0f05"/>' +
+      '<path d="M172 190 q28 20 56 0" stroke="#3a2410" stroke-width="6" fill="none"/>' +
+      '<rect x="166" y="290" width="15" height="66" rx="7" fill="#8a5a28"/>' +
+      '<rect x="220" y="290" width="15" height="66" rx="7" fill="#8a5a28"/>' +
+      '<g transform="rotate(28 258 300)"><rect x="251" y="215" width="15" height="140" rx="7" fill="#7a4a1e"/></g>',
+      '#1d1206')
+  };
+
   /* ---------- fill every image slot ---------- */
+  function fillWithImage(slot, url, fallbackSvg) {
+    var img = document.createElement("img");
+    img.alt = "stock image";
+    img.onerror = function () {
+      /* offline, dead link, or hotlink-blocked: fall back to the drawn homage */
+      slot.innerHTML = fallbackSvg + '<span class="credit">stock photo</span>';
+    };
+    img.src = url;
+    slot.innerHTML = "";
+    slot.appendChild(img);
+    var credit = document.createElement("span");
+    credit.className = "credit";
+    credit.textContent = "stock photo";
+    slot.appendChild(credit);
+  }
+
   var slots = document.querySelectorAll(".img-slot");
   Array.prototype.forEach.call(slots, function (slot) {
+    var theme = slot.getAttribute("data-theme") || "";
+
+    /* team portraits: occasionally the roster gains a very dedicated colleague.
+       when he does appear: 70% the drawn version, 30% the actual photo */
+    if (theme.indexOf("portrait") === 0 && Math.random() < SAHUR_CHANCE) {
+      if (Math.random() < 0.30) {
+        fillWithImage(slot, SAHUR.url, SAHUR.svg);
+      } else {
+        slot.innerHTML = SAHUR.svg + '<span class="credit">stock photo</span>';
+      }
+      slot.setAttribute("aria-label", "staff portrait");
+      var person = slot.closest(".person");
+      var nameEl = person && person.querySelector("h3");
+      if (nameEl) nameEl.textContent = SAHUR.name;
+      return;
+    }
+
     if (Math.random() < SWAP_CHANCE) {
       var cover = COVERS[Math.floor(Math.random() * COVERS.length)];
       if (cover.url) {
-        var img = document.createElement("img");
-        img.alt = "stock image";
-        img.onerror = function () {
-          /* offline, dead link, or hotlink-blocked: fall back to the drawn homage */
-          slot.innerHTML = cover.svg + '<span class="credit">stock photo</span>';
-        };
-        img.src = cover.url;
-        slot.innerHTML = "";
-        slot.appendChild(img);
-        var credit = document.createElement("span");
-        credit.className = "credit";
-        credit.textContent = "stock photo";
-        slot.appendChild(credit);
+        fillWithImage(slot, cover.url, cover.svg);
       } else {
         slot.innerHTML = cover.svg + '<span class="credit">stock photo</span>';
       }
@@ -851,7 +907,6 @@
         bumpCount();
       });
     } else {
-      var theme = slot.getAttribute("data-theme");
       var draw = STOCK[theme] || STOCK.books;
       slot.innerHTML = draw();
       slot.setAttribute("aria-label", theme + " illustration");
