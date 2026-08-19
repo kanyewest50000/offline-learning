@@ -895,10 +895,10 @@
      double quotes and backticks so it survives inside this single-quoted blob. */
   var SAHUR_CHAT_JS =
     '(function(){' +
-    'var me="guest-"+Math.floor(Math.random()*9000+1000);' +
     'var log=document.getElementById("log");' +
     'var form=document.getElementById("f");' +
     'var input=document.getElementById("m");' +
+    'var nameEl=document.getElementById("u");' +
     'function add(who,text,mine){' +
     'var row=document.createElement("div");' +
     'row.className=mine?"msg me":"msg";' +
@@ -913,9 +913,10 @@
     'add(d.name,d.text,false);});' +
     'form.addEventListener("submit",function(ev){' +
     'ev.preventDefault();var text=input.value.trim();if(!text)return;' +
+    'var me=nameEl.value.trim()||"anon";' +
     'input.value="";add(me,text,true);' +
     'if(window.opener&&!window.opener.closed){window.opener.postMessage({__ttt:"chat",name:me,text:text},"*");}});' +
-    'document.title="T. T. T. Sahur chat ("+me+")";' +
+    'document.title="Shrine of Tung";' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
     'document.body.appendChild(iframe);' +
@@ -925,7 +926,7 @@
   function sahurChatDoc() {
     return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-      '<title>T. T. T. Sahur chat</title>' +
+      '<title>Shrine of Tung</title>' +
       '<style>' +
       'html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#1d1206;color:#f5efe0}' +
       'body{display:flex;flex-direction:column}' +
@@ -937,12 +938,13 @@
       '.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px}' +
       '.msg.me .who{color:#f2c063}' +
       'form{display:flex;gap:8px;padding:12px;background:#2b1a0a;border-top:1px solid #3a2410}' +
-      'input{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px}' +
+      'input{padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px}' +
+      '#u{width:90px}#m{flex:1}' +
       'button{padding:10px 16px;border:none;border-radius:8px;background:#c8823c;color:#1d1206;font-weight:600;cursor:pointer}' +
       '</style></head><body>' +
-      '<header>T. T. T. Sahur chat<small>talk to whoever else is around</small></header>' +
+      '<header>Shrine of Tung<small>hi</small></header>' +
       '<div id="log"></div>' +
-      '<form id="f"><input id="m" autocomplete="off" placeholder="say something..."><button>send</button></form>' +
+      '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something..."><button>send</button></form>' +
       '<script>' + SAHUR_CHAT_JS + '<\/script>' +
       '</body></html>';
   }
