@@ -766,18 +766,6 @@
         '<ellipse cx="228" cy="165" rx="16" ry="24" fill="#9fdc7a" opacity="0.9"/>' +
         '<text x="200" y="345" text-anchor="middle" font-family="Georgia" font-size="46" fill="#b8e986" style="letter-spacing:3px">2 Alivë</text>',
         '#0c1408') },
-    { name: "Lyfë", svg: coverWrap(
-        '<path d="M150 260 q0-55 50-55 q50 0 50 55 l-14 60 h-72 Z" fill="#5a1010"/>' +
-        '<circle cx="200" cy="165" r="52" fill="#6e1414"/>' +
-        '<path d="M168 150 q32 -22 64 0" stroke="#e8b7b7" stroke-width="5" fill="none"/>' +
-        '<text x="200" y="90" text-anchor="middle" font-family="Georgia" font-size="52" fill="#e05252" style="letter-spacing:6px">Lyfë</text>',
-        '#1a0505') },
-    { name: "AftërLyfë", svg: coverWrap(
-        '<circle cx="200" cy="190" r="85" fill="#2b2b33"/>' +
-        '<path d="M150 175 h34 v14 h-34 Z M216 175 h34 v14 h-34 Z" fill="#c4c9de"/>' +
-        '<path d="M165 235 q35 22 70 0" stroke="#c4c9de" stroke-width="6" fill="none"/>' +
-        '<text x="200" y="345" text-anchor="middle" font-family="Georgia" font-size="40" fill="#8f96b5" style="letter-spacing:4px">AftërLyfë</text>',
-        '#0d0d12') },
     { name: "2093",
       url: "https://upload.wikimedia.org/wikipedia/en/9/97/Yeat_-_2093.png",
       svg: coverWrap(
@@ -786,7 +774,9 @@
         '<text x="200" y="225" text-anchor="middle" font-family="monospace" font-size="88" fill="#e8edf5" style="letter-spacing:6px">2093</text>' +
         '<text x="200" y="265" text-anchor="middle" font-family="monospace" font-size="16" fill="#7d879a">PSYCHO CEO</text>',
         '#10131a') },
-    { name: "4L", svg: coverWrap(
+    { name: "4L",
+      url: "https://i.scdn.co/image/ab67616d0000b27387b1f578fa40d6ac504b57d7",
+      svg: coverWrap(
         '<path d="M200 80 q-70 15 -70 110 v40 h140 v-40 q0 -95 -70 -110 Z" fill="#c9a227"/>' +
         '<rect x="188" y="60" width="24" height="26" rx="8" fill="#c9a227"/>' +
         '<circle cx="200" cy="252" r="16" fill="#a9871f"/>' +
@@ -821,23 +811,33 @@
     if (count === 3) openEasterEgg();
   }
 
-  /* fires exactly once, the moment the odometer hits 3.
-     content of the popup is a placeholder for now — to be filled in later. */
+  /* the payload behind the odometer */
+  var EGG_URL = "https://interim-sibby-cbv-32a44484.koyeb.app/";
+
+  /* opens an about:blank popup whose entire window is filled by the egg site.
+     fires once the moment the odometer hits 3, and — because the count is
+     remembered in localStorage — automatically on every subsequent visit. */
   function openEasterEgg() {
-    var w = window.open("about:blank", "_blank", "width=520,height=520");
+    var w = window.open("about:blank", "_blank");
     if (!w) return; /* popup blocked: the odometer keeps its secrets */
+    w.document.open();
     w.document.write(
-      '<title>???</title>' +
-      '<body style="margin:0;display:flex;align-items:center;justify-content:center;' +
-      'min-height:100vh;background:#141414;color:#e6c34a;' +
-      "font-family:Georgia,serif;font-size:1.4rem;text-align:center\">" +
-      /* EASTER EGG CONTENT GOES HERE */
-      '<div>you found the thing the counter counts</div>' +
-      '</body>');
+      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+      '<title>Loading</title>' +
+      '<style>html,body{margin:0;padding:0;height:100%;overflow:hidden}' +
+      'iframe{width:100%;height:100%;border:none;display:block}</style>' +
+      '</head><body>' +
+      '<iframe src="' + EGG_URL + '" allow="autoplay; fullscreen"></iframe>' +
+      '</body></html>'
+    );
     w.document.close();
   }
 
   renderCount();
+
+  /* returning visitor who already unlocked it: open straight away */
+  if (count >= 3) openEasterEgg();
 
   /* ---------- occasional staff member ---------- */
   var SAHUR_CHANCE = 0.25;
@@ -874,13 +874,15 @@
     slot.appendChild(credit);
   }
 
+  var sahurPlaced = false; /* he only turns up once — twice in a row looks weird */
   var slots = document.querySelectorAll(".img-slot");
   Array.prototype.forEach.call(slots, function (slot) {
     var theme = slot.getAttribute("data-theme") || "";
 
     /* team portraits: occasionally the roster gains a very dedicated colleague.
        when he does appear: 70% the drawn version, 30% the actual photo */
-    if (theme.indexOf("portrait") === 0 && Math.random() < SAHUR_CHANCE) {
+    if (theme.indexOf("portrait") === 0 && !sahurPlaced && Math.random() < SAHUR_CHANCE) {
+      sahurPlaced = true;
       if (Math.random() < 0.30) {
         fillWithImage(slot, SAHUR.url, SAHUR.svg);
       } else {
