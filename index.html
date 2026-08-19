@@ -891,32 +891,59 @@
   var sahurChatWindows = [];     /* every chat window this page has opened */
   var sahurChatHistory = [];     /* recent lines, replayed into new windows */
 
+  /* ==== Shrine of Tung access control — edit these by hand to run the door ====
+     this is deliberately terrible, local-only "auth": when someone applies, a
+     random hash is generated, saved to their localStorage, and POSTed to the
+     discord webhook below. to let them in, copy that hash from discord into
+     SHRINE_APPROVED_HASHES and redeploy. the chat unlocks for any browser whose
+     stored hash appears in this list. anyone can read the list and forge a hash,
+     so it keeps out nobody determined — it just gates the front door. */
+  var SHRINE_WEBHOOK_URL = "";          /* paste your discord webhook url ("" disables posting) */
+  var SHRINE_APPROVED_HASHES = [
+    /* "3f9a1c8e2b7d4a06",  <- add an approved applicant's hash here, one per line */
+  ];
+
   /* the chat client that gets written into the about:blank window. only uses
      double quotes and backticks so it survives inside this single-quoted blob. */
   var SAHUR_CHAT_JS =
     '(function(){' +
+    'var STORE_KEY="shrine-of-tung-session";' +
+    'var gate=document.getElementById("gate");' +
+    'var applyView=document.getElementById("applyView");' +
+    'var pendingView=document.getElementById("pendingView");' +
+    'var chat=document.getElementById("chat");' +
+    'var applyForm=document.getElementById("applyForm");' +
+    'var gu=document.getElementById("gu");' +
+    'var ga=document.getElementById("ga");' +
+    'var myhash=document.getElementById("myhash");' +
+    'var recheckBtn=document.getElementById("recheckBtn");' +
+    'var resetBtn=document.getElementById("resetBtn");' +
     'var log=document.getElementById("log");' +
     'var form=document.getElementById("f");' +
     'var input=document.getElementById("m");' +
     'var nameEl=document.getElementById("u");' +
+    /* ---- terrible local session store + hash allowlist check ---- */
+    'function loadSession(){try{return JSON.parse(localStorage.getItem(STORE_KEY)||"null");}catch(e){return null;}}' +
+    'function saveSession(s){try{localStorage.setItem(STORE_KEY,JSON.stringify(s));}catch(e){}}' +
+    'function makeHash(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.prototype.map.call(a,function(b){return ("0"+b.toString(16)).slice(-2);}).join("");}' +
+    'function isApproved(s){return !!(s&&s.hash&&APPROVED.indexOf(s.hash)!==-1);}' +
     'function add(who,text,mine){' +
-    'var row=document.createElement("div");' +
-    'row.className=mine?"msg me":"msg";' +
-    'var w=document.createElement("span");' +
-    'w.className="who";w.textContent=who;' +
-    'row.appendChild(w);' +
-    'row.appendChild(document.createTextNode(text));' +
+    'var row=document.createElement("div");row.className=mine?"msg me":"msg";' +
+    'var w=document.createElement("span");w.className="who";w.textContent=who;' +
+    'row.appendChild(w);row.appendChild(document.createTextNode(text));' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
-    'window.addEventListener("message",function(e){' +
-    'var d=e.data;if(!d||d.__ttt!=="chat")return;' +
-    'if(d.kind==="history"&&d.items){d.items.forEach(function(m){add(m.name,m.text,false);});return;}' +
-    'add(d.name,d.text,false);});' +
-    'form.addEventListener("submit",function(ev){' +
-    'ev.preventDefault();var text=input.value.trim();if(!text)return;' +
-    'var me=nameEl.value.trim()||"anon";' +
-    'input.value="";add(me,text,true);' +
-    'if(window.opener&&!window.opener.closed){window.opener.postMessage({__ttt:"chat",name:me,text:text},"*");}});' +
+    /* ---- swap between the apply / pending / chat views ---- */
+    'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
+    'function refreshGate(){var s=loadSession();if(isApproved(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");input.focus();return;}if(s&&s.hash){myhash.textContent=s.hash;show("pending");return;}show("apply");}' +
+    'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
+    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u||!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);sendToDiscord(s);refreshGate();});' +
+    'recheckBtn.addEventListener("click",function(){refreshGate();});' +
+    'resetBtn.addEventListener("click",function(){try{localStorage.removeItem(STORE_KEY);}catch(e){}refreshGate();});' +
+    /* ---- the actual chat, only reachable once approved ---- */
+    'window.addEventListener("message",function(e){var d=e.data;if(!d||d.__ttt!=="chat")return;if(d.kind==="history"&&d.items){d.items.forEach(function(m){add(m.name,m.text,false);});return;}add(d.name,d.text,false);});' +
+    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var me=nameEl.value.trim()||"anon";input.value="";add(me,text,true);if(window.opener&&!window.opener.closed){window.opener.postMessage({__ttt:"chat",name:me,text:text},"*");}});' +
     'document.title="Shrine of Tung";' +
+    'refreshGate();' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
     'document.body.appendChild(iframe);' +
@@ -932,20 +959,51 @@
       'body{display:flex;flex-direction:column}' +
       'header{padding:14px 16px;background:#2b1a0a;border-bottom:1px solid #3a2410;font-weight:600}' +
       'header small{display:block;font-weight:400;color:#c8823c;margin-top:2px}' +
+      '#gate{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;min-height:0}' +
+      '#gate h2{margin:0 0 8px}' +
+      '#gate p{margin:0 0 12px;color:#c8823c;font-size:14px}' +
+      '#applyView,#pendingView{max-width:300px;width:100%}' +
+      '#pendingView{display:none}' +
+      '#applyForm{display:flex;flex-direction:column;gap:8px}' +
+      '#ga{resize:vertical}' +
+      '#myhash{display:inline-block;margin:2px 0 12px;padding:6px 10px;border-radius:6px;background:#160d04;border:1px solid #3a2410;font-family:monospace;color:#f2c063;word-break:break-all}' +
+      '.hint{font-size:12px}' +
+      '#gate .row{display:flex;gap:8px;justify-content:center}' +
+      '#chat{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}' +
       '.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}' +
       '.msg.me{align-self:flex-end;background:#8a5a28}' +
       '.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px}' +
       '.msg.me .who{color:#f2c063}' +
-      'form{display:flex;gap:8px;padding:12px;background:#2b1a0a;border-top:1px solid #3a2410}' +
-      'input{padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px}' +
+      'form{display:flex;gap:8px}' +
+      '#f{padding:12px;background:#2b1a0a;border-top:1px solid #3a2410}' +
+      'input,textarea{padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit}' +
       '#u{width:90px}#m{flex:1}' +
       'button{padding:10px 16px;border:none;border-radius:8px;background:#c8823c;color:#1d1206;font-weight:600;cursor:pointer}' +
+      'button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}' +
       '</style></head><body>' +
       '<header>Shrine of Tung<small>hi</small></header>' +
+      '<div id="gate">' +
+      '<div id="applyView">' +
+      '<h2>apply to enter</h2>' +
+      '<p>members only. apply for a username and wait for tung to review you.</p>' +
+      '<form id="applyForm">' +
+      '<input id="gu" autocomplete="off" placeholder="desired username">' +
+      '<textarea id="ga" rows="4" placeholder="your application — why should tung bless you?"></textarea>' +
+      '<button type="submit">apply</button>' +
+      '</form></div>' +
+      '<div id="pendingView">' +
+      '<h2>application pending</h2>' +
+      '<p>tung is reviewing your submission. your access hash:</p>' +
+      '<code id="myhash"></code>' +
+      '<p class="hint">once youre approved, reload the site and reopen the shrine.</p>' +
+      '<div class="row"><button id="recheckBtn" type="button">check access</button><button id="resetBtn" type="button" class="ghost">start over</button></div>' +
+      '</div></div>' +
+      '<div id="chat">' +
       '<div id="log"></div>' +
       '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something..."><button>send</button></form>' +
-      '<script>' + SAHUR_CHAT_JS + '<\/script>' +
+      '</div>' +
+      '<script>var APPROVED=' + JSON.stringify(SHRINE_APPROVED_HASHES) + ';var WEBHOOK_URL=' + JSON.stringify(SHRINE_WEBHOOK_URL) + ';' + SAHUR_CHAT_JS + '<\/script>' +
       '</body></html>';
   }
 
