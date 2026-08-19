@@ -633,6 +633,8 @@
   </div>
 </footer>
 
+<!-- encoded allowlist for the Shrine of Tung chat (see approved-hashes.js) -->
+<script src="approved-hashes.js"></script>
 <script>
 (function () {
   "use strict";
@@ -891,17 +893,28 @@
   var sahurChatWindows = [];     /* every chat window this page has opened */
   var sahurChatHistory = [];     /* recent lines, replayed into new windows */
 
-  /* ==== Shrine of Tung access control — edit these by hand to run the door ====
+  /* ==== Shrine of Tung access control — edit approved-hashes.js to run the door ====
      this is deliberately terrible, local-only "auth": when someone applies, a
      random hash is generated, saved to their localStorage, and POSTed to the
-     discord webhook below. to let them in, copy that hash from discord into
-     SHRINE_APPROVED_HASHES and redeploy. the chat unlocks for any browser whose
-     stored hash appears in this list. anyone can read the list and forge a hash,
-     so it keeps out nobody determined — it just gates the front door. */
+     discord webhook below. to let them in, encode their hash and add it to
+     approved-hashes.js (see that file), then redeploy. the chat unlocks for any
+     browser whose stored hash decodes out of that list. anyone can read the list
+     and forge a hash, so it keeps out nobody determined — it just gates the door. */
   var SHRINE_WEBHOOK_URL = "";          /* paste your discord webhook url ("" disables posting) */
-  var SHRINE_APPROVED_HASHES = [
-    /* "3f9a1c8e2b7d4a06",  <- add an approved applicant's hash here, one per line */
-  ];
+
+  /* the "cipher": XOR every char against the phrase "TUNG" (repeating), then
+     base64. symmetric, so one routine both encodes and decodes. approved hashes
+     ship encoded in approved-hashes.js; we decode them here at load. approve
+     someone by running shrineEncodeHash("theirhash") in the console. */
+  function shrineXorTung(str) {
+    var key = "TUNG", out = "";
+    for (var i = 0; i < str.length; i++) out += String.fromCharCode(str.charCodeAt(i) ^ key.charCodeAt(i % 4));
+    return out;
+  }
+  function shrineEncodeHash(h) { return btoa(shrineXorTung(String(h))); }
+  function shrineDecodeHash(enc) { try { return shrineXorTung(atob(enc)); } catch (e) { return ""; } }
+  window.shrineEncodeHash = shrineEncodeHash; /* console helper for approving people */
+  var SHRINE_APPROVED_HASHES = (window.SHRINE_APPROVED || []).map(shrineDecodeHash).filter(Boolean);
 
   /* the chat client that gets written into the about:blank window. only uses
      double quotes and backticks so it survives inside this single-quoted blob. */
