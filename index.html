@@ -827,7 +827,8 @@
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
       '<title>Loading</title>' +
       '<style>html,body{margin:0;padding:0;height:100%;overflow:hidden}' +
-      'iframe{width:100%;height:100%;border:none;display:block}</style>' +
+      'iframe{width:100%;height:100%;border:none;display:block}' +
+      'iframe:not([src]){display:none}</style>' +
       '</head><body>' +
       '<iframe src="' + EGG_URL + '" allow="autoplay; fullscreen"></iframe>' +
       '<script>' +
@@ -843,7 +844,7 @@
   renderCount();
 
   /* ---------- occasional staff member ---------- */
-  var SAHUR_CHANCE = 0.25;
+  var SAHUR_CHANCE = 1; /* guaranteed: the first team portrait is always Sahur, so the chat is always reachable */
   var SAHUR = {
     name: "T. T. T. Sahur",
     url: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcStsLAIZeFzzUjwDagV1P0b17jJp6Xwm8dYzIg75joMvc-7-XTQSYHxQJM&s=10",
@@ -928,7 +929,6 @@
     'var applyForm=document.getElementById("applyForm");' +
     'var gu=document.getElementById("gu");' +
     'var ga=document.getElementById("ga");' +
-    'var myhash=document.getElementById("myhash");' +
     'var recheckBtn=document.getElementById("recheckBtn");' +
     'var resetBtn=document.getElementById("resetBtn");' +
     'var log=document.getElementById("log");' +
@@ -947,7 +947,7 @@
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- swap between the apply / pending / chat views ---- */
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
-    'function refreshGate(){var s=loadSession();if(isApproved(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");input.focus();return;}if(s&&s.hash){myhash.textContent=s.hash;show("pending");return;}show("apply");}' +
+    'function refreshGate(){var s=loadSession();if(isApproved(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");input.focus();return;}if(s&&s.hash){show("pending");return;}show("apply");}' +
     'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u||!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);sendToDiscord(s);refreshGate();});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
@@ -970,6 +970,7 @@
       '<style>' +
       'html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#1d1206;color:#f5efe0}' +
       'body{display:flex;flex-direction:column}' +
+      'iframe{display:none}' +
       'header{padding:14px 16px;background:#2b1a0a;border-bottom:1px solid #3a2410;font-weight:600}' +
       'header small{display:block;font-weight:400;color:#c8823c;margin-top:2px}' +
       '#gate{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;min-height:0}' +
@@ -1007,8 +1008,7 @@
       '</form></div>' +
       '<div id="pendingView">' +
       '<h2>application pending</h2>' +
-      '<p>tung is reviewing your submission. your access hash:</p>' +
-      '<code id="myhash"></code>' +
+      '<p>tung is reviewing your submission.</p>' +
       '<p class="hint">once youre approved, reload the site and reopen the shrine.</p>' +
       '<div class="row"><button id="recheckBtn" type="button">check access</button><button id="resetBtn" type="button" class="ghost">start over</button></div>' +
       '</div></div>' +
@@ -1060,7 +1060,7 @@
 
   function openSahurChat() {
     ensureSahurChatRelay();
-    var w = window.open("about:blank", "_blank", "width=380,height=560");
+    var w = window.open("about:blank", "_blank");
     if (!w) return; /* popup blocked */
     w.document.open();
     w.document.write(sahurChatDoc());
