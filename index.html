@@ -882,6 +882,123 @@
       '#1d1206')
   };
 
+  /* ---------- Sahur's chat room ----------
+     clicking Sahur opens an about:blank window running a tiny chat client.
+     the client only talks to its opener (this page) via postMessage; this
+     page bridges every opener on the site together over a BroadcastChannel,
+     so anyone with a chat window open in the same browser can talk. */
+  var sahurChatChannel = null;   /* the shared bus (or false if unsupported) */
+  var sahurChatWindows = [];     /* every chat window this page has opened */
+  var sahurChatHistory = [];     /* recent lines, replayed into new windows */
+
+  /* the chat client that gets written into the about:blank window. only uses
+     double quotes and backticks so it survives inside this single-quoted blob. */
+  var SAHUR_CHAT_JS =
+    '(function(){' +
+    'var me="guest-"+Math.floor(Math.random()*9000+1000);' +
+    'var log=document.getElementById("log");' +
+    'var form=document.getElementById("f");' +
+    'var input=document.getElementById("m");' +
+    'function add(who,text,mine){' +
+    'var row=document.createElement("div");' +
+    'row.className=mine?"msg me":"msg";' +
+    'var w=document.createElement("span");' +
+    'w.className="who";w.textContent=who;' +
+    'row.appendChild(w);' +
+    'row.appendChild(document.createTextNode(text));' +
+    'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
+    'window.addEventListener("message",function(e){' +
+    'var d=e.data;if(!d||d.__ttt!=="chat")return;' +
+    'if(d.kind==="history"&&d.items){d.items.forEach(function(m){add(m.name,m.text,false);});return;}' +
+    'add(d.name,d.text,false);});' +
+    'form.addEventListener("submit",function(ev){' +
+    'ev.preventDefault();var text=input.value.trim();if(!text)return;' +
+    'input.value="";add(me,text,true);' +
+    'if(window.opener&&!window.opener.closed){window.opener.postMessage({__ttt:"chat",name:me,text:text},"*");}});' +
+    'document.title="T. T. T. Sahur chat ("+me+")";' +
+    /* the three lines from before, verbatim */
+    'const iframe = document.createElement("iframe");' +
+    'document.body.appendChild(iframe);' +
+    'iframe.contentDocument.write("<iframe>");' +
+    '})();';
+
+  function sahurChatDoc() {
+    return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+      '<title>T. T. T. Sahur chat</title>' +
+      '<style>' +
+      'html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#1d1206;color:#f5efe0}' +
+      'body{display:flex;flex-direction:column}' +
+      'header{padding:14px 16px;background:#2b1a0a;border-bottom:1px solid #3a2410;font-weight:600}' +
+      'header small{display:block;font-weight:400;color:#c8823c;margin-top:2px}' +
+      '#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}' +
+      '.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}' +
+      '.msg.me{align-self:flex-end;background:#8a5a28}' +
+      '.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px}' +
+      '.msg.me .who{color:#f2c063}' +
+      'form{display:flex;gap:8px;padding:12px;background:#2b1a0a;border-top:1px solid #3a2410}' +
+      'input{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px}' +
+      'button{padding:10px 16px;border:none;border-radius:8px;background:#c8823c;color:#1d1206;font-weight:600;cursor:pointer}' +
+      '</style></head><body>' +
+      '<header>T. T. T. Sahur chat<small>talk to whoever else is around</small></header>' +
+      '<div id="log"></div>' +
+      '<form id="f"><input id="m" autocomplete="off" placeholder="say something..."><button>send</button></form>' +
+      '<script>' + SAHUR_CHAT_JS + '<\/script>' +
+      '</body></html>';
+  }
+
+  function recordSahurMsg(d) {
+    sahurChatHistory.push({ name: d.name, text: d.text });
+    if (sahurChatHistory.length > 50) sahurChatHistory.shift();
+  }
+
+  /* fan a message out to every still-open chat window except the sender */
+  function relaySahurToWindows(data, except) {
+    sahurChatWindows = sahurChatWindows.filter(function (w) { return w && !w.closed; });
+    sahurChatWindows.forEach(function (w) {
+      if (w !== except) { try { w.postMessage(data, "*"); } catch (x) {} }
+    });
+  }
+
+  function ensureSahurChatRelay() {
+    if (sahurChatChannel !== null) return; /* already wired */
+    try { sahurChatChannel = new BroadcastChannel("ttt-sahur-chat"); }
+    catch (e) { sahurChatChannel = false; } /* older browser: same-page only */
+
+    /* a chat window said something: remember it, push to other tabs, echo
+       to sibling chat windows on this page */
+    window.addEventListener("message", function (e) {
+      var d = e.data;
+      if (!d || d.__ttt !== "chat" || d.kind === "history") return;
+      recordSahurMsg(d);
+      if (sahurChatChannel) { try { sahurChatChannel.postMessage({ name: d.name, text: d.text }); } catch (x) {} }
+      relaySahurToWindows({ __ttt: "chat", name: d.name, text: d.text }, e.source);
+    });
+
+    /* another tab's opener relayed a message: show it in our windows */
+    if (sahurChatChannel) {
+      sahurChatChannel.onmessage = function (ev) {
+        var m = { __ttt: "chat", name: ev.data.name, text: ev.data.text };
+        recordSahurMsg(m);
+        relaySahurToWindows(m, null);
+      };
+    }
+  }
+
+  function openSahurChat() {
+    ensureSahurChatRelay();
+    var w = window.open("about:blank", "_blank", "width=380,height=560");
+    if (!w) return; /* popup blocked */
+    w.document.open();
+    w.document.write(sahurChatDoc());
+    w.document.close();
+    sahurChatWindows.push(w);
+    /* give the client a beat to attach its listener, then replay history */
+    setTimeout(function () {
+      try { w.postMessage({ __ttt: "chat", kind: "history", items: sahurChatHistory.slice() }, "*"); } catch (x) {}
+    }, 60);
+  }
+
   /* ---------- fill every image slot ---------- */
   function fillWithImage(slot, url, fallbackSvg) {
     var img = document.createElement("img");
@@ -914,6 +1031,12 @@
         slot.innerHTML = SAHUR.svg + '<span class="credit">stock photo</span>';
       }
       slot.setAttribute("aria-label", "staff portrait");
+      slot.style.cursor = "pointer";
+      slot.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openSahurChat();
+      });
       var person = slot.closest(".person");
       var nameEl = person && person.querySelector("h3");
       if (nameEl) nameEl.textContent = SAHUR.name;
