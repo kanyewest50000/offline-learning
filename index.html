@@ -889,7 +889,7 @@
      clicking Sahur opens an about:blank window running a tiny chat client.
      each client connects straight to the WebSocket relay below; the server
      just rebroadcasts every message to everyone else (no history stored). */
-  var SHRINE_WS_URL = "";               /* paste your deno deploy wss:// url ("" = local-only, messages go nowhere) */
+  var SHRINE_WS_URL = "wss://offline-learning.kanyewest50000.deno.net"; /* deno deploy relay ("" = local-only) */
 
   /* ==== Shrine of Tung access control — edit approved-hashes.js to run the door ====
      this is deliberately terrible, local-only "auth": when someone applies, a
