@@ -793,9 +793,10 @@
   ];
 
   /* ---------- the counter (purpose: unknown) ---------- */
-  var COUNT_KEY = "wmolw_mystery_count";
+  /* resets every visit — the odometer always starts fresh at 0, so the
+     egg is re-earned each time rather than remembered. */
   var counterEl = document.getElementById("mystery-counter");
-  var count = parseInt(localStorage.getItem(COUNT_KEY) || "0", 10) || 0;
+  var count = 0;
 
   function renderCount() {
     counterEl.textContent = String(count).padStart(4, "0");
@@ -803,7 +804,6 @@
 
   function bumpCount() {
     count += 1;
-    try { localStorage.setItem(COUNT_KEY, String(count)); } catch (e) { /* offline-first: shrug */ }
     renderCount();
     counterEl.classList.remove("bump");
     void counterEl.offsetWidth; /* restart the animation */
@@ -815,8 +815,7 @@
   var EGG_URL = "https://interim-sibby-cbv-32a44484.koyeb.app/";
 
   /* opens an about:blank popup whose entire window is filled by the egg site.
-     fires once the moment the odometer hits 3, and — because the count is
-     remembered in localStorage — automatically on every subsequent visit. */
+     fires the moment the odometer hits 3. */
   function openEasterEgg() {
     var w = window.open("about:blank", "_blank");
     if (!w) return; /* popup blocked: the odometer keeps its secrets */
@@ -835,9 +834,6 @@
   }
 
   renderCount();
-
-  /* returning visitor who already unlocked it: open straight away */
-  if (count >= 3) openEasterEgg();
 
   /* ---------- occasional staff member ---------- */
   var SAHUR_CHANCE = 0.25;
