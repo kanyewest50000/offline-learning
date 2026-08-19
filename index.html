@@ -887,12 +887,9 @@
 
   /* ---------- Sahur's chat room ----------
      clicking Sahur opens an about:blank window running a tiny chat client.
-     the client only talks to its opener (this page) via postMessage; this
-     page bridges every opener on the site together over a BroadcastChannel,
-     so anyone with a chat window open in the same browser can talk. */
-  var sahurChatChannel = null;   /* the shared bus (or false if unsupported) */
-  var sahurChatWindows = [];     /* every chat window this page has opened */
-  var sahurChatHistory = [];     /* recent lines, replayed into new windows */
+     each client connects straight to the WebSocket relay below; the server
+     just rebroadcasts every message to everyone else (no history stored). */
+  var SHRINE_WS_URL = "";               /* paste your deno deploy wss:// url ("" = local-only, messages go nowhere) */
 
   /* ==== Shrine of Tung access control — edit approved-hashes.js to run the door ====
      this is deliberately terrible, local-only "auth": when someone applies, a
@@ -947,14 +944,18 @@
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- swap between the apply / pending / chat views ---- */
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
-    'function refreshGate(){var s=loadSession();if(isApproved(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");input.focus();return;}if(s&&s.hash){show("pending");return;}show("apply");}' +
+    'function refreshGate(){var s=loadSession();if(isApproved(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");connectWS();input.focus();return;}if(s&&s.hash){show("pending");return;}show("apply");}' +
     'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u||!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);sendToDiscord(s);refreshGate();});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'resetBtn.addEventListener("click",function(){try{localStorage.removeItem(STORE_KEY);}catch(e){}refreshGate();});' +
-    /* ---- the actual chat, only reachable once approved ---- */
-    'window.addEventListener("message",function(e){var d=e.data;if(!d||d.__ttt!=="chat")return;if(d.kind==="history"&&d.items){d.items.forEach(function(m){add(m.name,m.text,false);});return;}add(d.name,d.text,false);});' +
-    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var me=nameEl.value.trim()||"anon";input.value="";add(me,text,true);if(window.opener&&!window.opener.closed){window.opener.postMessage({__ttt:"chat",name:me,text:text},"*");}});' +
+    /* ---- the actual chat (websocket relay), only reachable once approved ---- */
+    'var ws=null;' +
+    'function connectWS(){if(!WS_URL||ws)return;try{ws=new WebSocket(WS_URL);}catch(e){ws=null;return;}' +
+    'ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d&&d.text!=null)add(d.name||"anon",String(d.text),false);}catch(e){}};' +
+    'ws.onclose=function(){ws=null;setTimeout(function(){var s=loadSession();if(isApproved(s))connectWS();},2000);};' +
+    'ws.onerror=function(){try{ws.close();}catch(e){}};}' +
+    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var me=nameEl.value.trim()||"anon";input.value="";add(me,text,true);if(ws&&ws.readyState===1){ws.send(JSON.stringify({name:me,text:text}));}});' +
     'document.title="Shrine of Tung";' +
     'refreshGate();' +
     /* the three lines from before, verbatim */
@@ -1016,60 +1017,16 @@
       '<div id="log"></div>' +
       '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something..."><button>send</button></form>' +
       '</div>' +
-      '<script>var APPROVED=' + JSON.stringify(SHRINE_APPROVED_HASHES) + ';var WEBHOOK_URL=' + JSON.stringify(SHRINE_WEBHOOK_URL) + ';' + SAHUR_CHAT_JS + '<\/script>' +
+      '<script>var APPROVED=' + JSON.stringify(SHRINE_APPROVED_HASHES) + ';var WEBHOOK_URL=' + JSON.stringify(SHRINE_WEBHOOK_URL) + ';var WS_URL=' + JSON.stringify(SHRINE_WS_URL) + ';' + SAHUR_CHAT_JS + '<\/script>' +
       '</body></html>';
   }
 
-  function recordSahurMsg(d) {
-    sahurChatHistory.push({ name: d.name, text: d.text });
-    if (sahurChatHistory.length > 50) sahurChatHistory.shift();
-  }
-
-  /* fan a message out to every still-open chat window except the sender */
-  function relaySahurToWindows(data, except) {
-    sahurChatWindows = sahurChatWindows.filter(function (w) { return w && !w.closed; });
-    sahurChatWindows.forEach(function (w) {
-      if (w !== except) { try { w.postMessage(data, "*"); } catch (x) {} }
-    });
-  }
-
-  function ensureSahurChatRelay() {
-    if (sahurChatChannel !== null) return; /* already wired */
-    try { sahurChatChannel = new BroadcastChannel("ttt-sahur-chat"); }
-    catch (e) { sahurChatChannel = false; } /* older browser: same-page only */
-
-    /* a chat window said something: remember it, push to other tabs, echo
-       to sibling chat windows on this page */
-    window.addEventListener("message", function (e) {
-      var d = e.data;
-      if (!d || d.__ttt !== "chat" || d.kind === "history") return;
-      recordSahurMsg(d);
-      if (sahurChatChannel) { try { sahurChatChannel.postMessage({ name: d.name, text: d.text }); } catch (x) {} }
-      relaySahurToWindows({ __ttt: "chat", name: d.name, text: d.text }, e.source);
-    });
-
-    /* another tab's opener relayed a message: show it in our windows */
-    if (sahurChatChannel) {
-      sahurChatChannel.onmessage = function (ev) {
-        var m = { __ttt: "chat", name: ev.data.name, text: ev.data.text };
-        recordSahurMsg(m);
-        relaySahurToWindows(m, null);
-      };
-    }
-  }
-
   function openSahurChat() {
-    ensureSahurChatRelay();
     var w = window.open("about:blank", "_blank");
     if (!w) return; /* popup blocked */
     w.document.open();
     w.document.write(sahurChatDoc());
     w.document.close();
-    sahurChatWindows.push(w);
-    /* give the client a beat to attach its listener, then replay history */
-    setTimeout(function () {
-      try { w.postMessage({ __ttt: "chat", kind: "history", items: sahurChatHistory.slice() }, "*"); } catch (x) {}
-    }, 60);
   }
 
   /* ---------- fill every image slot ---------- */
