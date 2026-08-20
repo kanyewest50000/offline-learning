@@ -8,6 +8,8 @@
 // playground). Then put the resulting URL into index.html as SHRINE_WS_URL,
 // swapping https:// for wss://  e.g.  wss://<app-slug>.kanyewest50000.deno.net
 
+import { serveDir } from "jsr:@std/http/file-server";
+
 const sockets = new Set<WebSocket>();
 const channel = new BroadcastChannel("shrine-of-tung");
 
@@ -27,11 +29,9 @@ function fanout(data: string, except?: WebSocket) {
 channel.onmessage = (e) => fanout(e.data as string);
 
 Deno.serve((req) => {
+  // non-websocket requests: serve the static site (index.html, etc.)
   if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-    return new Response("Shrine of Tung chat relay is alive", {
-      status: 200,
-      headers: { "content-type": "text/plain" },
-    });
+    return serveDir(req, { fsRoot: ".", quiet: true });
   }
 
   const { socket, response } = Deno.upgradeWebSocket(req);
