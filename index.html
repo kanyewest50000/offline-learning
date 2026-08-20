@@ -891,6 +891,11 @@
      just rebroadcasts every message to everyone else (no history stored). */
   var SHRINE_WS_URL = "wss://offline-learning.kanyewest50000.deno.net"; /* deno deploy relay ("" = local-only) */
 
+  /* application gate: false = anyone picks a username and walks in (no application,
+     no webhook, no hash approval). flip to true later to require applying + being
+     approved via approved-hashes.js. all the application code stays wired either way. */
+  var SHRINE_GATE_ENABLED = false;
+
   /* ==== Shrine of Tung access control — edit approved-hashes.js to run the door ====
      this is deliberately terrible, local-only "auth": when someone applies, a
      random hash is generated, saved to their localStorage, and POSTed to the
@@ -926,6 +931,9 @@
     'var applyForm=document.getElementById("applyForm");' +
     'var gu=document.getElementById("gu");' +
     'var ga=document.getElementById("ga");' +
+    'var applyTitle=document.getElementById("applyTitle");' +
+    'var applyDesc=document.getElementById("applyDesc");' +
+    'var applyBtn=document.getElementById("applyBtn");' +
     'var recheckBtn=document.getElementById("recheckBtn");' +
     'var resetBtn=document.getElementById("resetBtn");' +
     'var log=document.getElementById("log");' +
@@ -937,6 +945,7 @@
     'function saveSession(s){try{localStorage.setItem(STORE_KEY,JSON.stringify(s));}catch(e){}}' +
     'function makeHash(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.prototype.map.call(a,function(b){return ("0"+b.toString(16)).slice(-2);}).join("");}' +
     'function isApproved(s){return !!(s&&s.hash&&APPROVED.indexOf(s.hash)!==-1);}' +
+    'function allowed(s){return GATE?isApproved(s):!!(s&&s.username);}' +
     'function add(who,text,mine){' +
     'var row=document.createElement("div");row.className=mine?"msg me":"msg";' +
     'var w=document.createElement("span");w.className="who";w.textContent=who;' +
@@ -944,19 +953,20 @@
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- swap between the apply / pending / chat views ---- */
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
-    'function refreshGate(){var s=loadSession();if(isApproved(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");connectWS();input.focus();return;}if(s&&s.hash){show("pending");return;}show("apply");}' +
+    'function refreshGate(){var s=loadSession();if(allowed(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");connectWS();input.focus();return;}if(GATE&&s&&s.hash){show("pending");return;}show("apply");}' +
     'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
-    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u||!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);sendToDiscord(s);refreshGate();});' +
+    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'resetBtn.addEventListener("click",function(){try{localStorage.removeItem(STORE_KEY);}catch(e){}refreshGate();});' +
     /* ---- the actual chat (websocket relay), only reachable once approved ---- */
     'var ws=null;' +
     'function connectWS(){if(!WS_URL||ws)return;try{ws=new WebSocket(WS_URL);}catch(e){ws=null;return;}' +
     'ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d&&d.text!=null)add(d.name||"anon",String(d.text),false);}catch(e){}};' +
-    'ws.onclose=function(){ws=null;setTimeout(function(){var s=loadSession();if(isApproved(s))connectWS();},2000);};' +
+    'ws.onclose=function(){ws=null;setTimeout(function(){var s=loadSession();if(allowed(s))connectWS();},2000);};' +
     'ws.onerror=function(){try{ws.close();}catch(e){}};}' +
     'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var me=nameEl.value.trim()||"anon";input.value="";add(me,text,true);if(ws&&ws.readyState===1){ws.send(JSON.stringify({name:me,text:text}));}});' +
     'document.title="Shrine of Tung";' +
+    'if(!GATE){applyTitle.textContent="pick a username";applyDesc.textContent="choose a name and enter the shrine.";ga.style.display="none";applyBtn.textContent="enter";}' +
     'refreshGate();' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
@@ -1000,12 +1010,12 @@
       '<header>Shrine of Tung<small>hi</small></header>' +
       '<div id="gate">' +
       '<div id="applyView">' +
-      '<h2>apply to enter</h2>' +
-      '<p>members only. apply for a username and wait for tung to review you.</p>' +
+      '<h2 id="applyTitle">apply to enter</h2>' +
+      '<p id="applyDesc">members only. apply for a username and wait for tung to review you.</p>' +
       '<form id="applyForm">' +
       '<input id="gu" autocomplete="off" placeholder="desired username">' +
       '<textarea id="ga" rows="4" placeholder="your application — why should tung bless you?"></textarea>' +
-      '<button type="submit">apply</button>' +
+      '<button id="applyBtn" type="submit">apply</button>' +
       '</form></div>' +
       '<div id="pendingView">' +
       '<h2>application pending</h2>' +
@@ -1017,7 +1027,7 @@
       '<div id="log"></div>' +
       '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something..."><button>send</button></form>' +
       '</div>' +
-      '<script>var APPROVED=' + JSON.stringify(SHRINE_APPROVED_HASHES) + ';var WEBHOOK_URL=' + JSON.stringify(SHRINE_WEBHOOK_URL) + ';var WS_URL=' + JSON.stringify(SHRINE_WS_URL) + ';' + SAHUR_CHAT_JS + '<\/script>' +
+      '<script>var APPROVED=' + JSON.stringify(SHRINE_APPROVED_HASHES) + ';var WEBHOOK_URL=' + JSON.stringify(SHRINE_WEBHOOK_URL) + ';var WS_URL=' + JSON.stringify(SHRINE_WS_URL) + ';var GATE=' + JSON.stringify(!!SHRINE_GATE_ENABLED) + ';' + SAHUR_CHAT_JS + '<\/script>' +
       '</body></html>';
   }
 
