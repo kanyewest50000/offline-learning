@@ -960,8 +960,10 @@
     'var pins=document.getElementById("pins");' +
     'var picker=document.getElementById("picker");' +
     'var pick=document.getElementById("pick");' +
+    'var replybar=document.getElementById("replybar");' +
+    'var rpal=document.getElementById("rpal");' +
     /* ---- discord-style emoji shortcodes + per-user pinned favourites ---- */
-    'var EMOJI={"sob":"😭","joy":"😂","rofl":"🤣","skull":"💀","fire":"🔥","heart":"❤️","broken_heart":"💔","100":"💯","pray":"🙏","eyes":"👀","sunglasses":"😎","thinking":"🤔","cry":"😢","sweat_smile":"😅","heart_eyes":"😍","smirk":"😏","wink":"😉","grin":"😁","upside_down":"🙃","melting":"🫠","clap":"👏","ok_hand":"👌","thumbsup":"👍","thumbsdown":"👎","poop":"💩","tada":"🎉","rocket":"🚀","star":"⭐","zzz":"😴","cold_face":"🥶","hot_face":"🥵","nauseated":"🤢","wave":"👋","muscle":"💪","brain":"🧠","moai":"🗿","wood":"🪵","bat":"🦇","goat":"🐐","sparkles":"✨","raised_hands":"🙌","facepalm":"🤦","shrug":"🤷","angry":"😡","yawn":"🥱","salute":"🫡"};' +
+    'var EMOJI={"sob":"😭","joy":"😂","rofl":"🤣","skull":"💀","fire":"🔥","heart":"❤️","broken_heart":"💔","100":"💯","pray":"🙏","eyes":"👀","sunglasses":"😎","thinking":"🤔","cry":"😢","sweat_smile":"😅","heart_eyes":"😍","smirk":"😏","wink":"😉","grin":"😁","upside_down":"🙃","melting":"🫠","clap":"👏","ok_hand":"👌","thumbsup":"👍","thumbsdown":"👎","poop":"💩","tada":"🎉","rocket":"🚀","star":"⭐","zzz":"😴","cold_face":"🥶","hot_face":"🥵","nauseated":"🤢","wave":"👋","muscle":"💪","brain":"🧠","moai":"🗿","wood":"🪵","bat":"🦇","goat":"🐐","sparkles":"✨","raised_hands":"🙌","facepalm":"🤦","shrug":"🤷","angry":"😡","yawn":"🥱","salute":"🫡","israel":"🇮🇱","middle_finger":"🖕","sweat_drops":"💦","pleading":"🥺","clown":"🤡","rich":"🤑","feet":"🦶","tongue":"👅","wheelchair":"♿","ninja":"🥷"};' +
     'function emojify(t){return t.replace(/:([a-z0-9_+-]+):/g,function(m,c){return EMOJI[c]||m;});}' +
     'function countsKey(){return "shrine-emoji-"+(nameEl.value||"anon");}' +
     'function loadCounts(){try{return JSON.parse(localStorage.getItem(countsKey())||"{}");}catch(e){return {};}}' +
@@ -970,16 +972,32 @@
     'function renderPins(){var c=loadCounts();var arr=Object.keys(c).sort(function(a,b){return c[b]-c[a];}).slice(0,5);pins.innerHTML="";if(!arr.length){pins.style.display="none";return;}var l=document.createElement("span");l.className="lbl";l.textContent="pinned";pins.appendChild(l);arr.forEach(function(code){var b=document.createElement("button");b.type="button";b.className="pin";b.textContent=EMOJI[code];b.title=":"+code+":";b.addEventListener("click",function(){insertTok(":"+code+":");});pins.appendChild(b);});pins.style.display="flex";}' +
     'function bumpEmoji(text){var used=text.match(/:([a-z0-9_+-]+):/g);if(!used)return;var c=loadCounts();used.forEach(function(tok){var code=tok.slice(1,-1);if(EMOJI[code])c[code]=(c[code]||0)+1;});saveCounts(c);renderPins();}' +
     'function buildPicker(){picker.innerHTML="";Object.keys(EMOJI).forEach(function(code){var b=document.createElement("button");b.type="button";b.className="pemoji";b.textContent=EMOJI[code];b.title=":"+code+":";b.addEventListener("click",function(){insertTok(":"+code+":");picker.style.display="none";});picker.appendChild(b);});}' +
+    /* ---- message replies + reactions (live-only, over the same relay) ---- */
+    'var MSGS={};' +
+    'var REACTS=["❤️","👍","👎","😂","😮","😢","🔥","🤡","🙏","💀"];' +
+    'var replyTo=null,rTarget=null;' +
+    'function wsSend(o){try{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o));}catch(e){}}' +
+    'function mkId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}' +
+    'function renderReacts(id){var m=MSGS[id];if(!m)return;m.reactEl.innerHTML="";Object.keys(m.counts).forEach(function(e){var chip=document.createElement("button");chip.type="button";chip.className="chip"+(m.mine[e]?" on":"");chip.textContent=e+" "+m.counts[e];chip.addEventListener("click",function(ev){ev.stopPropagation();toggleReact(id,e);});m.reactEl.appendChild(chip);});}' +
+    'function applyReact(id,e,op){var m=MSGS[id];if(!m)return;m.counts[e]=(m.counts[e]||0)+op;if(m.counts[e]<=0)delete m.counts[e];renderReacts(id);}' +
+    'function toggleReact(id,e){var m=MSGS[id];if(!m)return;var op=m.mine[e]?-1:1;if(op===1)m.mine[e]=1;else delete m.mine[e];applyReact(id,e,op);wsSend({t:"x",id:id,e:e,op:op});}' +
+    'function openPalette(id,anchor){rTarget=id;var r=anchor.getBoundingClientRect();rpal.style.left=Math.max(6,Math.min(r.left-90,window.innerWidth-236))+"px";rpal.style.top=(r.bottom+4)+"px";rpal.style.display="flex";}' +
+    'function buildRpal(){rpal.innerHTML="";REACTS.forEach(function(e){var b=document.createElement("button");b.type="button";b.textContent=e;b.addEventListener("click",function(ev){ev.stopPropagation();if(rTarget)toggleReact(rTarget,e);rpal.style.display="none";});rpal.appendChild(b);});}' +
+    'function setReply(m){replyTo={id:m.id,name:m.name,text:m.text.slice(0,140)};replybar.innerHTML="";var s=document.createElement("span");s.textContent="replying to ";var bb=document.createElement("b");bb.textContent=m.name;s.appendChild(bb);replybar.appendChild(s);var x=document.createElement("span");x.className="x";x.textContent="cancel";x.addEventListener("click",cancelReply);replybar.appendChild(x);replybar.style.display="flex";input.focus();}' +
+    'function cancelReply(){replyTo=null;replybar.style.display="none";}' +
     /* ---- terrible local session store + hash allowlist check ---- */
     'function loadSession(){try{return JSON.parse(localStorage.getItem(STORE_KEY)||"null");}catch(e){return null;}}' +
     'function saveSession(s){try{localStorage.setItem(STORE_KEY,JSON.stringify(s));}catch(e){}}' +
     'function makeHash(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.prototype.map.call(a,function(b){return ("0"+b.toString(16)).slice(-2);}).join("");}' +
     'function isApproved(s){return !!(s&&s.hash&&APPROVED.indexOf(s.hash)!==-1);}' +
     'function allowed(s){return GATE?isApproved(s):!!(s&&s.username);}' +
-    'function add(who,text,mine){' +
-    'var row=document.createElement("div");row.className=mine?"msg me":"msg";' +
-    'var w=document.createElement("span");w.className="who";w.textContent=who;' +
-    'row.appendChild(w);row.appendChild(document.createTextNode(emojify(text)));' +
+    'function add(m){var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(m.id)row.setAttribute("data-id",m.id);' +
+    'var w=document.createElement("span");w.className="who";w.textContent=m.name;row.appendChild(w);' +
+    'if(m.reply){var q=document.createElement("div");q.className="quote";var qn=document.createElement("b");qn.textContent=m.reply.name+": ";q.appendChild(qn);q.appendChild(document.createTextNode(emojify(m.reply.text)));q.addEventListener("click",function(){var t=document.querySelector("[data-id="+m.reply.id+"]");if(t){t.scrollIntoView({block:"center"});t.className+=" flash";setTimeout(function(){t.className=t.className.replace(" flash","");},700);}});row.appendChild(q);}' +
+    'var bd=document.createElement("span");bd.className="body";bd.textContent=emojify(m.text);row.appendChild(bd);' +
+    'var acts=document.createElement("div");acts.className="acts";var rb=document.createElement("button");rb.type="button";rb.className="act";rb.textContent="😀";rb.title="react";rb.addEventListener("click",function(ev){ev.stopPropagation();openPalette(m.id,rb);});var pb=document.createElement("button");pb.type="button";pb.className="act";pb.textContent="↩";pb.title="reply";pb.addEventListener("click",function(ev){ev.stopPropagation();setReply(m);});acts.appendChild(rb);acts.appendChild(pb);row.appendChild(acts);' +
+    'var rc=document.createElement("div");rc.className="reacts";row.appendChild(rc);' +
+    'MSGS[m.id]={reactEl:rc,counts:{},mine:{}};' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- swap between the apply / pending / chat views ---- */
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
@@ -991,12 +1009,13 @@
     /* ---- the actual chat (websocket relay), only reachable once approved ---- */
     'var ws=null;' +
     'function connectWS(){if(!WS_URL||ws)return;try{ws=new WebSocket(WS_URL);}catch(e){ws=null;return;}' +
-    'ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(d&&d.text!=null)add(d.name||"anon",String(d.text),false);}catch(e){}};' +
+    'ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(!d)return;if(d.t==="x"){applyReact(d.id,d.e,d.op);return;}if(d.text!=null)add({id:d.id||mkId(),name:d.name||"anon",text:String(d.text),mine:false,reply:d.r||null});}catch(e){}};' +
     'ws.onclose=function(){ws=null;setTimeout(function(){var s=loadSession();if(allowed(s))connectWS();},2000);};' +
     'ws.onerror=function(){try{ws.close();}catch(e){}};}' +
-    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var me=nameEl.value.trim()||"anon";input.value="";add(me,text,true);bumpEmoji(text);if(ws&&ws.readyState===1){ws.send(JSON.stringify({name:me,text:text}));}});' +
-    'pick.addEventListener("click",function(){picker.style.display=picker.style.display==="flex"?"none":"flex";});' +
-    'buildPicker();' +
+    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var me=nameEl.value.trim()||"anon";var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:me,text:text,mine:true,reply:rep});bumpEmoji(text);wsSend({t:"m",id:id,name:me,text:text,r:rep});cancelReply();});' +
+    'pick.addEventListener("click",function(ev){ev.stopPropagation();picker.style.display=picker.style.display==="flex"?"none":"flex";rpal.style.display="none";});' +
+    'document.addEventListener("click",function(){rpal.style.display="none";picker.style.display="none";});' +
+    'buildPicker();buildRpal();' +
     'document.title="Shrine of Tung";' +
     'if(!GATE){applyTitle.textContent="pick a username";applyDesc.textContent="choose a name and enter the shrine.";ga.style.display="none";applyBtn.textContent="enter";}' +
     'refreshGate();' +
@@ -1045,6 +1064,23 @@
       '.pemoji{padding:4px;font-size:20px;line-height:1;background:transparent;border:0;border-radius:6px;cursor:pointer;color:inherit}' +
       '.pemoji:hover{background:#3a2410}' +
       '#pick{padding:10px 12px;background:#160d04;border:1px solid #3a2410;color:#f5efe0;font-weight:400}' +
+      '.msg{position:relative}' +
+      '.acts{position:absolute;top:-12px;right:6px;display:none;gap:2px}' +
+      '.msg:hover .acts{display:flex}' +
+      '.act{padding:2px 6px;font-size:12px;line-height:1;background:#160d04;border:1px solid #3a2410;border-radius:6px;color:#f5efe0;font-weight:400;cursor:pointer}' +
+      '.quote{font-size:12px;color:#c8823c;border-left:3px solid #c8823c;padding:2px 6px;margin-bottom:4px;border-radius:4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}' +
+      '.quote b{color:#f5efe0}' +
+      '.reacts{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}' +
+      '.reacts:empty{display:none}' +
+      '.chip{padding:1px 7px;font-size:12px;line-height:1.7;background:#160d04;border:1px solid #3a2410;border-radius:10px;color:#f5efe0;font-weight:400;cursor:pointer}' +
+      '.chip.on{background:#8a5a28;border-color:#c8823c}' +
+      '.flash{outline:2px solid #f2c063}' +
+      '#replybar{display:none;align-items:center;gap:8px;padding:6px 12px;background:#241505;border-top:1px solid #3a2410;font-size:12px;color:#c8823c}' +
+      '#replybar b{color:#f5efe0}' +
+      '#replybar .x{margin-left:auto;cursor:pointer;padding:2px 8px;background:#160d04;border:1px solid #3a2410;border-radius:6px}' +
+      '#rpal{position:fixed;display:none;gap:2px;padding:4px;background:#241505;border:1px solid #3a2410;border-radius:10px;z-index:10;box-shadow:0 6px 20px #0008}' +
+      '#rpal button{padding:3px 4px;font-size:18px;line-height:1;background:transparent;border:0;cursor:pointer}' +
+      '#rpal button:hover{background:#3a2410;border-radius:6px}' +
       '</style></head><body>' +
       '<header>Shrine of Tung<small>hi</small></header>' +
       '<div id="gate">' +
@@ -1066,8 +1102,10 @@
       '<div id="log"></div>' +
       '<div id="pins"></div>' +
       '<div id="picker"></div>' +
+      '<div id="replybar"></div>' +
       '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something... try :sob:"><button id="pick" type="button" title="emojis">😀</button><button>send</button></form>' +
       '</div>' +
+      '<div id="rpal"></div>' +
       '<script>var APPROVED=' + JSON.stringify(SHRINE_APPROVED_HASHES) + ';var WEBHOOK_URL=' + JSON.stringify(SHRINE_WEBHOOK_URL) + ';var WS_URL=' + JSON.stringify(SHRINE_WS_URL) + ';var GATE=' + JSON.stringify(!!SHRINE_GATE_ENABLED) + ';' + SAHUR_CHAT_JS + '<\/script>' +
       '</body></html>';
   }
