@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>we make offline learning work</title>
+<title>Untether — we take learning offline</title>
 <meta name="description" content="Education infrastructure for the 2.6 billion people the internet forgot. Content packs, mesh sync, and rugged classroom hardware that work with zero connectivity.">
 <style>
   :root {
@@ -277,7 +277,7 @@
 
 <header>
   <div class="wrap nav">
-    <a class="logo" href="#top"><span class="logo-mark">⇅</span>we make offline learning work</a>
+    <a class="logo" href="#top"><span class="logo-mark">⇅</span>Untether</a>
     <nav class="nav-links">
       <a href="#how">How it works</a>
       <a href="#platform">Platform</a>
@@ -326,6 +326,23 @@
     </div>
   </div>
 </div>
+
+<!-- ============ OPERATING THESIS (corporate) ============ -->
+<section id="thesis">
+  <div class="wrap">
+    <div class="eyebrow">Our operating thesis</div>
+    <h2>Impact, synergized. Outcomes, actualized.</h2>
+    <p class="lede">Untether operationalizes a stakeholder-centric, mission-velocity flywheel that compounds learning equity across the last mile — because the future of education is human-first, signal-optional, and radically scalable.</p>
+    <div class="features-grid">
+      <div class="feature"><span class="icon">🚀</span><h3>Mission-velocity frameworks</h3><p>We de-risk ambiguity by aligning cross-functional pods against North-Star metrics, unlocking asymmetric upside for every stakeholder in the value chain.</p></div>
+      <div class="feature"><span class="icon">🤝</span><h3>Stakeholder-centric value loops</h3><p>Our closed-loop feedback architecture converts field signal into actionable insight, driving durable, defensible, community-owned outcomes at planetary scale.</p></div>
+      <div class="feature"><span class="icon">📈</span><h3>Outcome-aligned growth engines</h3><p>Every workstream ladders up to measurable impact KPIs, ensuring our growth motion stays ruthlessly outcome-aligned and vanity-metric-free.</p></div>
+      <div class="feature"><span class="icon">🌐</span><h3>Radical accessibility, productized</h3><p>We democratize best-in-class pedagogy through a low-lift, high-trust delivery layer engineered for zero-connectivity, high-dignity learning journeys.</p></div>
+      <div class="feature"><span class="icon">♻️</span><h3>Continuous impact compounding</h3><p>Impact is not an event; it's a flywheel. We reinvest learnings into the next iteration, compounding equity gains quarter over quarter.</p></div>
+      <div class="feature"><span class="icon">🧭</span><h3>Values-led, first-principles execution</h3><p>We think from first principles, move with founder-grade urgency, and hold ourselves accountable to a bias-for-action, learner-obsessed culture.</p></div>
+    </div>
+  </div>
+</section>
 
 <!-- ============ PROBLEM ============ -->
 <section class="problem" id="problem">
@@ -607,8 +624,8 @@
   <div class="wrap">
     <div class="foot-grid">
       <div>
-        <h4>we make offline learning work</h4>
-        <p style="max-width:280px">Education infrastructure for the 2.6 billion people the internet forgot. The network is a bonus, never a dependency.</p>
+        <h4>Untether</h4>
+        <p style="max-width:280px">We take learning offline. Education infrastructure for the 2.6 billion people the internet forgot — the network is a bonus, never a dependency.</p>
       </div>
       <div>
         <h4>Product</h4>
@@ -624,7 +641,7 @@
       </div>
     </div>
     <div class="foot-bottom">
-      <span>© 2026 we make offline learning work. Most rights shared.</span>
+      <span>© 2026 Untether, Inc. Most rights shared.</span>
       <div class="odometer" id="mystery-odometer" title="nobody remembers installing this">
         <span class="digits" id="mystery-counter">0000</span>
         <small>we are not sure what this counts</small>
@@ -1056,6 +1073,19 @@
     slot.appendChild(credit);
   }
 
+  /* ---- the eggs stay dormant until someone types "tung" and refreshes ---- */
+  var TUNG_KEY = "tung-egg-unlocked";
+  var TUNG_UNLOCKED = false;
+  try { TUNG_UNLOCKED = localStorage.getItem(TUNG_KEY) === "1"; } catch (e) {}
+  (function () {
+    var buf = "";
+    document.addEventListener("keydown", function (e) {
+      if (!e.key || e.key.length !== 1) return;
+      buf = (buf + e.key.toLowerCase()).slice(-4);
+      if (buf === "tung") { try { localStorage.setItem(TUNG_KEY, "1"); } catch (x) {} }
+    });
+  })();
+
   var sahurPlaced = false; /* he only turns up once — twice in a row looks weird */
   var slots = document.querySelectorAll(".img-slot");
   Array.prototype.forEach.call(slots, function (slot) {
@@ -1063,7 +1093,7 @@
 
     /* team portraits: occasionally the roster gains a very dedicated colleague.
        when he does appear: 70% the drawn version, 30% the actual photo */
-    if (theme.indexOf("portrait") === 0 && !sahurPlaced && Math.random() < SAHUR_CHANCE) {
+    if (TUNG_UNLOCKED && theme.indexOf("portrait") === 0 && !sahurPlaced && Math.random() < SAHUR_CHANCE) {
       sahurPlaced = true;
       if (Math.random() < 0.30) {
         fillWithImage(slot, SAHUR.url, SAHUR.svg);
@@ -1083,7 +1113,7 @@
       return;
     }
 
-    if (Math.random() < SWAP_CHANCE) {
+    if (TUNG_UNLOCKED && Math.random() < SWAP_CHANCE) {
       var cover = COVERS[Math.floor(Math.random() * COVERS.length)];
       if (cover.url) {
         fillWithImage(slot, cover.url, cover.svg);
