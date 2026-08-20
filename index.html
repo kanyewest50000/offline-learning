@@ -940,7 +940,7 @@
      double quotes and backticks so it survives inside this single-quoted blob. */
   var SAHUR_CHAT_JS =
     '(function(){' +
-    'var STORE_KEY="shrine-of-tung-session";' +
+    'var STORE_KEY="shrine-of-tung-session-v2";' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
     'var pendingView=document.getElementById("pendingView");' +
@@ -1003,7 +1003,7 @@
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
     'function refreshGate(){var s=loadSession();if(allowed(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");connectWS();renderPins();input.focus();return;}if(GATE&&s&&s.hash){show("pending");return;}show("apply");}' +
     'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
-    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
+    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;if(!confirm(u+" will be your permanent username. you cannot change it later. continue?"))return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'resetBtn.addEventListener("click",function(){try{localStorage.removeItem(STORE_KEY);}catch(e){}refreshGate();});' +
     /* ---- the actual chat (websocket relay), only reachable once approved ---- */
