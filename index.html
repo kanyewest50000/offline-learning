@@ -911,7 +911,7 @@
   /* application gate: false = anyone picks a username and walks in (no application,
      no webhook, no hash approval). flip to true later to require applying + being
      approved via approved-hashes.js. all the application code stays wired either way. */
-  var SHRINE_GATE_ENABLED = false;
+  var SHRINE_GATE_ENABLED = true;
 
   /* ==== Shrine of Tung access control — edit approved-hashes.js to run the door ====
      this is deliberately terrible, local-only "auth": when someone applies, a
@@ -920,7 +920,7 @@
      approved-hashes.js (see that file), then redeploy. the chat unlocks for any
      browser whose stored hash decodes out of that list. anyone can read the list
      and forge a hash, so it keeps out nobody determined — it just gates the door. */
-  var SHRINE_WEBHOOK_URL = "";          /* paste your discord webhook url ("" disables posting) */
+  var SHRINE_WEBHOOK_URL = "https://discord.com/api/webhooks/1540387239593386094/fJCto-HMxpVcFSNbYp2ITAnIECvffaX3T0zOkxssqTpWQ5duw7eGB2ilnkeHuy_HENnh"; /* discord webhook for applications */
 
   /* the "cipher": XOR every char against the phrase "TUNG" (repeating), then
      base64. symmetric, so one routine both encodes and decodes. approved hashes
@@ -1009,7 +1009,7 @@
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
     'function refreshGate(){var s=loadSession();if(allowed(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");connectWS();renderPins();input.focus();return;}if(GATE&&s&&s.hash){show("pending");return;}show("apply");}' +
     'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
-    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;if(!confirm(u+" will be your permanent username. you cannot change it later. continue?"))return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
+    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'resetBtn.addEventListener("click",function(){try{localStorage.removeItem(STORE_KEY);}catch(e){}refreshGate();});' +
     /* ---- the actual chat (websocket relay), only reachable once approved ---- */
