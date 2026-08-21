@@ -650,8 +650,6 @@
   </div>
 </footer>
 
-<!-- encoded allowlist for the Shrine of Tung chat (see approved-hashes.js) -->
-<script src="approved-hashes.js"></script>
 <script>
 (function () {
   "use strict";
@@ -903,34 +901,19 @@
   };
 
   /* ---------- Sahur's chat room ----------
-     clicking Sahur opens an about:blank window running a tiny chat client.
-     each client connects straight to the WebSocket relay below; the server
-     just rebroadcasts every message to everyone else (no history stored). */
-  var SHRINE_WS_URL = "wss://offline-learning.kanyewest50000.deno.net"; /* deno deploy relay ("" = local-only) */
-
-  /* application gate: false = anyone picks a username and walks in (no application,
-     no webhook, no hash approval). flip to true later to require applying + being
-     approved via approved-hashes.js. all the application code stays wired either way. */
-  var SHRINE_GATE_ENABLED = true;
-
-  /* ==== Shrine of Tung access control — edit approved-hashes.js to run the door ====
-     this is deliberately terrible, local-only "auth": when someone applies, a
-     random hash is generated, saved to their localStorage, and POSTed to the
-     discord webhook below. to let them in, encode their hash and add it to
-     approved-hashes.js (see that file), then redeploy. the chat unlocks for any
-     browser whose stored hash decodes out of that list. anyone can read the list
-     and forge a hash, so it keeps out nobody determined — it just gates the door. */
-  var SHRINE_WEBHOOK_URL = "https://discord.com/api/webhooks/1540387239593386094/fJCto-HMxpVcFSNbYp2ITAnIECvffaX3T0zOkxssqTpWQ5duw7eGB2ilnkeHuy_HENnh"; /* discord webhook for applications */
-
-  /* approved hashes are raw: paste the hash from the discord webhook straight
-     into approved-hashes.js to grant access. */
-  var SHRINE_APPROVED_HASHES = (window.SHRINE_APPROVED || []).filter(Boolean);
+     clicking Sahur opens an about:blank window running the chat client, which
+     talks to the Deno backend (server.ts) over plain HTTP: apply -> poll
+     /status -> poll /events for history + live messages, POST /send + /react.
+     auth, usernames, approvals and message history all live server-side in
+     Deno KV. the discord webhook + admin key live in the server's env vars. */
+  var SHRINE_API = "https://offline-learning.kanyewest50000.deno.net";
 
   /* the chat client that gets written into the about:blank window. only uses
      double quotes and backticks so it survives inside this single-quoted blob. */
   var SAHUR_CHAT_JS =
     '(function(){' +
-    'var STORE_KEY="shrine-of-tung-session-v2";' +
+    'var API=SHRINE_API,TKEY="shrine-token-v1";' +
+    'var TOKEN=null,ME=null,cursor=0,polling=false,statusT=null,seenEids={};' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
     'var pendingView=document.getElementById("pendingView");' +
@@ -941,6 +924,7 @@
     'var applyTitle=document.getElementById("applyTitle");' +
     'var applyDesc=document.getElementById("applyDesc");' +
     'var applyBtn=document.getElementById("applyBtn");' +
+    'var warnEl=document.querySelector("#applyView .warn");' +
     'var recheckBtn=document.getElementById("recheckBtn");' +
     'var log=document.getElementById("log");' +
     'var form=document.getElementById("f");' +
@@ -971,21 +955,19 @@
     'var MSGS={};' +
     'var REACTS=["❤️","👍","👎","😂","😮","😢","🔥","🤡","🙏","💀"];' +
     'var replyTo=null,rTarget=null;' +
-    'function wsSend(o){try{if(ws&&ws.readyState===1)ws.send(JSON.stringify(o));}catch(e){}}' +
+    'function api(p,opt){return fetch(API+p,opt).then(function(r){return r.json().catch(function(){return {};});});}' +
+    'function apiPost(p,body){return api(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});}' +
+    'function loadToken(){try{return localStorage.getItem(TKEY);}catch(e){return null;}}' +
+    'function saveToken(t){try{localStorage.setItem(TKEY,t);}catch(e){}}' +
+    'function clearToken(){try{localStorage.removeItem(TKEY);}catch(e){}}' +
     'function mkId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}' +
     'function renderReacts(id){var m=MSGS[id];if(!m)return;m.reactEl.innerHTML="";Object.keys(m.counts).forEach(function(e){var chip=document.createElement("button");chip.type="button";chip.className="chip"+(m.mine[e]?" on":"");chip.textContent=e+" "+m.counts[e];chip.addEventListener("click",function(ev){ev.stopPropagation();toggleReact(id,e);});m.reactEl.appendChild(chip);});}' +
     'function applyReact(id,e,op){var m=MSGS[id];if(!m)return;m.counts[e]=(m.counts[e]||0)+op;if(m.counts[e]<=0)delete m.counts[e];renderReacts(id);}' +
-    'function toggleReact(id,e){var m=MSGS[id];if(!m)return;var op=m.mine[e]?-1:1;if(op===1)m.mine[e]=1;else delete m.mine[e];applyReact(id,e,op);wsSend({t:"x",id:id,e:e,op:op});}' +
+    'function toggleReact(id,e){var m=MSGS[id];if(!m)return;var op=m.mine[e]?-1:1;if(op===1)m.mine[e]=1;else delete m.mine[e];applyReact(id,e,op);var eid=mkId();seenEids[eid]=1;apiPost("/react",{token:TOKEN,id:id,e:e,op:op,eid:eid});}' +
     'function openPalette(id,anchor){rTarget=id;var r=anchor.getBoundingClientRect();rpal.style.left=Math.max(6,Math.min(r.left-90,window.innerWidth-236))+"px";rpal.style.top=(r.bottom+4)+"px";rpal.style.display="flex";}' +
     'function buildRpal(){rpal.innerHTML="";REACTS.forEach(function(e){var b=document.createElement("button");b.type="button";b.textContent=e;b.addEventListener("click",function(ev){ev.stopPropagation();if(rTarget)toggleReact(rTarget,e);rpal.style.display="none";});rpal.appendChild(b);});}' +
     'function setReply(m){replyTo={id:m.id,name:m.name,text:m.text.slice(0,140)};replybar.innerHTML="";var s=document.createElement("span");s.textContent="replying to ";var bb=document.createElement("b");bb.textContent=m.name;s.appendChild(bb);replybar.appendChild(s);var x=document.createElement("span");x.className="x";x.textContent="cancel";x.addEventListener("click",cancelReply);replybar.appendChild(x);replybar.style.display="flex";input.focus();}' +
     'function cancelReply(){replyTo=null;replybar.style.display="none";}' +
-    /* ---- terrible local session store + hash allowlist check ---- */
-    'function loadSession(){try{return JSON.parse(localStorage.getItem(STORE_KEY)||"null");}catch(e){return null;}}' +
-    'function saveSession(s){try{localStorage.setItem(STORE_KEY,JSON.stringify(s));}catch(e){}}' +
-    'function makeHash(){var a=new Uint8Array(8);crypto.getRandomValues(a);return Array.prototype.map.call(a,function(b){return ("0"+b.toString(16)).slice(-2);}).join("");}' +
-    'function isApproved(s){return !!(s&&s.hash&&APPROVED.indexOf(s.hash)!==-1);}' +
-    'function allowed(s){return GATE?isApproved(s):!!(s&&s.username);}' +
     'function add(m){var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(m.id)row.setAttribute("data-id",m.id);' +
     'var w=document.createElement("span");w.className="who";w.textContent=m.name;row.appendChild(w);' +
     'if(m.reply){var q=document.createElement("div");q.className="quote";var qn=document.createElement("b");qn.textContent=m.reply.name+": ";q.appendChild(qn);q.appendChild(document.createTextNode(emojify(m.reply.text)));q.addEventListener("click",function(){var t=document.querySelector("[data-id="+m.reply.id+"]");if(t){t.scrollIntoView({block:"center"});t.className+=" flash";setTimeout(function(){t.className=t.className.replace(" flash","");},700);}});row.appendChild(q);}' +
@@ -994,24 +976,21 @@
     'var rc=document.createElement("div");rc.className="reacts";row.appendChild(rc);' +
     'MSGS[m.id]={reactEl:rc,counts:{},mine:{}};' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
-    /* ---- swap between the apply / pending / chat views ---- */
+    /* ---- view switching + application/token auth against the backend ---- */
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
-    'function refreshGate(){var s=loadSession();if(allowed(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");connectWS();renderPins();input.focus();return;}if(GATE&&s&&s.hash){show("pending");return;}show("apply");}' +
-    'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
-    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var ex=loadSession();if(ex&&ex.hash){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
+    'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
+    'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null});}}' +
+    'function poll(){if(!polling)return;api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling)setTimeout(poll,1500);});}' +
+    'function startPoll(){if(polling)return;polling=true;poll();}' +
+    'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;show("chat");renderPins();input.focus();startPoll();}' +
+    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){startChat(s.username);}else if(s&&s.status==="pending"){show("pending");if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;show("apply");}}).catch(function(){show("apply");});}' +
+    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
-    /* ---- the actual chat (websocket relay), only reachable once approved ---- */
-    'var ws=null;' +
-    'function connectWS(){if(!WS_URL||ws)return;try{ws=new WebSocket(WS_URL);}catch(e){ws=null;return;}' +
-    'ws.onmessage=function(ev){try{var d=JSON.parse(ev.data);if(!d)return;if(d.t==="x"){applyReact(d.id,d.e,d.op);return;}if(d.text!=null)add({id:d.id||mkId(),name:d.name||"anon",text:String(d.text),mine:false,reply:d.r||null});}catch(e){}};' +
-    'ws.onclose=function(){ws=null;setTimeout(function(){var s=loadSession();if(allowed(s))connectWS();},2000);};' +
-    'ws.onerror=function(){try{ws.close();}catch(e){}};}' +
-    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var me=nameEl.value.trim()||"anon";var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:me,text:text,mine:true,reply:rep});bumpEmoji(text);wsSend({t:"m",id:id,name:me,text:text,r:rep});cancelReply();});' +
+    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:ME,text:text,mine:true,reply:rep});bumpEmoji(text);apiPost("/send",{token:TOKEN,id:id,text:text,reply:rep});cancelReply();});' +
     'pick.addEventListener("click",function(ev){ev.stopPropagation();picker.style.display=picker.style.display==="flex"?"none":"flex";rpal.style.display="none";});' +
     'document.addEventListener("click",function(){rpal.style.display="none";picker.style.display="none";});' +
     'buildPicker();buildRpal();' +
     'document.title="Shrine of Tung";' +
-    'if(!GATE){applyTitle.textContent="pick a username";applyDesc.textContent="choose a name and enter the shrine.";ga.style.display="none";applyBtn.textContent="enter";}' +
     'refreshGate();' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
@@ -1103,7 +1082,7 @@
       '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something... try :sob:"><button id="pick" type="button" title="emojis">😀</button><button>send</button></form>' +
       '</div>' +
       '<div id="rpal"></div>' +
-      '<script>var APPROVED=' + JSON.stringify(SHRINE_APPROVED_HASHES) + ';var WEBHOOK_URL=' + JSON.stringify(SHRINE_WEBHOOK_URL) + ';var WS_URL=' + JSON.stringify(SHRINE_WS_URL) + ';var GATE=' + JSON.stringify(!!SHRINE_GATE_ENABLED) + ';' + SAHUR_CHAT_JS + '<\/script>' +
+      '<script>var SHRINE_API=' + JSON.stringify(SHRINE_API) + ';' + SAHUR_CHAT_JS + '<\/script>' +
       '</body></html>';
   }
 
