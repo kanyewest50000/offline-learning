@@ -1,4 +1,4 @@
 window.SHRINE_APPROVED = [
   7e938825086a41c3
-   a29b969cf6d018b1
+  a29b969cf6d018b1
 ];
