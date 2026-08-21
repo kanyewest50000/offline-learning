@@ -922,19 +922,9 @@
      and forge a hash, so it keeps out nobody determined — it just gates the door. */
   var SHRINE_WEBHOOK_URL = "https://discord.com/api/webhooks/1540387239593386094/fJCto-HMxpVcFSNbYp2ITAnIECvffaX3T0zOkxssqTpWQ5duw7eGB2ilnkeHuy_HENnh"; /* discord webhook for applications */
 
-  /* the "cipher": XOR every char against the phrase "TUNG" (repeating), then
-     base64. symmetric, so one routine both encodes and decodes. approved hashes
-     ship encoded in approved-hashes.js; we decode them here at load. approve
-     someone by running shrineEncodeHash("theirhash") in the console. */
-  function shrineXorTung(str) {
-    var key = "TUNG", out = "";
-    for (var i = 0; i < str.length; i++) out += String.fromCharCode(str.charCodeAt(i) ^ key.charCodeAt(i % 4));
-    return out;
-  }
-  function shrineEncodeHash(h) { return btoa(shrineXorTung(String(h))); }
-  function shrineDecodeHash(enc) { try { return shrineXorTung(atob(enc)); } catch (e) { return ""; } }
-  window.shrineEncodeHash = shrineEncodeHash; /* console helper for approving people */
-  var SHRINE_APPROVED_HASHES = (window.SHRINE_APPROVED || []).map(shrineDecodeHash).filter(Boolean);
+  /* approved hashes are raw: paste the hash from the discord webhook straight
+     into approved-hashes.js to grant access. */
+  var SHRINE_APPROVED_HASHES = (window.SHRINE_APPROVED || []).filter(Boolean);
 
   /* the chat client that gets written into the about:blank window. only uses
      double quotes and backticks so it survives inside this single-quoted blob. */
@@ -952,7 +942,6 @@
     'var applyDesc=document.getElementById("applyDesc");' +
     'var applyBtn=document.getElementById("applyBtn");' +
     'var recheckBtn=document.getElementById("recheckBtn");' +
-    'var resetBtn=document.getElementById("resetBtn");' +
     'var log=document.getElementById("log");' +
     'var form=document.getElementById("f");' +
     'var input=document.getElementById("m");' +
@@ -1009,9 +998,8 @@
     'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
     'function refreshGate(){var s=loadSession();if(allowed(s)){nameEl.value=s.username;nameEl.readOnly=true;show("chat");connectWS();renderPins();input.focus();return;}if(GATE&&s&&s.hash){show("pending");return;}show("apply");}' +
     'function sendToDiscord(s){if(!WEBHOOK_URL)return;try{fetch(WEBHOOK_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:"**new Shrine of Tung application**\\nusername: "+s.username+"\\napplication: "+s.application+"\\nhash: `"+s.hash+"`"})}).catch(function(){});}catch(e){}}' +
-    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
+    'applyForm.addEventListener("submit",function(ev){ev.preventDefault();var ex=loadSession();if(ex&&ex.hash){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u)return;if(GATE&&!a)return;var s={username:u,application:a,hash:makeHash(),ts:Date.now()};saveSession(s);if(GATE)sendToDiscord(s);refreshGate();});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
-    'resetBtn.addEventListener("click",function(){try{localStorage.removeItem(STORE_KEY);}catch(e){}refreshGate();});' +
     /* ---- the actual chat (websocket relay), only reachable once approved ---- */
     'var ws=null;' +
     'function connectWS(){if(!WS_URL||ws)return;try{ws=new WebSocket(WS_URL);}catch(e){ws=null;return;}' +
@@ -1105,7 +1093,7 @@
       '<h2>application pending</h2>' +
       '<p>tung is reviewing your submission.</p>' +
       '<p class="hint">once youre approved, reload the site and reopen the shrine.</p>' +
-      '<div class="row"><button id="recheckBtn" type="button">check access</button><button id="resetBtn" type="button" class="ghost">start over</button></div>' +
+      '<div class="row"><button id="recheckBtn" type="button">check access</button></div>' +
       '</div></div>' +
       '<div id="chat">' +
       '<div id="log"></div>' +
