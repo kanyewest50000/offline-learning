@@ -193,6 +193,19 @@ Deno.serve(async (req) => {
     await kv.set(["app", app.value.id], { ...app.value, status });
     return json({ ok: true, status });
   }
+  if (req.method === "POST" && path === "/admin/clear") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    let n = 0;
+    for (const prefix of [["app"], ["name"], ["tok"]]) {
+      for await (const e of kv.list({ prefix })) {
+        await kv.delete(e.key);
+        n++;
+      }
+    }
+    return json({ ok: true, cleared: n });
+  }
 
   // ---------- health ----------
   return new Response("Shrine of Tung backend is alive", {
@@ -223,13 +236,17 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 </style></head><body>
 <header>Shrine of Tung — pending applications</header>
 <main>
-<div class="keybar"><input id="key" type="password" placeholder="admin key" autocomplete="off"><button class="load" id="load">load</button></div>
+<div class="keybar"><input id="key" type="password" placeholder="admin key" autocomplete="off"><button class="load" id="load">load</button><button class="no" id="clear">clear all</button></div>
 <div id="list"><div class="empty">enter your admin key and hit load.</div></div>
 </main>
 <script>
 var keyEl=document.getElementById("key"),list=document.getElementById("list");
 try{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}catch(e){}
 document.getElementById("load").onclick=refresh;
+document.getElementById("clear").onclick=function(){
+  if(!confirm("Delete ALL applications (pending + approved)? Everyone will have to re-apply."))return;
+  fetch("/admin/clear",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim()})}).then(function(r){return r.json();}).then(function(d){alert(d.error?d.error:("cleared "+d.cleared+" entries"));refresh();});
+};
 function refresh(){
   var key=keyEl.value.trim();try{localStorage.setItem("shrine-admin-key",key);}catch(e){}
   list.innerHTML='<div class="empty">loading...</div>';
