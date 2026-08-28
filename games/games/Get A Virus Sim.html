@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Cursed Scareware-Style Game Loader</title>
+<style>
+  html, body {
+    margin:0;
+    padding:0;
+    background:#222;
+    font-family:Arial, sans-serif;
+    overflow:hidden;
+    cursor:none; /* hide real cursor */
+  }
+
+  /* Melting launcher bar */
+  #topbar {
+    background:#ff00ff;
+    padding:6px;
+    display:flex;
+    gap:12px;
+    align-items:center;
+    border-bottom:4px dashed yellow;
+    transform-origin:top center;
+    animation:uiMelt 8s infinite alternate ease-in-out;
+  }
+  #topbar button {
+    background:lime;
+    border:3px solid red;
+    padding:4px 10px;
+    cursor:pointer;
+    font-weight:bold;
+    transition:transform 0.2s;
+  }
+  #topbar button:hover {
+    transform:scale(1.1) rotate(-3deg);
+  }
+
+  #gameframe {
+    width:100%;
+    height:calc(100vh - 50px);
+    border:none;
+    background:black;
+  }
+
+  /* Generic ad container */
+  .ad {
+    position:absolute;
+    background:white;
+    border-radius:8px;
+    padding:0;
+    z-index:9999;
+    box-shadow:0 0 30px rgba(0,0,0,0.4);
+    overflow:hidden;
+    animation:fadeIn 0.4s ease-out;
+    font-family:Arial, sans-serif;
+  }
+  @keyframes fadeIn {
+    from { opacity:0; transform:scale(0.8); }
+    to { opacity:1; transform:scale(1); }
+  }
+
+  .ad-header {
+    background:#f5f5f5;
+    padding:10px;
+    font-weight:bold;
+    font-size:16px;
+    border-bottom:1px solid #ddd;
+  }
+  .fakeclose {
+    position:absolute;
+    top:6px;
+    right:6px;
+    background:#ccc;
+    width:20px;
+    height:20px;
+    text-align:center;
+    line-height:20px;
+    border-radius:50%;
+    cursor:pointer;
+    font-size:12px;
+    font-weight:bold;
+    color:#333;
+  }
+  .fakeclose:hover {
+    background:#bbb;
+  }
+  .realclose {
+    position:absolute;
+    bottom:5px;
+    right:5px;
+    font-size:10px;
+    color:#888;
+    cursor:pointer;
+  }
+  .ad-content {
+    padding:12px;
+    font-size:14px;
+  }
+  .ad img {
+    width:100%;
+    height:140px;
+    object-fit:cover;
+  }
+  .big-ad {
+    width:80vw !important;
+    height:80vh !important;
+    left:10vw !important;
+    top:10vh !important;
+  }
+
+  /* Scareware style */
+  .scareware {
+    border:3px solid red;
+    box-shadow:0 0 40px rgba(255,0,0,0.7);
+  }
+  .scareware .ad-header {
+    background:#330000;
+    color:#ff5555;
+    border-bottom:1px solid #660000;
+  }
+  .scareware .ad-content {
+    background:#111;
+    color:#fdd;
+  }
+  .scareware .threat-count {
+    font-size:13px;
+    color:#ff7777;
+    margin-bottom:6px;
+  }
+  .scareware .scan-bar {
+    width:100%;
+    height:10px;
+    background:#330000;
+    border-radius:5px;
+    overflow:hidden;
+    margin:6px 0;
+  }
+  .scareware .scan-bar-inner {
+    height:100%;
+    width:0%;
+    background:linear-gradient(90deg, #ff0000, #ffcc00);
+    transition:width 0.2s;
+  }
+  .scareware .clean-btn {
+    display:inline-block;
+    margin-top:6px;
+    padding:6px 10px;
+    background:#ff0000;
+    color:white;
+    font-size:12px;
+    border-radius:4px;
+    cursor:pointer;
+    border:1px solid #ffaaaa;
+  }
+  .scareware .clean-btn:hover {
+    background:#ff4444;
+  }
+  .scareware .countdown {
+    font-size:12px;
+    color:#ffaaaa;
+    margin-top:4px;
+  }
+
+  /* Fake cursor */
+  #fakeCursor {
+    position:fixed;
+    width:18px;
+    height:18px;
+    border-radius:50%;
+    background:rgba(0,255,255,0.9);
+    box-shadow:0 0 10px rgba(0,255,255,0.8);
+    pointer-events:none;
+    z-index:10000;
+    transform:translate(-50%, -50%);
+  }
+
+  /* Fake error messages */
+  .fake-error {
+    position:fixed;
+    bottom:10px;
+    left:10px;
+    background:#fff;
+    border:1px solid #333;
+    padding:6px 10px;
+    font-size:11px;
+    z-index:9999;
+    box-shadow:0 0 10px rgba(0,0,0,0.4);
+  }
+
+  @keyframes uiMelt {
+    0%   { transform:translateY(0) skewX(0deg); }
+    50%  { transform:translateY(10px) skewX(3deg); }
+    100% { transform:translateY(25px) skewX(6deg); }
+  }
+
+  /* Fake crash overlays */
+  .overlay {
+    position:fixed;
+    inset:0;
+    z-index:12000;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family:Arial, sans-serif;
+  }
+  .overlay-crash {
+    background:#ffffff;
+    color:#333;
+    flex-direction:column;
+  }
+  .overlay-crash-box {
+    border:1px solid #ccc;
+    padding:20px 30px;
+    box-shadow:0 0 20px rgba(0,0,0,0.3);
+    text-align:center;
+  }
+  .overlay-crash-title {
+    font-size:20px;
+    margin-bottom:10px;
+  }
+  .overlay-crash-btn {
+    margin-top:15px;
+    padding:6px 12px;
+    border:1px solid #888;
+    background:#f5f5f5;
+    cursor:pointer;
+  }
+
+  .overlay-unresponsive {
+    background:rgba(0,0,0,0.4);
+  }
+  .overlay-unresponsive-box {
+    background:#fff;
+    border:1px solid #999;
+    padding:15px 20px;
+    box-shadow:0 0 20px rgba(0,0,0,0.4);
+    width:320px;
+  }
+  .overlay-unresponsive-title {
+    font-weight:bold;
+    margin-bottom:8px;
+  }
+  .overlay-unresponsive-buttons {
+    margin-top:12px;
+    text-align:right;
+  }
+  .overlay-unresponsive-buttons button {
+    margin-left:6px;
+    padding:4px 10px;
+  }
+
+  .overlay-reboot {
+    background:#000;
+    color:#fff;
+    flex-direction:column;
+    text-align:center;
+  }
+  .overlay-reboot-text {
+    font-size:18px;
+    margin-bottom:10px;
+  }
+  .overlay-reboot-sub {
+    font-size:12px;
+    opacity:0.7;
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <input type="file" id="fileInput">
+  <button onclick="goFullscreen()">Fullscreen??</button>
+  <button onclick="spawnRandomAd()">Spawn Ad</button>
+</div>
+
+<iframe id="gameframe"></iframe>
+<div id="fakeCursor"></div>
+
+<script>
+let currentURL = null;
+const fakeCursor = document.getElementById('fakeCursor');
+
+/* --------------------------
+   LOAD GAME
+---------------------------*/
+document.getElementById("fileInput").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  if (currentURL) URL.revokeObjectURL(currentURL);
+
+  const text = await file.text();
+  const blob = new Blob([text], { type:"text/html" });
+  currentURL = URL.createObjectURL(blob);
+
+  document.getElementById("gameframe").src = currentURL;
+
+  // start chaos timers
+  setInterval(spawnRandomAd, 4000 + Math.random()*3000);
+});
+
+/* --------------------------
+   FULLSCREEN HIJACK
+---------------------------*/
+function goFullscreen() {
+  document.documentElement.requestFullscreen().catch(()=>{});
+}
+
+setInterval(() => {
+  if (Math.random() < 0.5) {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(()=>{});
+    } else {
+      document.exitFullscreen().catch(()=>{});
+    }
+  }
+}, 8000);
+
+/* --------------------------
+   RANDOM PAGE "SCROLL" WOBBLE
+---------------------------*/
+setInterval(() => {
+  const offset = (Math.random() - 0.5) * 20;
+  document.body.style.transform = `translateY(${offset}px)`;
+  setTimeout(() => {
+    document.body.style.transform = 'translateY(0)';
+  }, 400);
+}, 7000);
+
+/* --------------------------
+   FAKE ERROR MESSAGES
+---------------------------*/
+const fakeErrors = [
+  "Uncaught TypeError: undefined is not a function",
+  "Uncaught ReferenceError: game is not defined",
+  "Warning: Possible memory leak detected",
+  "Error: Unexpected token '<' in JSON",
+  "Unhandled Promise Rejection: something went wrong",
+  "DevTools failed to load source map: Could not load content",
+];
+
+setInterval(() => {
+  const div = document.createElement('div');
+  div.className = 'fake-error';
+  div.textContent = fakeErrors[Math.floor(Math.random()*fakeErrors.length)];
+  document.body.appendChild(div);
+  setTimeout(() => div.remove(), 6000);
+}, 9000);
+
+/* --------------------------
+   PRODUCT ADS
+---------------------------*/
+const productAds = [
+  {
+    title: "NovaBuds Pro Wireless Earbuds",
+    img: "https://picsum.photos/seed/earbuds/400/200",
+    text: "Crystal‑clear audio. 48‑hour battery. Noise cancellation that feels unreal.",
+  },
+  {
+    title: "SkyCharge 65W Fast Charger",
+    img: "https://picsum.photos/seed/charger/400/200",
+    text: "Charge your phone from 0% to 80% in just 18 minutes.",
+  },
+  {
+    title: "FreshBox Meal Kits",
+    img: "https://picsum.photos/seed/food/400/200",
+    text: "Healthy meals delivered weekly. Fresh ingredients. Zero effort.",
+  },
+  {
+    title: "ZenLamp Smart Light",
+    img: "https://picsum.photos/seed/lamp/400/200",
+    text: "Adaptive lighting that matches your mood and boosts productivity.",
+  },
+  {
+    title: "CloudSync 2TB Storage",
+    img: "https://picsum.photos/seed/cloud/400/200",
+    text: "Secure cloud storage for all your files. Access anywhere.",
+  },
+  {
+    title: "FlexDesk Adjustable Table",
+    img: "https://picsum.photos/seed/desk/400/200",
+    text: "Sit, stand, stretch. Your workspace, your rules.",
+  },
+  {
+    title: "PulseWatch Fitness Tracker",
+    img: "https://picsum.photos/seed/watch/400/200",
+    text: "Track your steps, heart rate, sleep, and more.",
+  },
+  {
+    title: "SnapCam Mini Drone",
+    img: "https://picsum.photos/seed/drone/400/200",
+    text: "Capture stunning aerial shots with a drone that fits in your pocket.",
+  },
+  {
+    title: "UltraClean Vacuum Pro",
+    img: "https://picsum.photos/seed/vacuum/400/200",
+    text: "Powerful suction. Whisper‑quiet. Cordless freedom.",
+  },
+  {
+    title: "MegaScreen Streaming Plan",
+    img: "https://picsum.photos/seed/tv/400/200",
+    text: "Unlimited movies and shows. New releases every week.",
+  }
+];
+
+/* --------------------------
+   SCAREWARE PARODY ADS (STYLE A)
+---------------------------*/
+const scarewareAds = [
+  {
+    title: "ULTRASECURE PRO - CRITICAL ALERT",
+    text: "Your PC is at HIGH RISK. Threats detected in system files.",
+    threats: 47,
+    countdown: 15
+  },
+  {
+    title: "SHIELDGUARD 360 - SYSTEM WARNING",
+    text: "Suspicious activity detected. Your personal data may be exposed.",
+    threats: 23,
+    countdown: 20
+  },
+  {
+    title: "ANTIVIRUS MAX - THREAT DETECTED",
+    text: "Multiple high‑risk items found. Immediate cleanup recommended.",
+    threats: 12,
+    countdown: 10
+  },
+  {
+    title: "SECURESCAN ELITE - FIREWALL DOWN",
+    text: "Firewall protection is OFF. Your network is vulnerable.",
+    threats: 31,
+    countdown: 25
+  },
+  {
+    title: "ULTRASECURE PRO - DATA AT RISK",
+    text: "Unusual encryption activity detected. Files may be at risk.",
+    threats: 9,
+    countdown: 12
+  },
+  {
+    title: "SHIELDGUARD 360 - SYSTEM MELTDOWN",
+    text: "System instability detected. Possible hardware damage.",
+    threats: 64,
+    countdown: 30
+  },
+  {
+    title: "ANTIVIRUS MAX - IP EXPOSED",
+    text: "Your IP address is visible. Potential tracking detected.",
+    threats: 18,
+    countdown: 18
+  },
+  {
+    title: "SECURESCAN ELITE - GPU OVERHEATING",
+    text: "Graphics card temperature above safe threshold.",
+    threats: 7,
+    countdown: 14
+  },
+  {
+    title: "ULTRASECURE PRO - PASSWORD LEAK RISK",
+    text: "Suspicious login patterns detected across multiple services.",
+    threats: 29,
+    countdown: 22
+  },
+  {
+    title: "SHIELDGUARD 360 - SYSTEM BREACH SIMULATED",
+    text: "This is a test alert. Or is it?",
+    threats: 99,
+    countdown: 9
+  }
+];
+
+/* --------------------------
+   FAKE CRASH EFFECTS (A, C, E)
+---------------------------*/
+function showFakeCrashOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay overlay-crash';
+  overlay.innerHTML = `
+    <div class="overlay-crash-box">
+      <div class="overlay-crash-title">Aw, something went wrong.</div>
+      <div>This page has encountered a problem and needs to reload.</div>
+      <button class="overlay-crash-btn">Reload page</button>
+    </div>
+  `;
+  overlay.querySelector('.overlay-crash-btn').onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+function showFakeUnresponsiveOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay overlay-unresponsive';
+  overlay.innerHTML = `
+    <div class="overlay-unresponsive-box">
+      <div class="overlay-unresponsive-title">Page Unresponsive</div>
+      <div>This page is not responding. You can wait for it to become responsive or close it.</div>
+      <div class="overlay-unresponsive-buttons">
+        <button class="btn-wait">Wait</button>
+        <button class="btn-close">Close</button>
+      </div>
+    </div>
+  `;
+  overlay.querySelector('.btn-wait').onclick = () => overlay.remove();
+  overlay.querySelector('.btn-close').onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+function showFakeRebootOverlay() {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay overlay-reboot';
+  overlay.innerHTML = `
+    <div>
+      <div class="overlay-reboot-text">Restarting...</div>
+      <div class="overlay-reboot-sub">Applying fake system updates (0/3)</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  let step = 0;
+  const sub = overlay.querySelector('.overlay-reboot-sub');
+  const timer = setInterval(() => {
+    step++;
+    if (step === 1) sub.textContent = "Applying fake system updates (1/3)";
+    if (step === 2) sub.textContent = "Applying fake system updates (2/3)";
+    if (step === 3) sub.textContent = "Applying fake system updates (3/3)";
+    if (step >= 4) {
+      clearInterval(timer);
+      overlay.remove();
+    }
+  }, 1200);
+}
+
+/* --------------------------
+   SPAWN RANDOM AD
+---------------------------*/
+function spawnRandomAd() {
+  const useScareware = Math.random() < 0.6; // bias toward scareware
+  const adData = useScareware
+    ? scarewareAds[Math.floor(Math.random() * scarewareAds.length)]
+    : productAds[Math.floor(Math.random() * productAds.length)];
+
+  const ad = document.createElement("div");
+  ad.className = "ad";
+
+  if (useScareware) ad.classList.add("scareware");
+
+  // 30% chance of fullscreen takeover
+  if (Math.random() < 0.3) {
+    ad.classList.add("big-ad");
+  } else {
+    ad.style.width = "260px";
+    ad.style.height = useScareware ? "260px" : "320px";
+    ad.style.left = Math.random() * (window.innerWidth - 260) + "px";
+    ad.style.top = Math.random() * (window.innerHeight - 320) + "px";
+  }
+
+  if (useScareware) {
+    ad.innerHTML = `
+      <div class="fakeclose">×</div>
+      <div class="ad-header">⚠ ${adData.title}</div>
+      <div class="ad-content">
+        <div class="threat-count">Threats detected: <strong>${adData.threats}</strong></div>
+        <div class="scan-bar"><div class="scan-bar-inner"></div></div>
+        <div>${adData.text}</div>
+        <div class="clean-btn">Click to Clean Now</div>
+        <div class="countdown">System meltdown in <span class="count">${adData.countdown}</span> seconds...</div>
+      </div>
+      <div class="realclose" onclick="this.parentElement.remove()">close</div>
+    `;
+    const fakeClose = ad.querySelector(".fakeclose");
+    fakeClose.onclick = () => {
+      for (let i = 0; i < 3; i++) spawnRandomAd();
+    };
+
+    const barInner = ad.querySelector(".scan-bar-inner");
+    let progress = 0;
+    const barTimer = setInterval(() => {
+      progress = Math.min(100, progress + Math.random()*15);
+      barInner.style.width = progress + "%";
+      if (progress >= 100) clearInterval(barTimer);
+    }, 300);
+
+    const countSpan = ad.querySelector(".count");
+    let remaining = adData.countdown;
+
+    // choose which fake crash effect this ad will trigger
+    const crashType = ["crash", "unresponsive", "reboot"][Math.floor(Math.random()*3)];
+
+    const countdownTimer = setInterval(() => {
+      remaining--;
+      if (remaining <= 0) {
+        countSpan.textContent = "0";
+        clearInterval(countdownTimer);
+
+        // trigger visual-only "crash"
+        if (crashType === "crash") showFakeCrashOverlay();
+        if (crashType === "unresponsive") showFakeUnresponsiveOverlay();
+        if (crashType === "reboot") showFakeRebootOverlay();
+
+        for (let i = 0; i < 2; i++) spawnRandomAd();
+      } else {
+        countSpan.textContent = remaining;
+      }
+    }, 1000);
+
+    const cleanBtn = ad.querySelector(".clean-btn");
+    cleanBtn.onclick = () => {
+      for (let i = 0; i < 4; i++) spawnRandomAd();
+    };
+  } else {
+    ad.innerHTML = `
+      <div class="fakeclose">×</div>
+      <div class="ad-header">${adData.title}</div>
+      <img src="${adData.img}">
+      <div class="ad-content">${adData.text}</div>
+      <div class="realclose" onclick="this.parentElement.remove()">close</div>
+    `;
+    const fakeClose = ad.querySelector(".fakeclose");
+    fakeClose.onclick = () => {
+      for (let i = 0; i < 2; i++) spawnRandomAd();
+    };
+  }
+
+  document.body.appendChild(ad);
+}
+
+/* --------------------------
+   CURSOR TELEPORT (D7)
+---------------------------*/
+let lastMoveTime = 0;
+
+window.addEventListener('mousemove', e => {
+  const now = Date.now();
+  let x = e.clientX;
+  let y = e.clientY;
+
+  if (now - lastMoveTime > 120) {
+    x += (Math.random() - 0.5) * 200;
+    y += (Math.random() - 0.5) * 200;
+    lastMoveTime = now;
+  }
+
+  x = Math.max(0, Math.min(window.innerWidth, x));
+  y = Math.max(0, Math.min(window.innerHeight, y));
+
+  fakeCursor.style.left = x + 'px';
+  fakeCursor.style.top = y + 'px';
+});
+
+/* --------------------------
+   EXTRA LAUNCHER CHAOS
+---------------------------*/
+setInterval(() => {
+  const topbar = document.getElementById('topbar');
+  const dx = (Math.random() - 0.5) * 10;
+  const rot = (Math.random() - 0.5) * 4;
+  topbar.style.transform += ` translateX(${dx}px) rotate(${rot}deg)`;
+}, 6000);
+</script>
+
+</body>
+</html>
