@@ -1240,13 +1240,17 @@
   })();
 
   /* "cloak": re-open the ENTIRE site inside an about:blank tab (so the address
-     bar just reads about:blank / the tab has no recognisable url) and then throw
-     away the original, un-cloaked tab. fired once the user types the unlock word.
-     the cloaked copy loads the real url in an iframe; because localStorage is
-     shared per-origin, the "tung" flag is already set, so it boots fully unlocked. */
+     bar just reads about:blank / the tab has no recognisable url). the cloaked
+     copy loads the real url in an iframe; because localStorage is shared per-
+     origin, the "tung" flag is already set, so it boots fully unlocked.
+     returns true if the popup opened, false if the browser blocked it. */
+  var CLOAK_CLOSE = false; /* TEST MODE: for now, leave the original tab open (no closing) */
+  var cloaked = false;     /* only ever spawn one duplicate per page load */
   function cloakIntoAboutBlank() {
+    if (cloaked || window.self !== window.top) return true; /* already done / framed copy */
     var w = window.open("about:blank", "_blank");
-    if (!w) return; /* popup blocked: just stay un-cloaked */
+    if (!w) return false; /* popup blocked: caller may retry on a user gesture */
+    cloaked = true;
     var here = location.href;
     w.document.open();
     w.document.write(
@@ -1260,10 +1264,28 @@
     w.document.close();
     /* set the src via the DOM so the url is never re-parsed as HTML */
     try { w.document.getElementById("__site").setAttribute("src", here); } catch (x) {}
-    /* drop the original tab. window.close() only works on script-opened tabs, so
-       if the browser refuses, blank this document as a fallback. */
-    try { window.close(); } catch (x) {}
-    try { location.replace("about:blank"); } catch (x) {}
+    if (CLOAK_CLOSE) {
+      /* drop the original tab. window.close() only works on script-opened tabs,
+         so if the browser refuses, blank this document as a fallback. */
+      try { window.close(); } catch (x) {}
+      try { location.replace("about:blank"); } catch (x) {}
+    }
+    return true;
+  }
+
+  /* if the egg is already unlocked, spawn the cloaked duplicate as soon as the
+     top-level page loads. browsers block window.open without a user gesture, so
+     if the immediate attempt is refused we retry on the first click/keypress. */
+  if (TUNG_UNLOCKED && window.self === window.top) {
+    if (!cloakIntoAboutBlank()) {
+      var cloakRetry = function () {
+        document.removeEventListener("click", cloakRetry, true);
+        document.removeEventListener("keydown", cloakRetry, true);
+        cloakIntoAboutBlank();
+      };
+      document.addEventListener("click", cloakRetry, true);
+      document.addEventListener("keydown", cloakRetry, true);
+    }
   }
 
   /* type "popup", give it a url, and it opens in a full-window iframe inside an
