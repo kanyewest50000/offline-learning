@@ -1131,7 +1131,9 @@
       '#choose{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px}' +
       '#choose h2{margin:0 0 6px;text-align:center}' +
       '#choicerow{display:flex;gap:14px;width:100%;max-width:360px}' +
-      '.bigbtn{flex:1;aspect-ratio:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;font-size:15px;border-radius:14px;line-height:1.25}' +
+      '.bigbtn{flex:1;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:12px;font-size:15px;border-radius:14px;line-height:1.25}' +
+      '.bicon{width:44%;height:auto}' +   /* the chat speech-bubble svg */
+      '.bimg{width:58%;aspect-ratio:1;object-fit:cover;border-radius:10px}' +   /* the sahur png */
       '#shrine{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#games{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#gamesbar{display:flex;gap:8px;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}' +
@@ -1146,8 +1148,14 @@
       '<div id="choose">' +
       '<h2>enter the shrine</h2>' +
       '<div id="choicerow">' +
-      '<button id="chooseShrine" class="bigbtn" type="button">Shrine of Tung</button>' +
-      '<button id="chooseGames" class="bigbtn ghost" type="button">Tung’s curated games</button>' +
+      /* chat button: a simple speech-bubble svg above the label */
+      '<button id="chooseShrine" class="bigbtn" type="button">' +
+      '<svg class="bicon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>' +
+      '<span>Shrine of Tung</span></button>' +
+      /* games button: the tung tung tung sahur png above the label */
+      '<button id="chooseGames" class="bigbtn ghost" type="button">' +
+      '<img class="bimg" src="https://i1.sndcdn.com/artworks-YDQOy2Pru5CA2rhs-x1uzgA-t1080x1080.jpg" alt="">' +
+      '<span>Tung’s curated games</span></button>' +
       '</div>' +
       '</div>' +
       '<div id="shrine">' +
