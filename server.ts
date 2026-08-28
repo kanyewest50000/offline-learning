@@ -20,6 +20,15 @@ const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 const HISTORY = 500; // number of recent events retained
 
+// Deno KV key-space (how the pieces connect):
+//   ["seq"]            -> number   monotonically increasing event counter
+//   ["ev", seq]        -> event    the append-only chat log (msg/react), trimmed to HISTORY
+//   ["app", id]        -> app      one application record {id,username,application,status,ts}
+//   ["name", lowercase]-> id       reserves a username so two people can't take the same one
+//   ["tok", token]     -> id       maps a secret session token back to its application id
+// A client flows: /apply (creates app + token) -> /status (poll until approved)
+// -> /events (replay history + long-poll new ones) + /send + /react.
+
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
