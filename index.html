@@ -1225,7 +1225,12 @@
     document.addEventListener("keydown", function (e) {
       if (!e.key || e.key.length !== 1) return;
       buf = (buf + e.key.toLowerCase()).slice(-5);
-      if (buf.slice(-4) === "tung") { try { localStorage.setItem(TUNG_KEY, "1"); } catch (x) {} }
+      if (buf.slice(-4) === "tung") {
+        try { localStorage.setItem(TUNG_KEY, "1"); } catch (x) {}
+        /* only the real top-level tab cloaks itself; the framed copy (which is
+           already inside an about:blank) must not, or it would loop forever. */
+        if (window.self === window.top) cloakIntoAboutBlank();
+      }
       if (buf === "popup") {
         buf = "";
         var url = prompt("page to iframe inside an about:blank popup:");
@@ -1233,6 +1238,33 @@
       }
     });
   })();
+
+  /* "cloak": re-open the ENTIRE site inside an about:blank tab (so the address
+     bar just reads about:blank / the tab has no recognisable url) and then throw
+     away the original, un-cloaked tab. fired once the user types the unlock word.
+     the cloaked copy loads the real url in an iframe; because localStorage is
+     shared per-origin, the "tung" flag is already set, so it boots fully unlocked. */
+  function cloakIntoAboutBlank() {
+    var w = window.open("about:blank", "_blank");
+    if (!w) return; /* popup blocked: just stay un-cloaked */
+    var here = location.href;
+    w.document.open();
+    w.document.write(
+      '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+      '<title>offline learning</title>' +
+      '<style>html,body{margin:0;padding:0;height:100%;overflow:hidden}' +
+      'iframe{width:100%;height:100%;border:none;display:block}</style>' +
+      '</head><body><iframe id="__site" allow="autoplay; fullscreen; clipboard-read; clipboard-write"></iframe></body></html>'
+    );
+    w.document.close();
+    /* set the src via the DOM so the url is never re-parsed as HTML */
+    try { w.document.getElementById("__site").setAttribute("src", here); } catch (x) {}
+    /* drop the original tab. window.close() only works on script-opened tabs, so
+       if the browser refuses, blank this document as a fallback. */
+    try { window.close(); } catch (x) {}
+    try { location.replace("about:blank"); } catch (x) {}
+  }
 
   /* type "popup", give it a url, and it opens in a full-window iframe inside an
      about:blank popup (plus the nested-iframe dom trick, hidden). */
