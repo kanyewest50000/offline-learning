@@ -202,6 +202,62 @@ Deno.serve(async (req) => {
     await kv.set(["app", app.value.id], { ...app.value, status });
     return json({ ok: true, status });
   }
+
+  // ---------- admin: list already-decided users (approved + revoked) ----------
+  // used by the "approved users" panel. revoked users keep status "rejected",
+  // which authUser() already treats as no-access, so revoking = reject.
+  if (req.method === "GET" && path === "/admin/users") {
+    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const users: unknown[] = [];
+    // deno-lint-ignore no-explicit-any
+    for await (const e of kv.list<any>({ prefix: ["app"] })) {
+      if (e.value.status === "approved" || e.value.status === "rejected") {
+        users.push({ id: e.value.id, username: e.value.username, status: e.value.status, ts: e.value.ts });
+      }
+    }
+    // deno-lint-ignore no-explicit-any
+    users.sort((a: any, b: any) =>
+      a.status !== b.status
+        ? (a.status === "approved" ? -1 : 1)                       // approved first
+        : a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+    return json({ users });
+  }
+
+  // ---------- admin: rename an existing user ----------
+  // moves the ["name", lowercase] reservation to the new spelling (guarding
+  // against collisions) and updates the display name on the ["app", id] record.
+  if (req.method === "POST" && path === "/admin/rename") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    const username = clip(b.username, 24);
+    if (!id || !username) return json({ error: "missing" }, 400);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const oldLower = String(app.value.username).toLowerCase();
+    const newLower = username.toLowerCase();
+    if (newLower === oldLower) {
+      // same name (maybe just casing): update the display value, leave the reservation
+      await kv.set(["app", id], { ...app.value, username });
+      return json({ ok: true, username });
+    }
+    const taken = await kv.get<string>(["name", newLower]);
+    if (taken.value) {
+      if (taken.value === id) { await kv.set(["app", id], { ...app.value, username }); return json({ ok: true, username }); }
+      return json({ error: "username taken" }, 409);
+    }
+    const res = await kv.atomic()
+      .check({ key: ["name", newLower], versionstamp: null })
+      .delete(["name", oldLower])
+      .set(["name", newLower], id)
+      .set(["app", id], { ...app.value, username })
+      .commit();
+    if (!res.ok) return json({ error: "username taken" }, 409);
+    return json({ ok: true, username });
+  }
+
   if (req.method === "POST" && path === "/admin/clear") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -242,19 +298,25 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .ok{background:#2e7d32;color:#fff}
 .no{background:#7a2e2e;color:#fff}
 .empty{color:#c8823c;padding:20px 0}
+.sec{margin:26px 0 10px;font-size:18px;font-weight:700}
+.uname{flex:1;min-width:0}
+.app small.rev{color:#e0908a}
 </style></head><body>
 <header>Shrine of Tung — pending applications</header>
 <main>
 <div class="keybar"><input id="key" type="password" placeholder="admin key" autocomplete="off"><button class="load" id="load">load</button><button class="no" id="clear">clear all</button></div>
 <div id="list"><div class="empty">enter your admin key and hit load.</div></div>
+<h2 class="sec">approved users</h2>
+<div id="users"><div class="empty">load to see approved users.</div></div>
 </main>
 <script>
-var keyEl=document.getElementById("key"),list=document.getElementById("list");
+var keyEl=document.getElementById("key"),list=document.getElementById("list"),users=document.getElementById("users");
 try{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}catch(e){}
-document.getElementById("load").onclick=refresh;
+function loadAll(){refresh();refreshUsers();}   /* both panels share the one "load" button */
+document.getElementById("load").onclick=loadAll;
 document.getElementById("clear").onclick=function(){
   if(!confirm("Delete ALL applications (pending + approved)? Everyone will have to re-apply."))return;
-  fetch("/admin/clear",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim()})}).then(function(r){return r.json();}).then(function(d){alert(d.error?d.error:("cleared "+d.cleared+" entries"));refresh();});
+  fetch("/admin/clear",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim()})}).then(function(r){return r.json();}).then(function(d){alert(d.error?d.error:("cleared "+d.cleared+" entries"));loadAll();});
 };
 function refresh(){
   var key=keyEl.value.trim();try{localStorage.setItem("shrine-admin-key",key);}catch(e){}
@@ -277,6 +339,37 @@ function refresh(){
   }).catch(function(){list.innerHTML='<div class="empty">network error.</div>';});
 }
 function decide(id,action){
-  fetch("/admin/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,action:action})}).then(function(r){return r.json();}).then(function(){refresh();});
+  fetch("/admin/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,action:action})}).then(function(r){return r.json();}).then(function(){refresh();refreshUsers();});
+}
+/* the "approved users" panel: lists decided users, lets you rename or revoke/restore */
+function refreshUsers(){
+  var key=keyEl.value.trim();
+  users.innerHTML='<div class="empty">loading...</div>';
+  fetch("/admin/users?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+    if(d.error){users.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';return;}
+    if(!d.users.length){users.innerHTML='<div class="empty">no approved users yet.</div>';return;}
+    users.innerHTML="";
+    d.users.forEach(function(u){
+      var el=document.createElement("div");el.className="app";
+      var row=document.createElement("div");row.className="row";row.style.alignItems="center";
+      var inp=document.createElement("input");inp.className="uname";inp.value=u.username;inp.maxLength=24;
+      var save=document.createElement("button");save.className="load";save.textContent="save name";
+      save.onclick=function(){rename(u.id,inp.value.trim());};
+      var act=document.createElement("button");
+      if(u.status==="approved"){act.className="no";act.textContent="revoke";act.onclick=function(){decide(u.id,"reject");};}
+      else{act.className="ok";act.textContent="restore";act.onclick=function(){decide(u.id,"approve");};}
+      row.appendChild(inp);row.appendChild(save);row.appendChild(act);
+      el.appendChild(row);
+      var meta=document.createElement("small");
+      meta.textContent=(u.status==="approved"?"approved":"revoked")+" · "+new Date(u.ts).toLocaleString();
+      if(u.status!=="approved")meta.className="rev";
+      el.appendChild(meta);
+      users.appendChild(el);
+    });
+  }).catch(function(){users.innerHTML='<div class="empty">network error.</div>';});
+}
+function rename(id,name){
+  if(!name)return;
+  fetch("/admin/rename",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,username:name})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 </script></body></html>`;
