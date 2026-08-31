@@ -49,34 +49,34 @@
   section h2 { font-size: 2.1rem; line-height: 1.15; margin-bottom: 16px; }
   .lede { font-size: 1.15rem; color: var(--ink-soft); max-width: 640px; }
 
-  /* ---------- nav ---------- */
-  header {
+  /* ---------- header (shared with every subpage; mirrors assets/css/site.css) ---------- */
+  .topbar { background: var(--ink); color: #d8cfba; font-size: 0.78rem; letter-spacing: 0.02em; font-family: 'Helvetica Neue', Arial, sans-serif; }
+  .topbar .wrap { display: flex; gap: 18px; align-items: center; justify-content: space-between; padding: 7px 24px; flex-wrap: wrap; }
+  .topbar a { color: #f0e9d8; text-decoration: none; }
+  .topbar a:hover { text-decoration: underline; }
+  .topbar-badges { display: flex; gap: 14px; flex-wrap: wrap; }
+  .masthead {
     position: sticky; top: 0; z-index: 50;
     background: rgba(250,247,240,0.92);
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
   }
-  .nav {
-    display: flex; align-items: center; justify-content: space-between;
-    height: 64px;
+  .masthead .wrap { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 12px; padding-bottom: 12px; }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+  .brand-mark {
+    width: 38px; height: 38px; flex: 0 0 38px; border-radius: 9px;
+    display: grid; place-items: center;
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 1.15rem; font-weight: 800;
+    color: #fff; background: var(--green);
   }
-  .logo {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
-    font-weight: 800; font-size: 1.02rem; text-decoration: none;
-    color: var(--ink); display: flex; align-items: center; gap: 10px;
-  }
-  .logo-mark {
-    width: 30px; height: 30px; border-radius: 8px;
-    background: var(--green); color: #fff;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 15px;
-  }
-  .nav-links { display: flex; gap: 26px; align-items: center; }
-  .nav-links a {
-    font-family: 'Helvetica Neue', Arial, sans-serif;
-    font-size: 0.9rem; text-decoration: none; color: var(--ink-soft);
-  }
-  .nav-links a:hover { color: var(--ink); }
+  .brand-text { display: flex; flex-direction: column; line-height: 1.16; }
+  .brand-name { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 1.05rem; color: var(--ink); font-weight: 800; letter-spacing: -0.01em; }
+  .brand-sub { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 0.64rem; letter-spacing: 0.13em; text-transform: uppercase; color: var(--ink-faint); }
+  .nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .nav a { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 8px 11px; border-radius: 8px; font-size: 0.87rem; font-weight: 500; color: var(--ink-soft); text-decoration: none; }
+  .nav a:hover { background: var(--paper-2); color: var(--ink); }
+  .nav a.is-active { color: var(--green); background: #e4efe7; font-weight: 700; }
+  .btn-sm { padding: 7px 14px; font-size: 0.8rem; }
   .btn {
     display: inline-block;
     font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -265,6 +265,7 @@
   .odometer small { font-size: 0.7rem; color: #8a8271; max-width: 150px; line-height: 1.3; }
 
   @media (max-width: 900px) {
+    .masthead .wrap { flex-wrap: wrap; }
     .hero-grid, .problem-grid, .tech-grid { grid-template-columns: 1fr; }
     .steps, .features-grid, .cases-grid, .price-grid, .journal-grid { grid-template-columns: 1fr; }
     .team-grid { grid-template-columns: repeat(2, 1fr); }
@@ -275,17 +276,36 @@
 </head>
 <body>
 
-<header>
-  <div class="wrap nav">
-    <a class="logo" href="#top"><span class="logo-mark">⇅</span>Untether</a>
-    <nav class="nav-links">
-      <a href="#how">How it works</a>
-      <a href="#platform">Platform</a>
-      <a href="#tech">Technology</a>
+<div class="topbar">
+  <div class="wrap">
+    <div>Deploying across 41 countries · Q3 2026 pilot cohort is open</div>
+    <div class="topbar-badges">
+      <a href="resources.html">Deployment Guides</a>
+      <a href="policies.html">Data &amp; Policies</a>
+      <a href="contact.html">+1 (555) 026-0041</a>
+    </div>
+  </div>
+</div>
+
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">⇅</span>
+      <span class="brand-text">
+        <span class="brand-name">Untether</span>
+        <span class="brand-sub">Offline Education Infrastructure</span>
+      </span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="index.html" class="is-active">Home</a>
       <a href="curriculum.html">Curriculum</a>
-      <a href="#pricing">Pricing</a>
+      <a href="methodology.html">Methodology</a>
+      <a href="tutors.html">Team</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="resources.html">Resources</a>
+      <a href="outcomes.html">Outcomes</a>
       <a href="faq.html">FAQ</a>
-      <a class="btn btn-primary" href="contact.html">Request a pilot</a>
+      <a class="btn btn-primary btn-sm" href="contact.html">Request a pilot</a>
     </nav>
   </div>
 </header>
