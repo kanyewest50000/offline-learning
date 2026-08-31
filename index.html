@@ -926,6 +926,9 @@
     'var applyView=document.getElementById("applyView");' +
     'var pendingView=document.getElementById("pendingView");' +
     'var chat=document.getElementById("chat");' +
+    'var banEl=document.getElementById("banView");' +
+    'var banTitle=document.getElementById("banTitle");' +
+    'var banUntil=document.getElementById("banUntil");' +
     'var applyForm=document.getElementById("applyForm");' +
     'var gu=document.getElementById("gu");' +
     'var ga=document.getElementById("ga");' +
@@ -1031,13 +1034,17 @@
     'MSGS[m.id]={reactEl:rc,counts:{},mine:{}};' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- view switching + application/token auth against the backend ---- */
-    'function show(v){gate.style.display=v==="chat"?"none":"flex";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";}' +
+    'function show(v){gate.style.display=(v==="apply"||v==="pending")?"flex":"none";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";banEl.style.display=v==="ban"?"flex":"none";}' +
+    /* banned/timed-out users get a blank screen instead of the chat. a permanent
+       ban shows no "until"; a timeout shows the deadline and re-checks /status so
+       access lifts on its own once the clock passes it. */
+    'function showBan(info){polling=false;var isTo=info&&info.reason==="timeout";banTitle.textContent=isTo?"you are timed out":"you are banned";if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}else{banUntil.style.display="none";}show("ban");if(statusT)clearTimeout(statusT);if(isTo)statusT=setTimeout(refreshGate,5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
     'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null});}}' +
-    'function poll(){if(!polling)return;api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling)setTimeout(poll,1500);});}' +
+    'function poll(){if(!polling)return;api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling)setTimeout(poll,1500);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
     'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;show("chat");renderPins();input.focus();startPoll();}' +
-    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){startChat(s.username);}else if(s&&s.status==="pending"){show("pending");if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;show("apply");}}).catch(function(){show("apply");});}' +
+    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;show("apply");}}).catch(function(){show("apply");});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:ME,text:text,mine:true,reply:rep});bumpEmoji(text);apiPost("/send",{token:TOKEN,id:id,text:text,reply:rep});cancelReply();});' +
@@ -1078,6 +1085,9 @@
       '.warn{font-size:12px;color:#f2c063;margin:12px 0 0}' +
       '#gate .row{display:flex;gap:8px;justify-content:center}' +
       '#chat{flex:1;display:none;flex-direction:column;min-height:0}' +
+      '#banView{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;padding:24px;background:#160d04}' +
+      '#banTitle{font-size:22px;font-weight:800}' +
+      '#banUntil{color:#c8823c;font-size:14px}' +
       '#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}' +
       '.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}' +
       '.msg.me{align-self:flex-end;background:#8a5a28}' +
@@ -1168,6 +1178,7 @@
       '<div id="replybar"></div>' +
       '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something... try :sob:"><button id="pick" type="button" title="emojis">😀</button><button>send</button></form>' +
       '</div>' +
+      '<div id="banView"><div id="banTitle">you are banned</div><div id="banUntil"></div></div>' +
       '</div>' +
       '<div id="games">' +
       '<div id="gamesbar"><button id="gback" class="ghost" type="button">← back</button><input id="gsearch" autocomplete="off" placeholder="search games"></div>' +
