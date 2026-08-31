@@ -992,6 +992,8 @@
     'document.getElementById("fs").onclick=function(){var f=document.getElementById("gf");' +
     'if(document.fullscreenElement){(document.exitFullscreen||function(){}).call(document);}' +
     'else{(f.requestFullscreen||f.webkitRequestFullscreen||function(){}).call(f);}};' +   /* toggle iframe fullscreen; header hides while fullscreen */
+    /* the nested-iframe easter-egg snippet, kept hidden, added to every game tab */
+    'var __egg=document.createElement("iframe");__egg.style.display="none";document.body.appendChild(__egg);__egg.contentDocument.write("<iframe>");' +
     '<\\/script></body></html>`;' +
     'w.document.open();w.document.write(doc);w.document.close();' +
     '}' +
