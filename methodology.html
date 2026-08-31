@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Methodology — Untether</title>
+<meta name="description" content="How Untether delivers a full curriculum with zero connectivity: content packs, opportunistic mesh sync, conflict-free progress records, and rugged hardware.">
+<meta name="robots" content="index, follow">
+<meta name="author" content="Untether">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Untether">
+<meta property="og:title" content="Methodology — Untether">
+<meta property="og:description" content="How Untether delivers a full curriculum with zero connectivity: content packs, opportunistic mesh sync, conflict-free progress records, and rugged hardware.">
+<link rel="stylesheet" href="assets/css/site.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231f6f43'/><text x='50' y='73' font-size='64' text-anchor='middle' fill='white' font-family='Arial'>&#8645;</text></svg>">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div>Deploying across 41 countries · Q3 2026 pilot cohort is open</div>
+    <div class="topbar-badges">
+      <a href="resources.html">Deployment Guides</a>
+      <a href="policies.html">Data &amp; Policies</a>
+      <a href="contact.html">+1 (555) 026-0041</a>
+    </div>
+  </div>
+</div>
+
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="index.html">
+      <span class="brand-mark" aria-hidden="true">&#8645;</span>
+      <span class="brand-text">
+        <span class="brand-name">Untether</span>
+        <span class="brand-sub">Offline Education Infrastructure</span>
+      </span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="index.html">Home</a>
+      <a href="curriculum.html">Curriculum</a>
+      <a href="methodology.html">Methodology</a>
+      <a href="tutors.html">Team</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="resources.html">Resources</a>
+      <a href="outcomes.html">Outcomes</a>
+      <a href="faq.html">FAQ</a>
+      <a class="btn btn-primary btn-sm" href="contact.html">Request a pilot</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<div class="page-head"><div class="wrap"><nav class="crumbs" aria-label="Breadcrumb"><a href="index.html">Home</a> · Methodology</nav></div></div>
+<section>
+  <div class="wrap">
+    <div class="section-head"><p class="eyebrow">Methodology</p><h2>Design for the network you don't have.</h2><p class="lede">Most edtech assumes connectivity and degrades badly without it. We invert the assumption: everything works fully offline, and connectivity — when it happens — is a bonus that carries data, never a dependency that gates learning.</p></div>
+    <div class="grid g3">
+      <div class="card"><div class="card-icon">α</div><h3>Offline-first, not offline-capable</h3><p>There is no "reduced" offline mode. Lessons, media, assessment, and scoring all run on-device. A classroom that never sees a network still gets the complete product.</p></div>
+      <div class="card"><div class="card-icon">β</div><h3>Opportunistic sync</h3><p>When any device touches a network — a teacher's phone in town, a passing sync courier, a monthly satellite window — it exchanges just the deltas. Progress uploads; new packs and updates come down.</p></div>
+      <div class="card"><div class="card-icon">γ</div><h3>Conflict-free records</h3><p>Learner progress is stored as an append-only, conflict-free log. Two devices that recorded the same learner offline merge cleanly without a server refereeing every write.</p></div>
+      <div class="card"><div class="card-icon">δ</div><h3>Mesh over infrastructure</h3><p>Devices in a classroom form a local mesh and share packs peer-to-peer, so one synced tablet can seed an entire room without any of them reaching the internet.</p></div>
+      <div class="card"><div class="card-icon">ε</div><h3>Power realism</h3><p>Displays, sync, and background work are all budgeted against a solar/handcrank power envelope. Nothing assumes a wall socket.</p></div>
+      <div class="card"><div class="card-icon">ζ</div><h3>Repairability</h3><p>Hardware is documented and field-repairable; content formats are open. A deployment must outlive our company, not depend on it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="tint">
+  <div class="wrap">
+    <div class="section-head center"><p class="eyebrow">Deployment pathway</p><h2>How a deployment is structured</h2><p class="lede">Five phases. None is skipped, including for sites that arrive mid-term in acute need.</p></div>
+    <div class="grid g4">
+      <div class="card"><span class="tag grey">Phase I</span><h3 style="margin-top:12px;">Connectivity &amp; Needs Assessment</h3><p>A short survey of the site: power, existing devices, network windows (if any), languages, grade bands, and teacher capacity. It drives everything downstream.</p></div>
+      <div class="card"><span class="tag grey">Phase II</span><h3 style="margin-top:12px;">Footprint Sizing</h3><p>A solutions engineer proposes a device count, a sync topology, and the content-pack set for the site's grade spread, with an estimated per-site cost.</p></div>
+      <div class="card"><span class="tag grey">Phase III</span><h3 style="margin-top:12px;">Provisioning</h3><p>Hardware is pre-loaded and mesh-paired before it ships. It arrives working; a classroom does not need connectivity to switch it on.</p></div>
+      <div class="card"><span class="tag grey">Phase IV</span><h3 style="margin-top:12px;">Teacher Onboarding</h3><p>A half-day, screen-optional session for facilitators, plus the printed teacher companions that ship with every pack.</p></div>
+    </div>
+    <div class="callout" style="margin-top:26px;"><strong>Phase V — Sync Cadence &amp; Handoff.</strong> We agree a realistic sync cadence for the site — weekly courier, monthly satellite window, or purely peer-to-peer — and hand the deployment to local staff with the tooling to add devices and pull updates themselves. A deployment that only works while we are on site has not finished.</div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head"><p class="eyebrow">Sync internals</p><h2>What actually crosses the wire</h2><p>Sync is deliberately small. The less each contact has to move, the more a thirty-second network window is worth.</p></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Payload</th><th>Direction</th><th>Typical size</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Progress log deltas</strong></td><td>device → hub</td><td>1–40 KB</td><td>Append-only, conflict-free; merges without coordination.</td></tr>
+          <tr><td><strong>Pack updates</strong></td><td>hub → device</td><td>0.2–8 MB</td><td>Binary-diffed against the installed version; unchanged media is never re-sent.</td></tr>
+          <tr><td><strong>New packs</strong></td><td>hub → device</td><td>10–120 MB</td><td>Chunked and resumable; a dropped window continues where it left off.</td></tr>
+          <tr><td><strong>Roster changes</strong></td><td>bidirectional</td><td>&lt; 20 KB</td><td>Enrollments and class assignments, reconciled by the same log mechanism.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:18px;font-size:.86rem;color:var(--ink-500);">The "99.2% eventual sync" figure on our home page is exactly that — <em>eventual</em>. A record created offline is not considered lost until it has failed to sync across three separate network contacts, which in practice almost never happens.</p>
+  </div>
+</section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <h5>Untether</h5>
+        <p style="color:#b7ae99;">Education infrastructure for the 2.6 billion people beyond reliable connectivity. Content packs, mesh sync, and rugged classroom hardware that deliver a full curriculum with zero bars of signal — and catch up the moment any device touches the network.</p>
+        <div class="accred">
+          <span>UNESCO-Aligned</span>
+          <span>Open Formats</span>
+          <span>FERPA-Aware</span>
+          <span>Est. 2021</span>
+        </div>
+      </div>
+      <div>
+        <h5>Product</h5>
+        <a href="curriculum.html">Curriculum &amp; Packs</a>
+        <a href="methodology.html">Sync Methodology</a>
+        <a href="resources.html#hardware">Classroom Hardware</a>
+        <a href="pricing.html">Pricing</a>
+        <a href="outcomes.html">Field Outcomes</a>
+      </div>
+      <div>
+        <h5>Company</h5>
+        <a href="tutors.html">Team</a>
+        <a href="testimonials.html">From the Field</a>
+        <a href="blog.html">Dispatches</a>
+        <a href="policies.html">Policies</a>
+        <a href="sitemap.html">Sitemap</a>
+      </div>
+      <div>
+        <h5>Resources</h5>
+        <a href="resources.html">Deployment Guides</a>
+        <a href="resources.html#formats">Content Formats</a>
+        <a href="resources.html#glossary">Glossary</a>
+        <a href="faq.html">FAQ</a>
+      </div>
+      <div>
+        <h5>Contact</h5>
+        <a href="contact.html">Request a Pilot</a>
+        <a href="contact.html#locations">Regional Hubs</a>
+        <a href="contact.html#careers">Open Roles</a>
+        <a href="contact.html">field@untether.example</a>
+        <a href="contact.html">+1 (555) 026-0041</a>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>© <span data-year>2026</span> Untether Infrastructure, PBC. Curriculum content is distributed under open education licenses; hardware designs are documented for repair.</div>
+      <div><a href="policies.html">Privacy</a> · <a href="policies.html">Terms</a> · <a href="policies.html">Accessibility</a> · <a href="sitemap.html">Sitemap</a></div>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js"></script>
+</body>
+</html>
