@@ -18,7 +18,8 @@
 const kv = await Deno.openKv();
 const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
-const HISTORY = 500; // number of recent events retained
+const HISTORY = 500; // number of recent events retained (hard cap)
+const TTL_MS = 14 * 24 * 60 * 60 * 1000; // messages auto-expire after 2 weeks
 
 // Deno KV key-space (how the pieces connect):
 //   ["seq"]            -> number   monotonically increasing event counter
@@ -65,7 +66,10 @@ async function nextSeq(): Promise<number> {
 async function appendEvent(ev: Record<string, unknown>) {
   const seq = await nextSeq();
   ev.seq = seq;
-  await kv.set(["ev", seq], ev);
+  // expireIn gives the key a native TTL: Deno KV deletes it ~2 weeks later on
+  // its own, so old chat lines disappear with no per-message timestamp, no
+  // sweep job, and no cron. The monotonic seq still orders what remains.
+  await kv.set(["ev", seq], ev, { expireIn: TTL_MS });
   if (seq > HISTORY) await kv.delete(["ev", seq - HISTORY]);
   return seq;
 }
@@ -255,6 +259,26 @@ Deno.serve(async (req) => {
     return json({ ok: true, banned });
   }
 
+  // ---------- admin: delete a user entirely ----------
+  // removes the application record, frees the username, and revokes every token
+  // pointing at it. unlike a ban, this leaves no trace and the name can be reused.
+  if (req.method === "POST" && path === "/admin/delete") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const lower = String(app.value.username).toLowerCase();
+    const atomic = kv.atomic().delete(["app", id]).delete(["name", lower]);
+    for await (const e of kv.list<string>({ prefix: ["tok"] })) {
+      if (e.value === id) atomic.delete(e.key);
+    }
+    await atomic.commit();
+    return json({ ok: true, deleted: true });
+  }
+
   // ---------- admin: attach a private note to a user ----------
   if (req.method === "POST" && path === "/admin/note") {
     // deno-lint-ignore no-explicit-any
@@ -421,7 +445,9 @@ function refreshUsers(){
       var ban=document.createElement("button");
       if(u.banned){ban.className="ok";ban.textContent="unban";ban.onclick=function(){setBan(u.id,false);};}
       else{ban.className="no";ban.textContent="ban";ban.onclick=function(){setBan(u.id,true);};}
-      row.appendChild(inp);row.appendChild(save);row.appendChild(ban);
+      var del=document.createElement("button");del.className="no";del.textContent="delete";del.title="remove the user entirely (frees the username)";
+      del.onclick=function(){deleteUser(u.id,u.username);};
+      row.appendChild(inp);row.appendChild(save);row.appendChild(ban);row.appendChild(del);
       el.appendChild(row);
       // row 2: timeout-until picker + apply + clear
       var trow=document.createElement("div");trow.className="row";
@@ -462,5 +488,9 @@ function setTimeoutUntil(id,until){
 }
 function saveNote(id,note){
   fetch("/admin/note",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,note:note})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function deleteUser(id,name){
+  if(!confirm("Delete "+name+" entirely? This frees the username and cannot be undone."))return;
+  fetch("/admin/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 </script></body></html>`;
