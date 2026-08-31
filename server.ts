@@ -233,6 +233,7 @@ Deno.serve(async (req) => {
         users.push({
           id: e.value.id, username: e.value.username, ts: e.value.ts,
           banned: !!e.value.banned, timeoutUntil: e.value.timeoutUntil || 0,
+          note: e.value.note || "",
         });
       }
     }
@@ -252,6 +253,19 @@ Deno.serve(async (req) => {
     const banned = b.banned !== false; // default true; pass banned:false to unban
     await kv.set(["app", app.value.id], { ...app.value, banned });
     return json({ ok: true, banned });
+  }
+
+  // ---------- admin: attach a private note to a user ----------
+  if (req.method === "POST" && path === "/admin/note") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", clip(b.id, 32)]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const note = clip(b.note, 500); // admin-only; never sent to the user
+    await kv.set(["app", app.value.id], { ...app.value, note });
+    return json({ ok: true, note });
   }
 
   // ---------- admin: time a user out until a timestamp (ms epoch) ----------
@@ -419,6 +433,13 @@ function refreshUsers(){
       clr.onclick=function(){setTimeoutUntil(u.id,0);};
       trow.appendChild(dt);trow.appendChild(apply);trow.appendChild(clr);
       el.appendChild(trow);
+      // row 3: private admin note
+      var nrow=document.createElement("div");nrow.className="row";
+      var note=document.createElement("input");note.className="uname";note.placeholder="private note (admin only)";note.value=u.note||"";note.maxLength=500;
+      var nsave=document.createElement("button");nsave.className="load";nsave.textContent="save note";
+      nsave.onclick=function(){saveNote(u.id,note.value.trim());};
+      nrow.appendChild(note);nrow.appendChild(nsave);
+      el.appendChild(nrow);
       // status line
       var meta=document.createElement("small");
       if(u.banned){meta.textContent="banned (permanent)";meta.className="rev";}
@@ -438,5 +459,8 @@ function setBan(id,banned){
 }
 function setTimeoutUntil(id,until){
   fetch("/admin/timeout",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,until:until})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function saveNote(id,note){
+  fetch("/admin/note",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,note:note})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 </script></body></html>`;
