@@ -81,6 +81,18 @@ async function authUser(token: string | null): Promise<any | null> {
   return app.value;
 }
 
+// is this approved user currently blocked from the chat?
+//   banned  -> permanent (no "until")
+//   timeout -> blocked until app.timeoutUntil (ms epoch); expires on its own
+// deno-lint-ignore no-explicit-any
+function blockState(u: any): { blocked: boolean; reason?: string; until?: number } {
+  if (u.banned) return { blocked: true, reason: "banned", until: 0 };
+  if (u.timeoutUntil && u.timeoutUntil > Date.now()) {
+    return { blocked: true, reason: "timeout", until: u.timeoutUntil };
+  }
+  return { blocked: false };
+}
+
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   const path = url.pathname;
@@ -125,13 +137,17 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const app = await kv.get<any>(["app", t.value]);
     if (!app.value) return json({ status: "none" });
-    return json({ status: app.value.status, username: app.value.username });
+    const bs = blockState(app.value);
+    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until });
   }
 
   // ---------- events (poll) ----------
   if (req.method === "GET" && path === "/events") {
     const user = await authUser(url.searchParams.get("token"));
     if (!user) return json({ error: "unauthorized" }, 401);
+    // banned / timed-out users get a blocked payload so the client shows the ban screen
+    const bs = blockState(user);
+    if (bs.blocked) return json({ blocked: true, reason: bs.reason, until: bs.until, events: [], cursor: Number(url.searchParams.get("since") || "0") || 0 });
     const since = Number(url.searchParams.get("since") || "0") || 0;
     const events: unknown[] = [];
     let cursor = since;
@@ -149,6 +165,8 @@ Deno.serve(async (req) => {
     const b: any = await req.json().catch(() => ({}));
     const user = await authUser(b.token);
     if (!user) return json({ error: "unauthorized" }, 401);
+    const sbs = blockState(user);
+    if (sbs.blocked) return json({ error: "blocked", reason: sbs.reason, until: sbs.until }, 403);
     const text = clip(b.text, 1000);
     if (!text) return json({ error: "empty" }, 400);
     const reply = b.reply && b.reply.id
@@ -203,24 +221,50 @@ Deno.serve(async (req) => {
     return json({ ok: true, status });
   }
 
-  // ---------- admin: list already-decided users (approved + revoked) ----------
-  // used by the "approved users" panel. revoked users keep status "rejected",
-  // which authUser() already treats as no-access, so revoking = reject.
+  // ---------- admin: list approved users (with ban/timeout state) ----------
+  // powers the "approved users" panel. each row carries banned + timeoutUntil
+  // so the admin can see who is currently blocked and until when.
   if (req.method === "GET" && path === "/admin/users") {
     if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
     const users: unknown[] = [];
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["app"] })) {
-      if (e.value.status === "approved" || e.value.status === "rejected") {
-        users.push({ id: e.value.id, username: e.value.username, status: e.value.status, ts: e.value.ts });
+      if (e.value.status === "approved") {
+        users.push({
+          id: e.value.id, username: e.value.username, ts: e.value.ts,
+          banned: !!e.value.banned, timeoutUntil: e.value.timeoutUntil || 0,
+        });
       }
     }
     // deno-lint-ignore no-explicit-any
-    users.sort((a: any, b: any) =>
-      a.status !== b.status
-        ? (a.status === "approved" ? -1 : 1)                       // approved first
-        : a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
+    users.sort((a: any, b: any) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()));
     return json({ users });
+  }
+
+  // ---------- admin: ban / unban a user (permanent block) ----------
+  if (req.method === "POST" && path === "/admin/ban") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", clip(b.id, 32)]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const banned = b.banned !== false; // default true; pass banned:false to unban
+    await kv.set(["app", app.value.id], { ...app.value, banned });
+    return json({ ok: true, banned });
+  }
+
+  // ---------- admin: time a user out until a timestamp (ms epoch) ----------
+  if (req.method === "POST" && path === "/admin/timeout") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", clip(b.id, 32)]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const until = Number(b.until) > 0 ? Math.floor(Number(b.until)) : 0; // 0 clears the timeout
+    await kv.set(["app", app.value.id], { ...app.value, timeoutUntil: until });
+    return json({ ok: true, timeoutUntil: until });
   }
 
   // ---------- admin: rename an existing user ----------
@@ -294,12 +338,14 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .app h3{margin:0 0 4px;font-size:16px}
 .app p{margin:0 0 12px;color:#e9d9c2;white-space:pre-wrap;word-break:break-word}
 .app small{color:#c8823c}
-.row{display:flex;gap:8px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row+.row{margin-top:8px}
 .ok{background:#2e7d32;color:#fff}
 .no{background:#7a2e2e;color:#fff}
 .empty{color:#c8823c;padding:20px 0}
 .sec{margin:26px 0 10px;font-size:18px;font-weight:700}
-.uname{flex:1;min-width:0}
+.uname{flex:1;min-width:120px}
+.tin{flex:0 1 220px;min-width:150px}
 .app small.rev{color:#e0908a}
 </style></head><body>
 <header>Shrine of Tung — pending applications</header>
@@ -341,7 +387,9 @@ function refresh(){
 function decide(id,action){
   fetch("/admin/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,action:action})}).then(function(r){return r.json();}).then(function(){refresh();refreshUsers();});
 }
-/* the "approved users" panel: lists decided users, lets you rename or revoke/restore */
+/* the "approved users" panel: rename, ban/unban, and time users out */
+// format a ms-epoch into the value a <input type=datetime-local> expects (local, no seconds)
+function toLocalInput(ms){var d=new Date(ms - new Date(ms).getTimezoneOffset()*60000);return d.toISOString().slice(0,16);}
 function refreshUsers(){
   var key=keyEl.value.trim();
   users.innerHTML='<div class="empty">loading...</div>';
@@ -351,18 +399,31 @@ function refreshUsers(){
     users.innerHTML="";
     d.users.forEach(function(u){
       var el=document.createElement("div");el.className="app";
-      var row=document.createElement("div");row.className="row";row.style.alignItems="center";
+      // row 1: username field + save + ban/unban
+      var row=document.createElement("div");row.className="row";
       var inp=document.createElement("input");inp.className="uname";inp.value=u.username;inp.maxLength=24;
       var save=document.createElement("button");save.className="load";save.textContent="save name";
       save.onclick=function(){rename(u.id,inp.value.trim());};
-      var act=document.createElement("button");
-      if(u.status==="approved"){act.className="no";act.textContent="revoke";act.onclick=function(){decide(u.id,"reject");};}
-      else{act.className="ok";act.textContent="restore";act.onclick=function(){decide(u.id,"approve");};}
-      row.appendChild(inp);row.appendChild(save);row.appendChild(act);
+      var ban=document.createElement("button");
+      if(u.banned){ban.className="ok";ban.textContent="unban";ban.onclick=function(){setBan(u.id,false);};}
+      else{ban.className="no";ban.textContent="ban";ban.onclick=function(){setBan(u.id,true);};}
+      row.appendChild(inp);row.appendChild(save);row.appendChild(ban);
       el.appendChild(row);
+      // row 2: timeout-until picker + apply + clear
+      var trow=document.createElement("div");trow.className="row";
+      var dt=document.createElement("input");dt.type="datetime-local";dt.className="tin";
+      if(u.timeoutUntil&&u.timeoutUntil>Date.now())dt.value=toLocalInput(u.timeoutUntil);
+      var apply=document.createElement("button");apply.className="no";apply.textContent="time out until";
+      apply.onclick=function(){if(!dt.value){alert("pick a date/time first");return;}var ms=new Date(dt.value).getTime();if(!(ms>Date.now())){alert("pick a time in the future");return;}setTimeoutUntil(u.id,ms);};
+      var clr=document.createElement("button");clr.className="load";clr.textContent="clear timeout";
+      clr.onclick=function(){setTimeoutUntil(u.id,0);};
+      trow.appendChild(dt);trow.appendChild(apply);trow.appendChild(clr);
+      el.appendChild(trow);
+      // status line
       var meta=document.createElement("small");
-      meta.textContent=(u.status==="approved"?"approved":"revoked")+" · "+new Date(u.ts).toLocaleString();
-      if(u.status!=="approved")meta.className="rev";
+      if(u.banned){meta.textContent="banned (permanent)";meta.className="rev";}
+      else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString();meta.className="rev";}
+      else{meta.textContent="active · joined "+new Date(u.ts).toLocaleString();}
       el.appendChild(meta);
       users.appendChild(el);
     });
@@ -371,5 +432,11 @@ function refreshUsers(){
 function rename(id,name){
   if(!name)return;
   fetch("/admin/rename",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,username:name})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function setBan(id,banned){
+  fetch("/admin/ban",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,banned:banned})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function setTimeoutUntil(id,until){
+  fetch("/admin/timeout",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,until:until})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 </script></body></html>`;
