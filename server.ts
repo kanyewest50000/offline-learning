@@ -142,7 +142,28 @@ Deno.serve(async (req) => {
     const app = await kv.get<any>(["app", t.value]);
     if (!app.value) return json({ status: "none" });
     const bs = blockState(app.value);
-    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until });
+    // `thread` carries the back-and-forth between tung and the applicant so the
+    // pending screen can show questions and the applicant's answers.
+    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, thread: app.value.thread || [] });
+  }
+
+  // ---------- respond (applicant replies to tung's follow-up question) ----------
+  // works for a PENDING applicant, identified by their token — no approval needed.
+  if (req.method === "POST" && path === "/respond") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const token = clip(b.token, 64);
+    if (!token) return json({ error: "unauthorized" }, 401);
+    const t = await kv.get<string>(["tok", token]);
+    if (!t.value) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", t.value]);
+    if (!app.value) return json({ error: "unauthorized" }, 401);
+    const text = clip(b.text, 500);
+    if (!text) return json({ error: "empty" }, 400);
+    const thread = (app.value.thread || []).concat([{ from: "applicant", text, ts: Date.now() }]);
+    await kv.set(["app", app.value.id], { ...app.value, thread });
+    return json({ ok: true, thread });
   }
 
   // ---------- events (poll) ----------
@@ -206,12 +227,27 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["app"] })) {
       if (e.value.status === "pending") {
-        pending.push({ id: e.value.id, username: e.value.username, application: e.value.application, ts: e.value.ts });
+        pending.push({ id: e.value.id, username: e.value.username, application: e.value.application, ts: e.value.ts, thread: e.value.thread || [] });
       }
     }
     // deno-lint-ignore no-explicit-any
     pending.sort((a: any, b: any) => a.ts - b.ts);
     return json({ pending });
+  }
+
+  // ---------- admin: send a follow-up message/question to an applicant ----------
+  if (req.method === "POST" && path === "/admin/message") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", clip(b.id, 32)]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const text = clip(b.text, 1000);
+    if (!text) return json({ error: "empty" }, 400);
+    const thread = (app.value.thread || []).concat([{ from: "admin", text, ts: Date.now() }]);
+    await kv.set(["app", app.value.id], { ...app.value, thread });
+    return json({ ok: true, thread });
   }
   if (req.method === "POST" && path === "/admin/decide") {
     // deno-lint-ignore no-explicit-any
@@ -385,6 +421,10 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .uname{flex:1;min-width:120px}
 .tin{flex:0 1 220px;min-width:150px}
 .app small.rev{color:#e0908a}
+.thread{margin:12px 0 0;display:flex;flex-direction:column;gap:6px}
+.tmsg{padding:7px 11px;border-radius:10px;font-size:.86rem;max-width:85%;white-space:pre-wrap;word-break:break-word}
+.tmsg.admin{align-self:flex-end;background:#c8823c;color:#1d1206}
+.tmsg.applicant{align-self:flex-start;background:#241505;border:1px solid #3a2410}
 </style></head><body>
 <header>Shrine of Tung — pending applications</header>
 <main>
@@ -418,12 +458,32 @@ function refresh(){
       var ok=document.createElement("button");ok.className="ok";ok.textContent="approve";ok.onclick=function(){decide(a.id,"approve");};
       var no=document.createElement("button");no.className="no";no.textContent="reject";no.onclick=function(){decide(a.id,"reject");};
       row.appendChild(ok);row.appendChild(no);el.appendChild(row);
+      // follow-up thread (tung's questions + the applicant's answers)
+      if((a.thread||[]).length){
+        var th=document.createElement("div");th.className="thread";
+        a.thread.forEach(function(m){
+          var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"applicant");
+          b.textContent=(m.from==="admin"?"tung: ":a.username+": ")+m.text;
+          th.appendChild(b);
+        });
+        el.appendChild(th);
+      }
+      // ask a follow-up question
+      var mrow=document.createElement("div");mrow.className="row";mrow.style.marginTop="8px";
+      var mi=document.createElement("input");mi.className="uname";mi.placeholder="ask a follow-up question…";mi.maxLength=1000;
+      var mb=document.createElement("button");mb.className="load";mb.textContent="send";
+      mb.onclick=function(){var t=mi.value.trim();if(!t)return;mi.value="";sendMsg(a.id,t);};
+      mi.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();mb.onclick();}});
+      mrow.appendChild(mi);mrow.appendChild(mb);el.appendChild(mrow);
       list.appendChild(el);
     });
   }).catch(function(){list.innerHTML='<div class="empty">network error.</div>';});
 }
 function decide(id,action){
   fetch("/admin/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,action:action})}).then(function(r){return r.json();}).then(function(){refresh();refreshUsers();});
+}
+function sendMsg(id,text){
+  fetch("/admin/message",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,text:text})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refresh();});
 }
 /* the "approved users" panel: rename, ban/unban, and time users out */
 // format a ms-epoch into the value a <input type=datetime-local> expects (local, no seconds)

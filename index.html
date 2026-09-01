@@ -975,6 +975,10 @@
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
     'var pendingView=document.getElementById("pendingView");' +
+    'var appThread=document.getElementById("appThread");' +
+    'var respBox=document.getElementById("respBox");' +
+    'var respText=document.getElementById("respText");' +
+    'var respBtn=document.getElementById("respBtn");' +
     'var chat=document.getElementById("chat");' +
     'var banEl=document.getElementById("banView");' +
     'var banTitle=document.getElementById("banTitle");' +
@@ -1088,9 +1092,13 @@
     'function poll(){if(!polling)return;api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;clearToken();TOKEN=null;show("apply");return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling)setTimeout(poll,1500);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
     'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;show("chat");input.focus();startPoll();}' +
-    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;show("apply");}}).catch(function(){show("apply");});}' +
+    /* render tung<->applicant follow-up messages on the pending screen; show the
+       reply box only once tung has actually asked something. */
+    'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");b.textContent=(m.from==="admin"?"tung: ":"you: ")+m.text;appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
+    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");renderThread(s.thread);if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;show("apply");}}).catch(function(){show("apply");});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
+    'respBtn.addEventListener("click",function(){var t=respText.value.trim();if(!t)return;respText.value="";apiPost("/respond",{token:TOKEN,text:t}).then(function(r){if(r&&r.thread)renderThread(r.thread);});});' +
     'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:ME,text:text,mine:true,reply:rep});apiPost("/send",{token:TOKEN,id:id,text:text,reply:rep});cancelReply();});' +
     'pick.addEventListener("click",function(ev){ev.stopPropagation();picker.style.display=picker.style.display==="flex"?"none":"flex";rpal.style.display="none";});' +
     'document.addEventListener("click",function(){rpal.style.display="none";picker.style.display="none";});' +
@@ -1127,6 +1135,12 @@
       '#myhash{display:inline-block;margin:2px 0 12px;padding:6px 10px;border-radius:6px;background:#160d04;border:1px solid #3a2410;font-family:monospace;color:#f2c063;word-break:break-all}' +
       '.hint{font-size:12px}' +
       '.warn{font-size:12px;color:#f2c063;margin:12px 0 0}' +
+      '#appThread{display:flex;flex-direction:column;gap:6px;margin:14px 0 0;text-align:left}' +
+      '#appThread .tmsg{padding:7px 11px;border-radius:10px;font-size:13px;max-width:90%;white-space:pre-wrap;word-break:break-word}' +
+      '#appThread .tmsg.admin{align-self:flex-start;background:#241505;border:1px solid #3a2410}' +
+      '#appThread .tmsg.me{align-self:flex-end;background:#c8823c;color:#1d1206}' +
+      '#respBox{display:none;flex-direction:column;gap:8px;margin:12px 0 0}' +
+      '#respText{resize:vertical}' +
       '#gate .row{display:flex;gap:8px;justify-content:center}' +
       '#chat{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#banView{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;padding:24px;background:#160d04}' +
@@ -1210,6 +1224,8 @@
       '<h2>application pending</h2>' +
       '<p>tung is reviewing your submission.</p>' +
       '<p class="hint">once youre approved, reload the site and reopen the shrine.</p>' +
+      '<div id="appThread"></div>' +
+      '<div id="respBox"><textarea id="respText" rows="2" placeholder="reply to tung..."></textarea><button id="respBtn" type="button">send reply</button></div>' +
       '<div class="row"><button id="recheckBtn" type="button">check access</button></div>' +
       '</div></div>' +
       '<div id="chat">' +
