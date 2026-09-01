@@ -261,6 +261,21 @@ Deno.serve(async (req) => {
     return json({ ok: true, status });
   }
 
+  // ---------- admin: send an approved user back to review (pending) ----------
+  // flips status to "pending" so they drop back to the application screen where
+  // the follow-up thread lives. their token + thread are kept, so the existing
+  // conversation carries over and they can answer new questions.
+  if (req.method === "POST" && path === "/admin/repend") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", clip(b.id, 32)]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    await kv.set(["app", app.value.id], { ...app.value, status: "pending" });
+    return json({ ok: true, status: "pending" });
+  }
+
   // ---------- admin: list approved users (with ban/timeout state) ----------
   // powers the "approved users" panel. each row carries banned + timeoutUntil
   // so the admin can see who is currently blocked and until when.
@@ -505,9 +520,11 @@ function refreshUsers(){
       var ban=document.createElement("button");
       if(u.banned){ban.className="ok";ban.textContent="unban";ban.onclick=function(){setBan(u.id,false);};}
       else{ban.className="no";ban.textContent="ban";ban.onclick=function(){setBan(u.id,true);};}
+      var rev=document.createElement("button");rev.className="load";rev.textContent="re-review";rev.title="send back to the application screen to ask follow-up questions";
+      rev.onclick=function(){repend(u.id,u.username);};
       var del=document.createElement("button");del.className="no";del.textContent="delete";del.title="remove the user entirely (frees the username)";
       del.onclick=function(){deleteUser(u.id,u.username);};
-      row.appendChild(inp);row.appendChild(save);row.appendChild(ban);row.appendChild(del);
+      row.appendChild(inp);row.appendChild(save);row.appendChild(rev);row.appendChild(ban);row.appendChild(del);
       el.appendChild(row);
       // row 2: timeout-until picker + apply + clear
       var trow=document.createElement("div");trow.className="row";
@@ -552,5 +569,9 @@ function saveNote(id,note){
 function deleteUser(id,name){
   if(!confirm("Delete "+name+" entirely? This frees the username and cannot be undone."))return;
   fetch("/admin/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function repend(id,name){
+  if(!confirm("Send "+name+" back to review? They'll return to the application screen where you can ask follow-up questions."))return;
+  fetch("/admin/repend",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refresh();refreshUsers();});
 }
 </script></body></html>`;
