@@ -1118,9 +1118,9 @@
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the games grid to the chooser screen */
     'gsearch.addEventListener("input",filterGames);' +
     'cloakTitleEl.value=cloakTitle();cloakFavEl.value=cloakFav();' +
-    'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}});' +
-    'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}});' +
-    'document.title="Shrine of Tung";' +
+    'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}document.title=cloakTitle();});' +
+    'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}var fl=document.getElementById("cloakfav");if(fl)fl.href=cloakFav();});' +
+    'document.title=cloakTitle();' +
     'topShow("choose");' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
@@ -1129,9 +1129,17 @@
     '})();';
 
   function sahurChatDoc() {
+    /* the shrine window wears the same disguise as the game tabs: title defaults
+       to "Assignments" and the favicon to CUHSD Canvas, both read from the shared
+       localStorage the games-menu inputs write to (only place they can be set). */
+    var esc = function (s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); };
+    var ctitle, cfav;
+    try { ctitle = localStorage.getItem("shrine-cloak-title") || "Assignments"; } catch (e) { ctitle = "Assignments"; }
+    try { cfav = localStorage.getItem("shrine-cloak-fav") || "https://cuhsd.instructure.com/favicon.ico"; } catch (e) { cfav = "https://cuhsd.instructure.com/favicon.ico"; }
     return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-      '<title>Shrine of Tung</title>' +
+      '<title>' + esc(ctitle) + '</title>' +
+      '<link id="cloakfav" rel="icon" href="' + esc(cfav) + '">' +
       '<style>' +
       'html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#1d1206;color:#f5efe0}' +
       'body{display:flex;flex-direction:column}' +
