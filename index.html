@@ -1005,6 +1005,7 @@
     'var chooseShrine=document.getElementById("chooseShrine");' +
     'var chooseGames=document.getElementById("chooseGames");' +
     'var gback=document.getElementById("gback");' +
+    'var sback=document.getElementById("sback");' +
     'var gsearch=document.getElementById("gsearch");' +
     'var gamegrid=document.getElementById("gamegrid");' +
     'var cloakTitleEl=document.getElementById("cloakTitle");' +
@@ -1116,6 +1117,7 @@
     'chooseShrine.addEventListener("click",function(){topShow("shrine");refreshGate();});' +
     'chooseGames.addEventListener("click",function(){topShow("games");});' +
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the games grid to the chooser screen */
+    'sback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the shrine/chat to the chooser screen */
     'gsearch.addEventListener("input",filterGames);' +
     'cloakTitleEl.value=cloakTitle();cloakFavEl.value=cloakFav();' +
     'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}document.title=cloakTitle();});' +
@@ -1208,6 +1210,7 @@
       '.bicon{width:44%;height:auto}' +   /* the chat speech-bubble svg */
       '.bimg{width:58%;aspect-ratio:1;object-fit:cover;border-radius:10px}' +   /* the sahur png */
       '#shrine{flex:1;display:none;flex-direction:column;min-height:0}' +
+      '#shrinebar{display:flex;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}' +
       '#games{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#gamesbar{display:flex;gap:8px;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}' +
       '#cloakbar{display:flex;gap:8px;padding:8px 12px;background:#241505;border-bottom:1px solid #3a2410}' +
@@ -1234,6 +1237,7 @@
       '</div>' +
       '</div>' +
       '<div id="shrine">' +
+      '<div id="shrinebar"><button id="sback" class="ghost" type="button">← back</button></div>' +
       '<div id="gate">' +
       '<div id="applyView">' +
       '<h2 id="applyTitle">apply to enter</h2>' +
