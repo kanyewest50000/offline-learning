@@ -1007,6 +1007,8 @@
     'var gback=document.getElementById("gback");' +
     'var gsearch=document.getElementById("gsearch");' +
     'var gamegrid=document.getElementById("gamegrid");' +
+    'var cloakTitleEl=document.getElementById("cloakTitle");' +
+    'var cloakFavEl=document.getElementById("cloakFav");' +
     /* games no longer play inside this chat window — each game opens in its own
        about:blank tab (see openGame below), so there are no in-page player refs */
     /* ---- discord-style emoji shortcodes + per-user pinned favourites ---- */
@@ -1023,11 +1025,19 @@
        screen so the header vanishes, and Esc restores it. note: `<\/script>` is
        escaped because this whole string is embedded inside the chat popup, which
        is itself embedded inside index.html\'s single-quoted blob. */
+    /* tab disguise: game tabs default to the browser title "Assignments" and the
+       CUHSD Canvas favicon, both overridable from the games menu and remembered
+       in localStorage. empty value falls back to the default. */
+    'var CLOAK_TKEY="shrine-cloak-title",CLOAK_FKEY="shrine-cloak-fav";' +
+    'function cloakTitle(){try{return localStorage.getItem(CLOAK_TKEY)||"Assignments";}catch(e){return "Assignments";}}' +
+    'function cloakFav(){try{return localStorage.getItem(CLOAK_FKEY)||"https://cuhsd.instructure.com/favicon.ico";}catch(e){return "https://cuhsd.instructure.com/favicon.ico";}}' +
     'function openGame(g){' +
     'var w=window.open("about:blank","_blank");' +
     'if(!w){alert("allow popups to play games");return;}' +
+    'var ct=cloakTitle(),cf=cloakFav();' +
     'var doc=`<!DOCTYPE html><html><head><meta charset="utf-8">' +
-    '<meta name="viewport" content="width=device-width,initial-scale=1"><title>${g.n}</title>' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><title>${ct}</title>' +
+    '<link rel="icon" href="${cf}">' +
     '<style>html,body{margin:0;height:100%;background:#000;font-family:system-ui,Segoe UI,Roboto,sans-serif}' +
     '#wrap{display:flex;flex-direction:column;height:100vh}' +
     '#bar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410;color:#f5efe0}' +
@@ -1107,6 +1117,9 @@
     'chooseGames.addEventListener("click",function(){topShow("games");});' +
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the games grid to the chooser screen */
     'gsearch.addEventListener("input",filterGames);' +
+    'cloakTitleEl.value=cloakTitle();cloakFavEl.value=cloakFav();' +
+    'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}});' +
+    'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}});' +
     'document.title="Shrine of Tung";' +
     'topShow("choose");' +
     /* the three lines from before, verbatim */
@@ -1189,6 +1202,8 @@
       '#shrine{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#games{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#gamesbar{display:flex;gap:8px;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}' +
+      '#cloakbar{display:flex;gap:8px;padding:8px 12px;background:#241505;border-bottom:1px solid #3a2410}' +
+      '#cloakbar input{flex:1;min-width:0;font-size:12px}' +
       '#gsearch{flex:1}' +
       '#gamegrid{flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;align-content:start}' +
       '.gtile{min-height:64px;padding:14px 8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;background:#241505;border:1px solid #3a2410;border-radius:10px;color:#f5efe0;cursor:pointer;text-align:center;line-height:1.25}' +
@@ -1238,6 +1253,7 @@
       '</div>' +
       '<div id="games">' +
       '<div id="gamesbar"><button id="gback" class="ghost" type="button">← back</button><input id="gsearch" autocomplete="off" placeholder="search games"></div>' +
+      '<div id="cloakbar"><input id="cloakTitle" autocomplete="off" placeholder="tab title (default: Assignments)"><input id="cloakFav" autocomplete="off" placeholder="favicon url (default: Canvas)"></div>' +
       '<div id="gamegrid"></div>' +   /* the games grid is the whole games view now; games open in their own tab */
       '</div>' +
       '<div id="rpal"></div>' +
