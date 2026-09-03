@@ -93,7 +93,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
 }
 .brand-text { display: flex; flex-direction: column; line-height: 1.16; }
 .brand-name { font-family: var(--ui); font-size: 1.05rem; color: var(--ink-900); font-weight: 800; letter-spacing: -.01em; }
-.brand-sub { font-family: var(--ui); font-size: .64rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-300); }
+.brand-sub { font-family: var(--ui); font-size: .64rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-300); white-space: nowrap; }
 
 .nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .nav a {
@@ -287,10 +287,11 @@ details.faq .faq-body { padding: 0 20px 18px; font-size: .93rem; color: var(--in
   .footer-grid { grid-template-columns: 1fr 1fr; }
   .stat-row { grid-template-columns: 1fr 1fr; }
   .stat { border-left: 0; }
-  .masthead .wrap { flex-wrap: wrap; }
   .kv { grid-template-columns: 1fr; gap: 2px 0; }
   .kv dd { margin-bottom: 10px; }
 }
+/* header wraps at the SAME breakpoint as index.html so the nav is identical site-wide */
+@media (max-width: 900px) { .masthead .wrap { flex-wrap: wrap; } }
 @media (max-width: 620px) {
   .footer-grid { grid-template-columns: 1fr; }
   .tutor { grid-template-columns: 1fr; }
