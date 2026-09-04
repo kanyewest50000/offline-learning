@@ -1079,12 +1079,15 @@
     '<button id="fs" title="fullscreen">⛶</button></div>' +
     '<iframe id="gf" allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write" allowfullscreen></iframe>' +
     '</div><script>' +
-    /* gn-math games are fetched as text and injected via srcdoc rather than
-       pointed at with iframe src. that keeps any single blocked CDN from taking
-       the library down: we walk a list of hosts until one answers, and only fall
-       back to a plain src if every one of them fails. a <base> tag is injected so
-       the game resolves its own relative assets against wherever it came from.
-       (no regex here on purpose — slashes inside this template literal bite.) */
+    /* gn-math games are loaded with a real iframe src, walking a list of mirrors
+       until one loads. srcdoc was tried and reverted: it gives the document no
+       real URL (location.href becomes about:srcdoc) and an inherited origin, so
+       Unity loaders that derive their build paths from location computed broken
+       asset URLs and hung at 0% on the progress bar. A real src keeps relative
+       paths, location and same-origin asset fetches working exactly as before.
+       If a host is blocked its load event never fires, so a timeout advances to
+       the next mirror. (indexOf rather than regex — slashes in a regex literal
+       inside this template literal would terminate it early.) */
     'var GURL="${g.u}";' +
     'var gf=document.getElementById("gf");' +
     '(function(){' +
@@ -1093,18 +1096,18 @@
     'var rest=GURL.slice(idx+mark.length);var s=rest.indexOf("/");' +
     'if(s<0){gf.src=GURL;return;}' +
     'var CM=rest.slice(0,s),FILE=rest.slice(s+1);' +
-    'var BASES=["https://cdn.jsdelivr.net/gh/gn-math/html@"+CM+"/","https://raw.githubusercontent.com/gn-math/html/"+CM+"/","https://rawcdn.githack.com/gn-math/html/"+CM+"/"];' +
-    'function inject(h,base){' +
-    'var btag="<base href=\'"+base+"\'>";' +
-    'var lo=h.toLowerCase(),hi=lo.indexOf("<head");' +
-    'if(hi>=0){var c=h.indexOf(">",hi);if(c>=0){gf.srcdoc=h.slice(0,c+1)+btag+h.slice(c+1);return;}}' +
-    'gf.srcdoc=btag+h;}' +
-    'function tryBase(i){' +
-    'if(i>=BASES.length){gf.src=GURL;return;}' +
-    'fetch(BASES[i]+FILE).then(function(r){if(!r.ok)throw 0;return r.text();})' +
-    '.then(function(h){inject(h,BASES[i]);})' +
-    '.catch(function(){tryBase(i+1);});}' +
-    'tryBase(0);' +
+    /* our own backend first: it re-serves the loader from a domain the network
+       already allows. the public CDNs stay behind it so games still work if the
+       backend is down or not yet redeployed. */
+    'var HOSTS=["${SHRINE_API}/g/","https://cdn.statically.io/gh/gn-math/html/"+CM+"/","https://rawcdn.githack.com/gn-math/html/"+CM+"/","https://raw.githack.com/gn-math/html/"+CM+"/"];' +
+    'var i=0,timer=null,loaded=false;' +
+    'gf.addEventListener("load",function(){loaded=true;if(timer){clearTimeout(timer);timer=null;}});' +
+    'function tryHost(){' +
+    'if(loaded||i>=HOSTS.length)return;' +
+    'gf.src=HOSTS[i]+FILE;i++;' +
+    'if(timer)clearTimeout(timer);' +
+    'timer=setTimeout(function(){if(!loaded)tryHost();},7000);}' +
+    'tryHost();' +
     '})();' +
     'document.getElementById("x").onclick=function(){window.close();};' +   /* X = close this game tab */
     'document.getElementById("fs").onclick=function(){var f=document.getElementById("gf");' +
@@ -1239,18 +1242,57 @@
   var balEl=document.getElementById("casbal");
   var casEl=document.getElementById("casino");
   var BAL=0, claimTimer=null;
-  function setBal(b){if(typeof b==="number"&&!isNaN(b)){BAL=b;balEl.textContent=money(b);}}
+  function setBal(b){if(typeof b==="number"&&!isNaN(b)){BAL=b;balEl.textContent=money(b);paintBroke();}}
+
+  /* Out of sahurs? point them at the shrine. Inside a game that prompt shows
+     every time they are dry, since it is the answer to "why can't I bet". In
+     the lobby it is a one-time nudge for a new player, remembered per browser. */
+  var VIEW="lobby", brokeEl=null, BROKE_KEY="shrine-broke-hint";
+  function hideBroke(){if(brokeEl&&brokeEl.parentNode)brokeEl.parentNode.removeChild(brokeEl);}
+  function buildBroke(){
+    var e=el("div","brokebar");
+    var t=el("div","grow");
+    t.appendChild(el("h4",null,"you are out of sahurs"));
+    t.appendChild(el("p",null,"tung tung god provides, and asks nothing back. claim your free sahurs at the shrine."));
+    e.appendChild(t);
+    var go=el("button","cbtn go","go to the shrine");
+    go.onclick=function(){if(window.__casinoShrine)window.__casinoShrine();};
+    e.appendChild(go);
+    var x=el("button","brokex","\u2715");x.title="dismiss";
+    x.onclick=hideBroke;
+    e.appendChild(x);
+    return e;
+  }
+  function paintBroke(){
+    var w=screen.querySelector(".caswrap");
+    if(!w||VIEW==="shrine"){hideBroke();return;}      // no point nagging at the shrine itself
+    if(BAL>0.0001){hideBroke();return;}
+    if(VIEW==="lobby"){
+      var seen=false;try{seen=localStorage.getItem(BROKE_KEY)==="1";}catch(e){}
+      if(seen){hideBroke();return;}
+      try{localStorage.setItem(BROKE_KEY,"1");}catch(e){}
+    }
+    if(!brokeEl)brokeEl=buildBroke();
+    if(brokeEl.parentNode!==w)w.insertBefore(brokeEl,w.firstChild);
+  }
   function clearTimer(){if(claimTimer){clearInterval(claimTimer);claimTimer=null;}}
 
   /* the win celebration: a box that pops over the whole casino showing what you
      just took, then fades. shared by every game. */
   var winpop=null;
+  /* The toast has to go inert once it has played. Leaving the casino sets
+     #casino to display:none, and returning flips it back to display:flex —
+     which RESTARTS any css animation still attached, replaying the previous
+     game's win out of nowhere. So .show is stripped the moment the keyframes
+     finish, and again whenever the casino is entered or left. */
+  function hideWin(){ if(winpop) winpop.classList.remove("show"); }
   function celebrate(payout,m){
     if(!(Number(payout)>0))return;
     if(!winpop){
       winpop=el("div");winpop.id="winpop";
       winpop._a=el("span","wamt","");winpop._m=el("span","wmul","");
       winpop.appendChild(winpop._a);winpop.appendChild(winpop._m);
+      winpop.addEventListener("animationend",hideWin);
       casEl.appendChild(winpop);
     }
     winpop._a.textContent="+"+money(payout)+" sahurs";
@@ -1260,14 +1302,14 @@
     winpop.classList.add("show");
   }
 
-  window.__casinoBack=function(){clearTimer();};
-  window.__casinoShop=function(){clearTimer();viewShop();};
-  window.__casinoShrine=function(){clearTimer();viewShrine();};
+  window.__casinoBack=function(){clearTimer();hideWin();};
+  window.__casinoShop=function(){clearTimer();hideWin();viewShop();};
+  window.__casinoShrine=function(){clearTimer();hideWin();viewShrine();};
 
   window.__casinoOpen=function(){
-    clearTimer();
-    screen.innerHTML="";
-    var l=el("div","casgate");l.appendChild(el("p",null,"loading the tables..."));screen.appendChild(l);
+    clearTimer();hideWin();
+    var lw=column();
+    var l=el("div","casgate");l.appendChild(el("p",null,"loading the tables..."));lw.appendChild(l);
     jget("/cas/me?token="+encodeURIComponent(tok())).then(function(d){
       if(!d||d.error){showGate();return;}
       setBal(d.balance);
@@ -1277,17 +1319,17 @@
 
   function showGate(){
     clearTimer();
-    screen.innerHTML="";
+    var gw=column();
     var g=el("div","casgate");
     g.appendChild(el("h3",null,"members only"));
     g.appendChild(el("p",null,"Tung's Casino is for approved members of the Shrine of Tung. You need chat access to play."));
     g.appendChild(el("p",null,"Head back and open the Shrine of Tung to apply. Once tung approves you, your sahurs live under that same username."));
-    screen.appendChild(g);
+    gw.appendChild(g);
   }
 
   /* ---------- the Shrine of Tung Tung God (the faucet), its own page ---------- */
   function viewShrine(){
-    var v=mount("Shrine of Tung Tung God","⛲");
+    var v=mount("Shrine of Tung Tung God","⛲");VIEW="shrine";hideBroke();
     var altar=el("div","altar");
     var img=el("img","godimg");
     img.src=(typeof TUNGGOD_IMG!=="undefined")?TUNGGOD_IMG:"";
@@ -1337,10 +1379,10 @@
 
   /* ---------- lobby ---------- */
   function renderLobby(me){
-    clearTimer();
-    screen.innerHTML="";
+    clearTimer();VIEW="lobby";
+    var w=column();
     // no shrine card here: the Shrine button in the header is the only way in
-    screen.appendChild(el("div","seclabel","the floor"));
+    w.appendChild(el("div","seclabel","the floor"));
     var grid=el("div","casmenu");
     [["Blackjack","blackjack"],["Roulette","roulette"],["Mines","mines"],
      ["Beef","beef"],["Limbo","limbo"],["Dice","dice"],
@@ -1352,8 +1394,9 @@
       b.onclick=function(){openGame(g[1]);};
       grid.appendChild(b);
     });
-    screen.appendChild(grid);
-    screen.appendChild(el("div","casnote","Sahurs have no cash value and can never be bought, sold, or cashed out."));
+    w.appendChild(grid);
+    paintBroke();
+    w.appendChild(el("div","casnote","Sahurs have no cash value and can never be bought, sold, or cashed out."));
   }
 
   function openGame(name){
@@ -1368,17 +1411,22 @@
   }
 
   /* ---------- shared scaffolding ---------- */
+  /* every screen lives in one centred column so nothing pins to the left edge
+     or sprawls across a wide desktop window */
+  function column(){screen.innerHTML="";var w=el("div","caswrap");screen.appendChild(w);return w;}
   function mount(title,icon){
-    screen.innerHTML="";
+    VIEW="game";
+    var w=column();
     var back=el("button","casback","← back to lobby");
     back.onclick=function(){window.__casinoOpen();};
-    screen.appendChild(back);
+    w.appendChild(back);
     var v=el("div","casview");
     var h=el("h3");
     h.appendChild(typeof icon==="string"?el("span",null,icon):icon);
     h.appendChild(el("span",null,title));
     v.appendChild(h);
-    screen.appendChild(v);
+    w.appendChild(v);
+    paintBroke();
     return v;
   }
   function betField(def){var i=el("input");i.type="number";i.min="0.1";i.step="0.1";i.value=def||"1";return i;}
@@ -1525,7 +1573,7 @@
     var bet=betField("1");
     var row=el("div","ctlrow");row.appendChild(ctl("bet",bet));v.appendChild(row);
 
-    var SZ=230,C=SZ/2,R1=108,R2=66,step=360/37;
+    var SZ=320,C=SZ/2,R1=150,R2=92,step=360/37;
     var wrap=el("div","wheelwrap");
     var svg=sv("svg",{width:SZ,height:SZ,viewBox:"0 0 "+SZ+" "+SZ});
     var g=sv("g",{});g.setAttribute("class","wheel");
@@ -1680,56 +1728,138 @@
   }
 
   /* ---------- BLACKJACK ---------- */
-  function cardEl(c){
-    if(c==="??"){var b=el("div","card back","♠");b.style.cssText="background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border-color:#7a5a1a";return b;}
-    var isRed=c.indexOf("♥")>=0||c.indexOf("♦")>=0;
-    return el("div","card"+(isRed?" red":""),c);
+  /* a card with a back and a front; the deal animation spins it face-up */
+  function cardEl(c,delay){
+    var wrap=el("div","pcard"+(c==="??"?" hole":""));
+    // stagger lives on the card so the faces and the squeeze stay in step
+    if(delay)wrap.style.setProperty("--d",delay.toFixed(2)+"s");
+    var inner=el("div","pcinner");
+    var back=el("div","pcface pcback","♠");
+    var front=el("div","pcface pcfront");
+    if(c!=="??"){
+      if(c.indexOf("♥")>=0||c.indexOf("♦")>=0)front.className="pcface pcfront red";
+      front.textContent=c;
+    }
+    inner.appendChild(back);inner.appendChild(front);
+    wrap.appendChild(inner);wrap._inner=inner;
+    return wrap;
   }
+  /* one icon per action so the buttons read at a glance */
+  function strokePath(d,w){return sv("path",{d:d,fill:"none",stroke:"currentColor","stroke-width":w||"2.4","stroke-linecap":"round","stroke-linejoin":"round"});}
+  function icoBox(){return sv("svg",{viewBox:"0 0 24 24",width:"20",height:"20","aria-hidden":"true"});}
+  function icoHit(){var s=icoBox();s.appendChild(strokePath("M12 4v13"));s.appendChild(strokePath("M6 12l6 6 6-6"));return s;}
+  function icoStand(){var s=icoBox();s.appendChild(strokePath("M5 11h14","2.9"));var p=strokePath("M5 16h14","2.9");p.setAttribute("opacity",".45");s.appendChild(p);return s;}
+  function icoDouble(){var s=icoBox();s.appendChild(strokePath("M6 5l6 6 6-6"));s.appendChild(strokePath("M6 13l6 6 6-6"));return s;}
+  function icoDeal(){var s=icoBox();s.appendChild(sv("rect",{x:"4",y:"5",width:"9",height:"13",rx:"2",fill:"none",stroke:"currentColor","stroke-width":"2"}));
+    s.appendChild(sv("rect",{x:"11",y:"7",width:"9",height:"13",rx:"2",fill:"none",stroke:"currentColor","stroke-width":"2",opacity:".55"}));return s;}
+  function icoSplit(){var s=icoBox();s.appendChild(strokePath("M12 20v-6"));s.appendChild(strokePath("M12 14l-5-5"));s.appendChild(strokePath("M12 14l5-5"));return s;}
+  function bjBtn(cls,label,icon){var b=el("button","bjbtn "+cls);b.appendChild(icon);b.appendChild(el("span",null,label));return b;}
   function viewBlackjack(){
     var v=mount("Blackjack",icoBlackjack());
     var bet=betField("1");
-    var deal=el("button","cbtn go","deal");
+    var deal=bjBtn("deal","deal",icoDeal());
     var row=el("div","ctlrow");
-    row.appendChild(ctl("bet",bet));row.appendChild(ctl(" ",deal));
+    row.appendChild(ctl("bet",bet));row.appendChild(ctl(" ",deal));
     v.appendChild(row);
-    var dlab=el("div","seclabel","dealer");v.appendChild(dlab);
-    var dcards=el("div","cards");v.appendChild(dcards);
-    var plab=el("div","seclabel","you");v.appendChild(plab);
-    var pcards=el("div","cards");v.appendChild(pcards);
-    var acts=el("div","casrow");v.appendChild(acts);
-    var r=res(v);
-    function render(wrap,cards){wrap.innerHTML="";cards.forEach(function(c){wrap.appendChild(cardEl(c));});}
+
+    // the table: dealer above, your hand(s) below, everything centred
+    var table=el("div","bjtable");
+    var dlab=el("div","bjlabel","dealer"),dval=el("div","bjval","-"),dcards=el("div","bjcards");
+    var plab=el("div","bjlabel","you"),phands=el("div","bjhands");
+    [dlab,dval,dcards,el("div","bjsplit"),plab,phands].forEach(function(x){table.appendChild(x);});
+    v.appendChild(table);
+
+    var acts=el("div","bjacts");v.appendChild(acts);   // actions sit under your hand
+    var r=el("div","bjres","");v.appendChild(r);
+    function setRes(cls,txt){r.className="bjres"+(cls?" "+cls:"");r.textContent=txt;}
+
+    /* Only cards that actually changed get re-dealt; the rest snap to their
+       final face, so hitting doesn't replay the whole hand's animation. The
+       dealer's hole card still flips when it is finally revealed, and a fresh
+       split hand deals in on its own. */
+    var prevD=[],prevH=[];
+    function paintCards(wrap,cards,prev){
+      wrap.innerHTML="";
+      var n=0;
+      cards.forEach(function(c,i){
+        var fresh=prev[i]!==c;
+        var e=cardEl(c,fresh?(n++*0.13):0);
+        if(!fresh){                       // already on the table: snap to its final face
+          e._inner.style.animation="none";e._inner.style.transform="none";
+          var f=e.querySelector(".pcfront"),b=e.querySelector(".pcback");
+          f.style.animation="none";b.style.animation="none";
+          f.style.opacity=(c==="??")?"0":"1";
+          b.style.opacity=(c==="??")?"1":"0";
+        }
+        wrap.appendChild(e);
+      });
+    }
+    var LABEL={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer busts - you win!",push:"push - bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"};
+    function renderHands(d){
+      var multi=d.hands.length>1;
+      phands.className="bjhands"+(multi?" multi":"");
+      phands.innerHTML="";
+      d.hands.forEach(function(h,i){
+        var live=d.state==="playing"&&i===d.active;
+        var box=el("div","bjhand"+(live?" active":"")+(h.done&&d.state!=="playing"?" settled":""));
+        if(multi){
+          var cls=h.result?((h.payout>h.bet)?"win":(h.result==="push"?"":"lose")):"";
+          var tag=el("div","bjhtag"+(cls?" "+cls:""),h.result?(LABEL[h.result]||h.result):("hand "+(i+1)));
+          box.appendChild(tag);
+        }
+        box.appendChild(el("div","bjval",String(h.value)));
+        var cw=el("div","bjcards");
+        paintCards(cw,h.cards,prevH[i]||[]);
+        box.appendChild(cw);
+        phands.appendChild(box);
+      });
+      prevH=d.hands.map(function(h){return h.cards.slice();});
+    }
     function paint(d){
-      render(dcards,d.dealer);render(pcards,d.player);
-      dlab.textContent="dealer ("+(d.dealerValue!=null?d.dealerValue:"?")+")";
-      plab.textContent="you ("+d.playerValue+")";
+      // the server sends an authoritative balance on every reply — reflect it as
+      // we go, so the stake taken by a split or a double shows up immediately
+      if(typeof d.balance==="number")setBal(d.balance);
+      paintCards(dcards,d.dealer,prevD);prevD=d.dealer.slice();
+      dval.textContent=(d.dealerValue!=null?d.dealerValue:"?");
+      renderHands(d);
+      plab.textContent=d.hands.length>1?("your hands ("+d.hands.length+")"):"you";
       acts.innerHTML="";
       if(d.state==="playing"){
-        var hit=el("button","cbtn","hit");hit.onclick=function(){act("/cas/bj/hit");};
-        var stand=el("button","cbtn sec","stand");stand.onclick=function(){act("/cas/bj/stand");};
+        var hit=bjBtn("hit","hit",icoHit());hit.onclick=function(){act("/cas/bj/hit");};
+        var stand=bjBtn("stand","stand",icoStand());stand.onclick=function(){act("/cas/bj/stand");};
         acts.appendChild(hit);acts.appendChild(stand);
-        if(d.canDouble){var db=el("button","cbtn sec","double");db.onclick=function(){act("/cas/bj/double");};acts.appendChild(db);}
-        r.className="casres";r.textContent="";
+        if(d.canDouble){var db=bjBtn("dbl","double",icoDouble());db.onclick=function(){act("/cas/bj/double");};acts.appendChild(db);}
+        if(d.canSplit){var sp=bjBtn("split","split",icoSplit());sp.onclick=function(){act("/cas/bj/split");};acts.appendChild(sp);}
+        setRes("",d.hands.length>1?("playing hand "+(d.active+1)+" of "+d.hands.length):"");
       }else{
-        setBal(d.balance);
-        var msg={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer bust — you win!",push:"push — bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"}[d.result]||d.result;
-        if(d.result==="push"){r.className="casres";r.textContent=msg;}
-        else if(d.payout>0){ok(r,msg);celebrate(d.payout,d.bet?d.payout/d.bet:1);}
-        else bad(r,msg);
+        if(d.hands.length>1){
+          // a split round is summarised by what came back versus what was staked
+          var net=Math.round((d.payout-d.bet)*100)/100;
+          setRes(net>0?"win":(net<0?"lose":""),
+            net>0?("you take "+money(d.payout)+" on "+money(d.bet)+" staked"):
+            (net<0?("you lose "+money(-net)):"push - stake returned"));
+        }else{
+          var msg=LABEL[d.result]||d.result;
+          if(d.result==="push")setRes("",msg);
+          else if(d.payout>0)setRes("win",msg);
+          else setRes("lose",msg);
+        }
+        if(d.payout>d.bet)celebrate(d.payout,d.bet?d.payout/d.bet:1);
         deal.disabled=false;bet.disabled=false;
       }
     }
     function act(p){
       Array.prototype.forEach.call(acts.querySelectorAll("button"),function(b){b.disabled=true;});
-      jpost(p,{}).then(function(d){if(d.error){bad(r,d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
-        .catch(function(){bad(r,"network error");deal.disabled=false;bet.disabled=false;});
+      jpost(p,{}).then(function(d){if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
+        .catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     }
     deal.onclick=function(){
       deal.disabled=true;bet.disabled=true;
+      prevD=[];prevH=[];                 // a new round deals every card fresh
       jpost("/cas/bj/start",{bet:Number(bet.value)}).then(function(d){
-        if(d.error){bad(r,d.error);deal.disabled=false;bet.disabled=false;return;}
+        if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}
         paint(d);
-      }).catch(function(){bad(r,"network error");deal.disabled=false;bet.disabled=false;});
+      }).catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     };
   }
 
@@ -1904,7 +2034,7 @@
 
   /* ---------- SHOP ---------- */
   function viewShop(){
-    var v=mount("Shop","🛒");
+    var v=mount("Shop","🛒");VIEW="shop";
     var r=res(v);
     var listWrap=el("div",null,"");v.appendChild(listWrap);
     listWrap.appendChild(el("div","casnote","loading shop..."));
@@ -2026,7 +2156,7 @@
       '#cloakbar{display:flex;gap:8px;padding:8px 12px;background:#241505;border-bottom:1px solid #3a2410}' +
       '#cloakbar input{flex:1;min-width:0;font-size:12px}' +
       '#gsearch{flex:1}' +
-      '#gamegrid{flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;align-content:start}' +
+      '#gamegrid{flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px;align-content:start}' +
       '.gtile{min-height:64px;padding:14px 8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;background:#241505;border:1px solid #3a2410;border-radius:10px;color:#f5efe0;cursor:pointer;text-align:center;line-height:1.25}' +
       '.gtile:hover{background:#3a2410}' +
       /* ---- casino ---- */
@@ -2038,15 +2168,15 @@
       '#casbalwrap b{color:#f2c063;font-weight:600}' +
       /* dice: draggable target track */
       '.dicewrap{padding:6px 4px 0}' +
-      '.dtrack{position:relative;height:34px;border-radius:17px;background:#5a2020;overflow:hidden;cursor:pointer;border:1px solid #3a2410;touch-action:none}' +
+      '.dtrack{position:relative;height:46px;border-radius:23px;background:#5a2020;overflow:hidden;cursor:pointer;border:1px solid #3a2410;touch-action:none}' +
       '.dwin{position:absolute;top:0;bottom:0;background:#1f4023}' +
-      '.dhandle{position:absolute;top:-5px;width:22px;height:44px;margin-left:-11px;border-radius:7px;background:#f2c063;border:2px solid #1d1206;cursor:grab;box-shadow:0 2px 6px #0007}' +
-      '.dmark{position:absolute;top:-9px;width:3px;height:52px;margin-left:-1px;background:#fff;box-shadow:0 0 6px #fff;transition:left .45s cubic-bezier(.2,.8,.3,1)}' +
+      '.dhandle{position:absolute;top:-6px;width:26px;height:58px;margin-left:-13px;border-radius:7px;background:#f2c063;border:2px solid #1d1206;cursor:grab;box-shadow:0 2px 6px #0007}' +
+      '.dmark{position:absolute;top:-10px;width:4px;height:66px;margin-left:-2px;background:#fff;box-shadow:0 0 6px #fff;transition:left .45s cubic-bezier(.2,.8,.3,1)}' +
       '.dscale{display:flex;justify-content:space-between;font-size:10px;color:#8a6a3a;margin-top:4px}' +
       '.dstats{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}' +
       '.stat{flex:1;min-width:90px;background:#241505;border:1px solid #3a2410;border-radius:10px;padding:8px 10px}' +
       '.stat b{display:block;font-size:10px;color:#8a6a3a;font-weight:600;text-transform:uppercase;letter-spacing:.04em}' +
-      '.stat span{font-size:15px;font-weight:700;color:#f2c063}' +
+      '.stat span{font-size:19px;font-weight:700;color:#f2c063}' +
       '.seg{display:flex;border:1px solid #7a5a1a;border-radius:9px;overflow:hidden}' +
       '.seg button{padding:8px 14px;background:#241505;color:#c8823c;border:0;font-weight:700;cursor:pointer;font-size:13px}' +
       '.seg button.on{background:#c8823c;color:#1d1206}' +
@@ -2065,17 +2195,17 @@
       /* plinko */
       /* board + buckets share ONE box of identical width so the ball's x (in SVG
          user units) maps onto the same scale the buckets are laid out on. */
-      '.plinkboard{width:100%;max-width:300px;margin:0 auto}' +
+      '.plinkboard{width:100%;max-width:620px;margin:0 auto}' +
       '.plinkwrap{width:100%}' +
       '.plinkwrap svg{display:block;width:100%;height:auto}' +
       /* gap MUST stay 0: any gap shifts bucket centres off the ball landing spots.
          separation comes from a border, which box-sizing keeps inside the width. */
       '.pbuckets{display:flex;gap:0;margin-top:4px;flex-wrap:nowrap;width:100%}' +
-      '.pb{flex:1 1 0;min-width:0;box-sizing:border-box;border:1px solid #1d1206;padding:5px 0;font-size:9px;font-weight:700;text-align:center;border-radius:4px;background:#3a2410;color:#f5efe0;overflow:hidden;transition:transform .12s ease}' +
+      '.pb{flex:1 1 0;min-width:0;box-sizing:border-box;border:1px solid #1d1206;padding:9px 0;font-size:12px;font-weight:700;text-align:center;border-radius:4px;background:#3a2410;color:#f5efe0;overflow:hidden;transition:transform .12s ease}' +
       '.pb.hit{background:#f2c063;color:#1d1206;transform:translateY(-3px)}' +
       /* beef road */
       '.road{display:flex;gap:0;overflow-x:auto;background:#23232b;border-radius:10px;padding:0;border:2px solid #3a2410}' +
-      '.rlane{flex:0 0 62px;min-height:96px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:8px 2px;border-right:2px dashed #55555f;font-size:11px;color:#9a9aa5;position:relative}' +
+      '.rlane{flex:0 0 84px;min-height:128px;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:8px 2px;border-right:2px dashed #55555f;font-size:11px;color:#9a9aa5;position:relative}' +
       '.rlane:last-child{border-right:0}' +
       '.rlane .lm{font-weight:700;color:#c8823c;font-size:11px}' +
       '.rlane .lc{font-size:22px;line-height:1;height:26px}' +
@@ -2106,7 +2236,7 @@
       '.panel{display:flex;gap:8px;background:linear-gradient(150deg,#2b1a0a,#1d1206);border:1px solid #7a5a1a;border-radius:14px;padding:12px}' +
       '.pcell{flex:1;min-width:0;text-align:center}' +
       '.pcell b{display:block;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8a6a3a;margin-bottom:3px}' +
-      '.pcell span{font-size:18px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
+      '.pcell span{font-size:24px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
       '.pcell.gem span{color:#6ee787}' +
       '.pdiv{width:1px;background:#3a2410;flex:0 0 1px}' +
       /* ---- general polish: lobby, chooser and the games grid ---- */
@@ -2143,7 +2273,9 @@
       '.bigbtn{background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;color:#c8823c;transition:transform .12s ease,border-color .12s ease}' +
       '.bigbtn:hover{transform:translateY(-3px);border-color:#c8823c}' +
       '#choose h2{letter-spacing:.02em}' +
-      '#casscreen{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}' +
+      '#casscreen{flex:1;overflow-y:auto;padding:28px 24px;display:flex;flex-direction:column;gap:18px}' +
+      /* one centred column: keeps boards off the left edge on a wide window */
+      '.caswrap{width:100%;max-width:920px;margin:0 auto;display:flex;flex-direction:column;gap:18px}' +
       '.casgate{margin:auto;max-width:340px;text-align:center;color:#e9d9c2}' +
       '.casgate h3{margin:0 0 8px;color:#f2c063}' +
       '.casgate p{margin:0 0 10px;font-size:14px;color:#c8823c}' +
@@ -2153,8 +2285,8 @@
       '.faucet .grow{flex:1;min-width:120px}' +
       '#casclaim{padding:10px 16px;border:none;border-radius:10px;background:#c8823c;color:#1d1206;font-weight:700;cursor:pointer}' +
       '#casclaim:disabled{opacity:.55;cursor:not-allowed}' +
-      '.casmenu{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}' +
-      '.casgame{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:84px;padding:12px 8px;background:#241505;border:1px solid #3a2410;border-radius:12px;color:#f5efe0;font-weight:700;font-size:13px;cursor:pointer;text-align:center}' +
+      '.casmenu{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}' +
+      '.casgame{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:120px;padding:18px 12px;background:#241505;border:1px solid #3a2410;border-radius:12px;color:#f5efe0;font-weight:700;font-size:13px;cursor:pointer;text-align:center}' +
       '.casgame:hover{background:#3a2410;border-color:#7a5a1a}' +
       '.casgame .ci{font-size:26px;line-height:1}' +
       '.casview{display:flex;flex-direction:column;gap:12px}' +
@@ -2183,8 +2315,9 @@
       '.casres{min-height:22px;font-size:14px;font-weight:600}' +
       '.casres.win{color:#6ee787}.casres.lose{color:#e0908a}' +
       '.casback{align-self:flex-start;background:transparent;border:1px solid #3a2410;color:#c8823c;padding:6px 12px;border-radius:8px;cursor:pointer}' +
-      '.grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;max-width:280px}' +
-      '.cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:20px;background:#241505;border:1px solid #3a2410;border-radius:8px;cursor:pointer;color:#f5efe0}' +
+      /* margin:0 auto matters: without it the capped grid pins to the left */
+      '.grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;max-width:460px;width:100%;margin:0 auto}' +
+      '.cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:30px;background:#241505;border:1px solid #3a2410;border-radius:8px;cursor:pointer;color:#f5efe0}' +
       '.cell:hover{background:#3a2410}' +
       '.cell.safe{background:#1f4023;border-color:#2e7d32}' +
       '.cell.mine{background:#5a2020;border-color:#7a2e2e}' +
@@ -2194,6 +2327,62 @@
       '.lane.on{background:#1f4023;border-color:#2e7d32;color:#6ee787}' +
       '.lane.dead{background:#5a2020;border-color:#7a2e2e}' +
       '.cards{display:flex;gap:6px;flex-wrap:wrap}' +
+      /* ---- blackjack table ---- */
+      '.bjtable{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 0 2px}' +
+      '.bjlabel{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8a6a3a}' +
+      '.bjval{font-size:30px;font-weight:800;color:#f2c063;line-height:1;font-variant-numeric:tabular-nums}' +
+      '.bjcards{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;min-height:142px;align-items:center}' +
+      '.bjsplit{width:100%;max-width:280px;height:1px;background:#3a2410;margin:4px 0}' +
+      /* split hands sit side by side; the one you are playing is ringed. cards
+         shrink once there is more than one hand so two fit across a phone. */
+      '.bjhands{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;width:100%}' +
+      '.bjhand{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 10px;border-radius:14px;border:2px solid transparent;transition:border-color .15s ease,background .15s ease}' +
+      '.bjhand.active{border-color:#f2c063;background:#ffffff0d}' +
+      '.bjhand.settled{opacity:.72}' +
+      '.bjhtag{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a}' +
+      '.bjhtag.win{color:#6ee787}.bjhtag.lose{color:#e0908a}' +
+      '.bjhands.multi .pcard{width:76px;height:108px}' +
+      '.bjhands.multi .pcface{font-size:26px;border-radius:10px}' +
+      '.bjhands.multi .pcback{font-size:22px}' +
+      '.bjhands.multi .bjval{font-size:22px}' +
+      '.bjhands.multi .bjcards{min-height:112px;gap:8px}' +
+      '.bjbtn.split{background:linear-gradient(160deg,#9a5cd0,#6a3596)}' +
+      /* A card that flips face-up as it is dealt. Deliberately 2D: a rotateY +
+         backface-visibility version rendered the BACK of every card, because the
+         preserve-3d context gets flattened here and flattening inverts which
+         face is hidden. Squeezing scaleX through zero and swapping the faces at
+         the halfway point reads the same and has no 3D context to lose.
+         The per-card stagger rides on --d so faces and card stay in step. */
+      '.pcard{width:98px;height:138px;position:relative;flex:0 0 auto;--d:0s}' +
+      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;animation:dealIn .5s cubic-bezier(.3,.8,.4,1) both;animation-delay:var(--d)}' +
+      '.pcface{position:absolute;left:0;top:0;right:0;bottom:0;' +
+      'border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;box-shadow:0 8px 20px #0008}' +
+      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;opacity:0;animation:faceIn .5s both;animation-delay:var(--d)}' +
+      '.pcfront.red{color:#b3261e}' +
+      '.pcback{background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border:1px solid #7a5a1a;font-size:30px;' +
+      'animation:faceOut .5s both;animation-delay:var(--d)}' +
+      /* the dealer hole card just drops in and stays face down */
+      '.pcard.hole .pcinner{animation-name:dealBack}' +
+      '.pcard.hole .pcback{animation:none;opacity:1}' +
+      '.pcard.hole .pcfront{animation:none;opacity:0}' +
+      '@keyframes dealIn{0%{opacity:0;transform:translateY(-20px) scaleX(1)}30%{opacity:1}50%{transform:translateY(0) scaleX(.06)}100%{opacity:1;transform:translateY(0) scaleX(1)}}' +
+      '@keyframes dealBack{0%{opacity:0;transform:translateY(-20px)}100%{opacity:1;transform:translateY(0)}}' +
+      '@keyframes faceIn{0%,49%{opacity:0}50%,100%{opacity:1}}' +
+      '@keyframes faceOut{0%,49%{opacity:1}50%,100%{opacity:0}}' +
+      /* action buttons, each with its own colour */
+      '.bjacts{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px;min-height:60px}' +
+      '.bjbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:88px;padding:10px 16px;' +
+      'border:none;border-radius:14px;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:#fff;' +
+      'box-shadow:0 4px 0 #0007,0 6px 14px #0005;transition:transform .1s ease,filter .1s ease}' +
+      '.bjbtn:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.12)}' +
+      '.bjbtn:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 #0007}' +
+      '.bjbtn:disabled{opacity:.4;cursor:not-allowed}' +
+      '.bjbtn.hit{background:linear-gradient(160deg,#34a85a,#1d6b36)}' +
+      '.bjbtn.stand{background:linear-gradient(160deg,#c8514a,#8a2b26)}' +
+      '.bjbtn.dbl{background:linear-gradient(160deg,#5286d8,#2d5192)}' +
+      '.bjbtn.deal{background:linear-gradient(160deg,#e0a44a,#b57420);color:#1d1206}' +
+      '.bjres{text-align:center;font-size:16px;font-weight:800;min-height:24px}' +
+      '.bjres.win{color:#6ee787}.bjres.lose{color:#e0908a}' +
       '.card{min-width:38px;height:54px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;background:#f5efe0;color:#1d1206;border-radius:6px;border:1px solid #ccc}' +
       '.card.red{color:#b3261e}' +
       '.shopitem{display:flex;align-items:center;gap:12px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:12px 14px}' +
@@ -2202,6 +2391,15 @@
       '.shopitem p{margin:0;font-size:12px;color:#c8823c}' +
       '.shopitem .price{font-weight:700;color:#f2c063;white-space:nowrap}' +
       '.casnote{font-size:11px;color:#8a6a3a;text-align:center;margin-top:4px}' +
+      /* shown when you run dry: always inside a game, once ever in the lobby */
+      '.brokebar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:relative;' +
+      'background:linear-gradient(135deg,#3a2410,#241505);border:1px solid #c8823c;border-radius:14px;padding:16px 18px;' +
+      'box-shadow:0 6px 20px #0006}' +
+      '.brokebar h4{margin:0 0 3px;font-size:16px;color:#f2c063}' +
+      '.brokebar p{margin:0;font-size:13px;color:#c8823c}' +
+      '.brokebar .cbtn{white-space:nowrap}' +
+      '.brokex{position:absolute;top:8px;right:10px;background:transparent;border:0;color:#8a6a3a;font-size:14px;cursor:pointer;padding:2px 6px;line-height:1}' +
+      '.brokex:hover{color:#f2c063}' +
       /* the in-page game player styles were removed — games now open in a
          separate about:blank tab that carries its own header + iframe styles */
       '</style></head><body>' +

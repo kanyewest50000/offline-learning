@@ -19,6 +19,16 @@ const kv = await Deno.openKv();
 const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
+
+// gn-math loader proxy (see the /g/ route). GN_COMMIT pins which snapshot is
+// served and must match the commit the client's menu URLs are built from.
+const GN_COMMIT = "9b343737669dd2067dd6cd731859a99008772388";
+const GN_MIRRORS = [
+  "https://cdn.statically.io/gh/gn-math/html/" + GN_COMMIT + "/",
+  "https://raw.githubusercontent.com/gn-math/html/" + GN_COMMIT + "/",
+  "https://rawcdn.githack.com/gn-math/html/" + GN_COMMIT + "/",
+];
+const GN_MAX = 2 * 1024 * 1024; // a loader page is ~20KB; anything huge is wrong
 const TTL_MS = 14 * 24 * 60 * 60 * 1000; // messages auto-expire after 2 weeks
 
 // ---------------------------------------------------------------------------
@@ -179,13 +189,59 @@ function minesMult(count: number, safe: number): number { return round2(minesMul
 function beefMultExact(q: number, step: number): number { return HOUSE / Math.pow(q, step); }
 function beefMult(q: number, step: number): number { return round2(beefMultExact(q, step)); }
 
-// resolve a completed blackjack hand (player stood/doubled, dealer has played)
+// ---- blackjack, played as a list of hands so splitting is just "more hands" ----
+// state: { hands:[{cards,bet,done,result,payout}], active, dealer, split, base }
+function rankOf(c: string): string { return c.slice(0, c.length - 1); }
+
+// Dealer draws once, after every hand is finished, then each hand is paid on its
+// own stake. A two-card 21 only pays 3:2 when the hand was never split — after a
+// split it is an ordinary 21, which is the standard rule.
 // deno-lint-ignore no-explicit-any
-async function settle(st: any, pv: number, dv: number, finish: (r: string, p: number, d: number) => Promise<Response>): Promise<Response> {
-  if (dv > 21) return await finish("dealer_bust", payoutOf(st.bet, 2), dv);
-  if (pv > dv) return await finish("win", payoutOf(st.bet, 2), dv);
-  if (pv < dv) return await finish("lose", 0, dv);
-  return await finish("push", st.bet, dv); // tie returns the stake
+async function bjResolve(uid: string, st: any) {
+  const anyAlive = st.hands.some((h: any) => handValue(h.cards).total <= 21);
+  if (anyAlive) while (handValue(st.dealer).total < 17) st.dealer.push(drawCard());
+  const dv = handValue(st.dealer).total;
+  let total = 0;
+  for (const h of st.hands) {
+    const pv = handValue(h.cards).total;
+    if (pv > 21) { h.result = "bust"; h.payout = 0; }
+    else if (!st.split && h.cards.length === 2 && pv === 21) { h.result = "blackjack"; h.payout = payoutOf(h.bet, 2.5); }
+    else if (dv > 21) { h.result = "dealer_bust"; h.payout = payoutOf(h.bet, 2); }
+    else if (pv > dv) { h.result = "win"; h.payout = payoutOf(h.bet, 2); }
+    else if (pv < dv) { h.result = "lose"; h.payout = 0; }
+    else { h.result = "push"; h.payout = h.bet; }
+    h.done = true;
+    total = round2(total + h.payout);
+  }
+  await kv.delete(["bj", uid]);
+  if (total > 0) await adjustBalance(uid, total);
+  return st;
+}
+
+// deno-lint-ignore no-explicit-any
+async function bjRespond(uid: string, st: any, done: boolean) {
+  const bal = round2((await getCas(uid)).bal);
+  const act = st.hands[st.active];
+  const live = !done && act && !act.done;
+  const totalBet = round2(st.hands.reduce((a: number, h: any) => a + h.bet, 0));
+  const totalPay = round2(st.hands.reduce((a: number, h: any) => a + (h.payout || 0), 0));
+  return json({
+    ok: true,
+    state: done ? "done" : "playing",
+    // per-hand so the client can lay out a split without guessing
+    hands: st.hands.map((h: any) => ({
+      cards: h.cards, value: handValue(h.cards).total, bet: h.bet,
+      done: !!h.done, result: h.result || "", payout: h.payout || 0,
+    })),
+    active: st.active, split: !!st.split,
+    dealer: done ? st.dealer : [st.dealer[0], "??"],
+    dealerValue: done ? handValue(st.dealer).total : handValue([st.dealer[0]]).total,
+    bet: totalBet, payout: totalPay, balance: bal,
+    result: done && st.hands.length === 1 ? (st.hands[0].result || "") : "",
+    canDouble: !!live && act.cards.length === 2 && bal >= act.bet,
+    canSplit: !!live && act.cards.length === 2 && rankOf(act.cards[0]) === rankOf(act.cards[1]) &&
+      st.hands.length < 4 && bal >= act.bet,
+  });
 }
 
 const PLINKO: Record<string, Record<number, number[]>> = {
@@ -733,68 +789,69 @@ Deno.serve(async (req) => {
     const player = [drawCard(), drawCard()];
     const dealer = [drawCard(), drawCard()];
     const pv = handValue(player), dv = handValue(dealer);
-    let state = "playing", result = "", payout = 0;
+    const st = { hands: [{ cards: player, bet, done: false, result: "", payout: 0 }], active: 0, dealer, split: false, base: bet };
     if (pv.total === 21 || dv.total === 21) {
-      // natural(s) resolve immediately
+      // natural(s) resolve immediately, before any split is possible
+      let result = "", payout = 0;
       if (pv.total === 21 && dv.total === 21) { result = "push"; payout = bet; }
       else if (pv.total === 21) { result = "blackjack"; payout = payoutOf(bet, 2.5); }
       else { result = "dealer_blackjack"; payout = 0; }
-      state = "done";
-      if (payout > 0) await adjustBalance(u.id, payout);
-    }
-    if (state === "playing") {
-      await kv.set(["bj", u.id], { player, dealer, bet, done: false }, { expireIn: GAME_TTL });
-    } else {
+      st.hands[0].done = true; st.hands[0].result = result; st.hands[0].payout = payout;
       await kv.delete(["bj", u.id]);
+      if (payout > 0) await adjustBalance(u.id, payout);
+      return await bjRespond(u.id, st, true);
     }
-    const bal = (await getCas(u.id)).bal;
-    return json({
-      ok: true, state, result,
-      player, playerValue: pv.total,
-      dealer: state === "done" ? dealer : [dealer[0], "??"],
-      dealerValue: state === "done" ? dv.total : handValue([dealer[0]]).total,
-      bet, payout, balance: round2(bal),
-      canDouble: state === "playing" && player.length === 2,
-    });
+    await kv.set(["bj", u.id], st, { expireIn: GAME_TTL });
+    return await bjRespond(u.id, st, false);
   }
-  if (req.method === "POST" && (path === "/cas/bj/hit" || path === "/cas/bj/stand" || path === "/cas/bj/double")) {
+  if (req.method === "POST" && (path === "/cas/bj/hit" || path === "/cas/bj/stand" ||
+      path === "/cas/bj/double" || path === "/cas/bj/split")) {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     // deno-lint-ignore no-explicit-any
     const g = await kv.get<any>(["bj", u.id]);
-    if (!g.value || g.value.done) return json({ error: "no hand" }, 400);
+    // drop any hand stored in the pre-split shape rather than misread it
+    if (!g.value || !Array.isArray(g.value.hands)) {
+      if (g.value) await kv.delete(["bj", u.id]);
+      return json({ error: "no hand" }, 400);
+    }
     const st = g.value;
-    const finish = async (result: string, payout: number, dv: number) => {
-      await kv.delete(["bj", u.id]);
-      if (payout > 0) await adjustBalance(u.id, payout);
-      const bal = (await getCas(u.id)).bal;
-      return json({ ok: true, state: "done", result, player: st.player, playerValue: handValue(st.player).total, dealer: st.dealer, dealerValue: dv, bet: st.bet, payout, balance: round2(bal) });
-    };
-    const dealerPlay = () => { while (handValue(st.dealer).total < 17) st.dealer.push(drawCard()); return handValue(st.dealer).total; };
+    const h = st.hands[st.active];
+    if (!h || h.done) return json({ error: "no hand" }, 400);
+
     if (path === "/cas/bj/hit") {
-      st.player.push(drawCard());
-      const pv = handValue(st.player).total;
-      if (pv > 21) return await finish("bust", 0, handValue(st.dealer).total);
-      await kv.set(["bj", u.id], st, { expireIn: GAME_TTL });
-      const bal = (await getCas(u.id)).bal;
-      return json({ ok: true, state: "playing", player: st.player, playerValue: pv, dealer: [st.dealer[0], "??"], dealerValue: handValue([st.dealer[0]]).total, bet: st.bet, balance: round2(bal), canDouble: false });
+      h.cards.push(drawCard());
+      if (handValue(h.cards).total > 21) h.done = true;
+    } else if (path === "/cas/bj/stand") {
+      h.done = true;
+    } else if (path === "/cas/bj/double") {
+      if (h.cards.length !== 2) return json({ error: "can only double on the first move" }, 400);
+      if (await adjustBalance(u.id, -h.bet) === null) return json({ error: "insufficient" }, 402);
+      h.bet = round2(h.bet * 2);          // the extra stake rides on this hand only
+      h.cards.push(drawCard());
+      h.done = true;
+    } else {
+      // split: the pair becomes two hands, each carrying its own stake
+      if (h.cards.length !== 2 || rankOf(h.cards[0]) !== rankOf(h.cards[1])) return json({ error: "not a pair" }, 400);
+      if (st.hands.length >= 4) return json({ error: "too many hands" }, 400);
+      if (await adjustBalance(u.id, -h.bet) === null) return json({ error: "insufficient" }, 402);
+      const moved = h.cards.pop();
+      const wasAces = rankOf(h.cards[0]) === "A";
+      h.cards.push(drawCard());
+      const nh = { cards: [moved, drawCard()], bet: h.bet, done: false, result: "", payout: 0 };
+      st.hands.splice(st.active + 1, 0, nh);
+      st.split = true;
+      // split aces take exactly one card each and then stand
+      if (wasAces) { h.done = true; nh.done = true; }
+      else if (handValue(h.cards).total > 21) h.done = true;
     }
-    if (path === "/cas/bj/double") {
-      if (st.player.length !== 2) return json({ error: "can only double on first move" }, 400);
-      if (await adjustBalance(u.id, -st.bet) === null) return json({ error: "insufficient" }, 402);
-      st.bet = round2(st.bet * 2);
-      st.player.push(drawCard());
-      const pv = handValue(st.player).total;
-      if (pv > 21) return await finish("bust", 0, handValue(st.dealer).total);
-      const dv = dealerPlay();
-      return await settle(st, pv, dv, finish);
-    }
-    // stand
-    const pv = handValue(st.player).total;
-    const dv = dealerPlay();
-    return await settle(st, pv, dv, finish);
+
+    while (st.active < st.hands.length && st.hands[st.active].done) st.active++;
+    if (st.active >= st.hands.length) return await bjRespond(u.id, await bjResolve(u.id, st), true);
+    await kv.set(["bj", u.id], st, { expireIn: GAME_TTL });
+    return await bjRespond(u.id, st, false);
   }
 
   // ---------- MINES (start / pick / cashout) ----------
@@ -1030,6 +1087,43 @@ Deno.serve(async (req) => {
     if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
     await kv.delete(["shopitem", clip(b.id, 32)]);
     return json({ ok: true, deleted: true });
+  }
+
+  // ---------- gn-math loader proxy ----------
+  // Re-serves the pinned gn-math loader pages from THIS origin, so a network
+  // that blocks the raw-GitHub CDNs can still reach them. Only the ~20KB loader
+  // passes through here; the heavy Unity payloads are fetched by the game itself
+  // straight from its own CDN and never touch this server, which keeps the
+  // bandwidth cost per launch tiny. A <base> tag is injected so the game still
+  // resolves its own relative assets against the mirror it came from.
+  // Deliberately narrow: one repo, one pinned commit, .html only — it cannot be
+  // pointed at an arbitrary URL. GN_COMMIT must match the commit the client
+  // builds its menu URLs from.
+  if (req.method === "GET" && path.startsWith("/g/")) {
+    const file = decodeURIComponent(path.slice(3));
+    if (!/^[A-Za-z0-9._-]{1,64}\.html$/.test(file) || file.includes("..")) {
+      return new Response("bad file", { status: 400, headers: CORS });
+    }
+    for (const base of GN_MIRRORS) {
+      try {
+        const r = await fetch(base + file, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) continue;
+        let html = await r.text();
+        if (html.length > GN_MAX) continue;
+        const btag = '<base href="' + base + '">';
+        const hi = html.toLowerCase().indexOf("<head");
+        const close = hi >= 0 ? html.indexOf(">", hi) : -1;
+        html = close >= 0 ? html.slice(0, close + 1) + btag + html.slice(close + 1) : btag + html;
+        return new Response(html, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "public, max-age=86400",
+            ...CORS,
+          },
+        });
+      } catch { /* mirror down or blocked from here — try the next */ }
+    }
+    return new Response("upstream unavailable", { status: 502, headers: CORS });
   }
 
   // ---------- health ----------
