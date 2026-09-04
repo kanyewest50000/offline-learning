@@ -712,7 +712,11 @@
      otherwise-unused odometer in the footer. That is all it does.
      ===================================================================== */
 
-  var SWAP_CHANCE = 0.4;
+  var SWAP_CHANCE = 0.01;   /* ultra rare: ~1 slot in 100 shows a cover */
+
+  /* the odometer popup is parked for now. covers still appear and still bump the
+     counter — flip this back to true to re-arm the payload. */
+  var EGG_POPUP_ENABLED = false;
 
   function svgWrap(inner, bg) {
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" role="img">' +
@@ -875,7 +879,7 @@
     counterEl.classList.remove("bump");
     void counterEl.offsetWidth; /* restart the animation */
     counterEl.classList.add("bump");
-    if (count === 3) openEasterEgg();
+    if (count === 3 && EGG_POPUP_ENABLED) openEasterEgg();
   }
 
   /* the payload behind the odometer */
