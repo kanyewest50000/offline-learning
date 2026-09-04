@@ -23,10 +23,10 @@ const TTL_MS = 14 * 24 * 60 * 60 * 1000; // messages auto-expire after 2 weeks
 
 // ---------------------------------------------------------------------------
 // Tung's Casino — FUN-MONEY ONLY. "Sahurs" have no cash value, cannot be bought,
-// and cannot be cashed out. The ONLY way sahurs enter circulation is the Shrine
-// of Sahur faucet (a free claim every 20h). There is deliberately NO endpoint,
-// admin or otherwise, that lets anyone set, add, or edit another user's balance —
-// admins can only *view* balances. This keeps the whole thing unmistakably a toy.
+// and cannot be cashed out. Sahurs normally enter circulation only through the
+// Shrine of Sahur faucet (a free claim every 20h). Admins can VIEW balances and,
+// as a moderation tool (e.g. resetting an exploiter who found a bug), SET a
+// balance to an exact value via /admin/setbal — an explicit, key-gated action.
 // Every outcome is decided here on the server with crypto RNG, so nothing about a
 // bet, a shuffle, a mine layout, or a crash point is manipulable from the client.
 const HOUSE = 0.99;                       // 1% house edge baked into fair payouts
@@ -917,7 +917,23 @@ Deno.serve(async (req) => {
     return json({ ok: true, balance: round2(bal), item: it.value.name, price });
   }
 
-  // ---------- admin: VIEW balances (read-only — no editing, ever) ----------
+  // ---------- admin: SET a player's balance (moderation tool) ----------
+  // sets the balance to an exact value, keeping the faucet clock intact. gated by
+  // the admin key. intended for cleaning up an exploiter, not day-to-day economy.
+  if (req.method === "POST" && path === "/admin/setbal") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    const bal = round2(Number(b.balance));
+    if (!id || !isFinite(bal) || bal < 0 || bal > 1e12) return json({ error: "bad balance" }, 400);
+    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", id]);
+    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+    await kv.set(["cas", id], { ...rec, bal }, { expireIn: CAS_TTL });
+    return json({ ok: true, balance: bal });
+  }
+
+  // ---------- admin: VIEW balances ----------
   if (req.method === "GET" && path === "/admin/balances") {
     if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
     const rows: { id: string; username: string; balance: number }[] = [];
@@ -1012,7 +1028,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <div id="list"><div class="empty">enter your admin key and hit load.</div></div>
 <h2 class="sec">approved users</h2>
 <div id="users"><div class="empty">load to see approved users.</div></div>
-<h2 class="sec">🎰 casino — player balances <small style="font-weight:400;color:#8a6a3a">(view only · balances can never be edited)</small></h2>
+<h2 class="sec">🎰 casino — player balances <small style="font-weight:400;color:#8a6a3a">(set a balance only to clean up an exploiter)</small></h2>
 <div id="balances"><div class="empty">load to see player balances.</div></div>
 <h2 class="sec">🛒 shop items</h2>
 <div id="shop"><div class="empty">load to manage the shop.</div></div>
@@ -1159,9 +1175,21 @@ function refreshBalances(){
       var name=document.createElement("h3");name.style.flex="1";name.style.margin="0";name.textContent=u.username;
       var bal=document.createElement("small");bal.textContent=u.balance.toFixed(2)+" sahurs";bal.style.color="#f2c063";bal.style.fontWeight="700";
       row.appendChild(name);row.appendChild(bal);el.appendChild(row);
+      // moderation: set this player's balance to an exact value
+      var srow=document.createElement("div");srow.className="row";srow.style.marginTop="8px";
+      var inp=document.createElement("input");inp.type="number";inp.min="0";inp.step="0.01";inp.className="tin";inp.placeholder="new balance";inp.value=u.balance.toFixed(2);inp.style.flex="0 1 160px";
+      var set=document.createElement("button");set.className="no";set.textContent="set balance";
+      set.onclick=function(){setBalance(u.id,u.username,inp.value);};
+      srow.appendChild(inp);srow.appendChild(set);el.appendChild(srow);
       balances.appendChild(el);
     });
   }).catch(function(){balances.innerHTML='<div class="empty">network error.</div>';});
+}
+function setBalance(id,name,val){
+  var b=Number(val);
+  if(!(b>=0)){alert("balance must be 0 or more");return;}
+  if(!confirm("Set "+name+"'s balance to "+b.toFixed(2)+" sahurs?"))return;
+  fetch("/admin/setbal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,balance:b})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshBalances();});
 }
 /* ---- casino: shop management (add / edit / enable / delete items) ---- */
 function refreshShop(){
