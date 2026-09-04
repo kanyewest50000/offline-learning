@@ -1074,7 +1074,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <div id="list"><div class="empty">enter your admin key and hit load.</div></div>
 <h2 class="sec">approved users</h2>
 <div id="users"><div class="empty">load to see approved users.</div></div>
-<h2 class="sec">🎰 casino — player balances <small style="font-weight:400;color:#8a6a3a">(set a balance only to clean up an exploiter)</small></h2>
+<h2 class="sec">🎰 casino — player balances</h2>
 <div id="balances"><div class="empty">load to see player balances.</div></div>
 <h2 class="sec">🛒 shop items</h2>
 <div id="shop"><div class="empty">load to manage the shop.</div></div>
