@@ -45,12 +45,15 @@ const GAME_TTL = 6 * 60 * 60 * 1000;      // an abandoned in-progress hand self-
 //   ["shopitem", itemId] -> {id,name,desc,price,active,ts}  a redeemable shop entry
 // One active hand per game per user; starting a new one replaces the old.
 
-// crypto-strong float in [0,1)
+// crypto-strong float in [0,1).
+// 53 bits of entropy = the top 21 bits of the first word (a[0] >>> 11) used as the
+// high half, plus all 32 bits of the second. 21 + 32 = 53, so the numerator is
+// always < 2^53 and the quotient lands in [0,1). (Using all 32 bits of a[0] here
+// would overflow to ~2^11 and break every game — do not "simplify" this.)
 function rnd(): number {
   const a = new Uint32Array(2);
   crypto.getRandomValues(a);
-  // 53-bit precision from two 32-bit draws
-  return (a[0] * 0x100000000 + a[1]) / 0x20000000000000;
+  return ((a[0] >>> 11) * 0x100000000 + a[1]) / 0x20000000000000;
 }
 function rndInt(n: number): number { return Math.floor(rnd() * n); }
 function round2(n: number): number { return Math.round(n * 100) / 100; }
@@ -166,12 +169,12 @@ const PLINKO: Record<string, Record<number, number[]>> = {
   },
   medium: {
     8: [13, 3, 1.3, 0.7, 0.4, 0.7, 1.3, 3, 13],
-    12: [24, 5, 2, 1.4, 0.6, 0.4, 0.3, 0.4, 0.6, 1.4, 2, 5, 24],
+    12: [33, 11, 4, 2, 1.1, 0.6, 0.3, 0.6, 1.1, 2, 4, 11, 33],
     16: [110, 41, 10, 5, 3, 1.5, 1, 0.5, 0.3, 0.5, 1, 1.5, 3, 5, 10, 41, 110],
   },
   high: {
     8: [29, 4, 1.5, 0.3, 0.2, 0.3, 1.5, 4, 29],
-    12: [58, 8, 3, 2, 0.7, 0.2, 0.2, 0.2, 0.7, 2, 3, 8, 58],
+    12: [170, 24, 8.1, 2, 0.7, 0.2, 0.2, 0.2, 0.7, 2, 8.1, 24, 170],
     16: [1000, 130, 26, 9, 4, 2, 0.2, 0.2, 0.2, 0.2, 0.2, 2, 4, 9, 26, 130, 1000],
   },
 };
@@ -603,15 +606,19 @@ Deno.serve(async (req) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: "bad bet" }, 400);
-    const target = round2(Number(b.target)); // win if roll < target
+    const target = round2(Number(b.target));
+    const over = b.over === true;             // false = roll under, true = roll over
     if (!(target >= 2 && target <= 98)) return json({ error: "target 2–98" }, 400);
+    // winning span as a percentage of the 0–100 roll range
+    const chance = over ? 100 - target : target;
+    if (!(chance >= 2 && chance <= 98)) return json({ error: "bad target" }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     const roll = round2(rnd() * 100);
-    const win = roll < target;
-    const mult = win ? round2((100 / target) * HOUSE) : 0;
+    const win = over ? roll > target : roll < target;
+    const mult = win ? round2((100 / chance) * HOUSE) : 0;
     const payout = round2(bet * mult);
     const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
-    return json({ ok: true, roll, target, win, multiplier: mult, payout, balance: round2(bal!) });
+    return json({ ok: true, roll, target, over, chance, win, multiplier: mult, payout, balance: round2(bal!) });
   }
 
   // ---------- LIMBO — instant ----------
