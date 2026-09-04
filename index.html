@@ -1042,7 +1042,8 @@
     /* the main header swaps identity with the view: shrine title everywhere, a
        full casino header (back / title / balance / shop) once inside the casino. */
     'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";gamesEl.style.display=v==="games"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";' +
-    'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";casinoBtn.style.display=inCas?"none":"flex";}' +
+    /* the casino button only belongs on the games view — not the chooser or chat */
+    'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";casinoBtn.style.display=(v==="games")?"flex":"none";}' +
     /* clicking a game opens it in its OWN about:blank tab. we write a tiny self-
        contained document into that tab: a header bar (styled to match the shrine
        chrome) holding an X that closes the tab and a fullscreen button, plus an
@@ -1321,7 +1322,7 @@
       grid.appendChild(b);
     });
     screen.appendChild(grid);
-    screen.appendChild(el("div","casnote","Fun money only. Sahurs have no cash value and can never be bought, sold, or cashed out."));
+    screen.appendChild(el("div","casnote","Sahurs have no cash value and can never be bought, sold, or cashed out."));
   }
 
   function openGame(name){
@@ -2104,7 +2105,11 @@
       '#cloakbar{background:#1d1206}' +
       '#cloakbar input:focus{outline:none;border-color:#c8823c}' +
       /* the chooser */
-      '.bigbtn{background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;transition:transform .12s ease,border-color .12s ease}' +
+      /* .bigbtn paints a DARK gradient over the default button background, so it
+         must also override the default dark button text colour — otherwise the
+         non-ghost chooser button (Shrine of Tung) renders #1d1206 on #241505 and
+         its currentColor svg goes with it. Match the ghost/"curated games" gold. */
+      '.bigbtn{background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;color:#c8823c;transition:transform .12s ease,border-color .12s ease}' +
       '.bigbtn:hover{transform:translateY(-3px);border-color:#c8823c}' +
       '#choose h2{letter-spacing:.02em}' +
       '#casscreen{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}' +

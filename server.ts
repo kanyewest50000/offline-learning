@@ -57,6 +57,23 @@ function rnd(): number {
 }
 function rndInt(n: number): number { return Math.floor(rnd() * n); }
 function round2(n: number): number { return Math.round(n * 100) / 100; }
+// Payouts are FLOORED, never rounded, and are always computed from the exact
+// multiplier rather than the 2dp one shown to the player. Rounding both the
+// multiplier and then the payout upward compounds: at the 0.10 minimum stake
+// that pushed dice roll-under-94 to a 103% return, i.e. a farmable +EV bet.
+// Flooring guarantees the edge can never be rounded away at any stake.
+function floor2(n: number): number { return Math.floor(n * 100 + 1e-9) / 100; }
+function payoutOf(bet: number, exactMult: number): number { return floor2(bet * exactMult); }
+
+// Look a user-supplied key up in a config map WITHOUT walking the prototype
+// chain. Plain `MAP[key]` lets "__proto__" resolve to Object.prototype, which is
+// truthy — that slipped past a `if (!cfg)` guard and produced NaN multipliers
+// that then corrupted balances. Always route untrusted keys through this.
+// deno-lint-ignore no-explicit-any
+function pick<T>(map: Record<string, T>, key: any): T | null {
+  if (typeof key !== "string" && typeof key !== "number") return null;
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key as string] : null;
+}
 
 // bet validation shared by every game
 function parseBet(v: unknown): number | null {
@@ -68,18 +85,27 @@ function parseBet(v: unknown): number | null {
 // deno-lint-ignore no-explicit-any
 async function getCas(id: string): Promise<{ bal: number; lastClaim: number }> {
   const r = await kv.get<{ bal: number; lastClaim: number }>(["cas", id]);
-  return r.value ?? { bal: 0, lastClaim: 0 };
+  const v = r.value ?? { bal: 0, lastClaim: 0 };
+  // heal a balance that was ever written as NaN/Infinity so it can't linger as
+  // an "always solvent" record (see the finite guards in adjustBalance below)
+  if (!Number.isFinite(v.bal)) return { bal: 0, lastClaim: Number.isFinite(v.lastClaim) ? v.lastClaim : 0 };
+  return v;
 }
 
 // Atomic balance change. delta may be negative (a wager). Returns the new balance,
 // or null if the balance would go negative (insufficient funds) — the check+commit
 // loop makes double-spends from concurrent requests impossible.
 async function adjustBalance(id: string, delta: number): Promise<number | null> {
+  // A non-finite delta must never reach the store: `NaN < -1e-9` is false, so the
+  // overdraw guard below would pass it, and Math.max(0, NaN) is NaN — which reads
+  // as permanently solvent and lets a player bet without limit.
+  if (!Number.isFinite(delta)) return null;
   for (;;) {
     const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", id]);
     const rec = cur.value ?? { bal: 0, lastClaim: 0 };
-    const nb = round2(rec.bal + delta);
-    if (nb < -1e-9) return null; // would overdraw
+    const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+    const nb = round2(base + delta);
+    if (!Number.isFinite(nb) || nb < -1e-9) return null; // would overdraw or corrupt
     const res = await kv.atomic().check(cur)
       .set(["cas", id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL }).commit();
     if (res.ok) return Math.max(0, nb);
@@ -142,21 +168,22 @@ const BEEF: Record<string, { q: number; lanes: number }> = {
 // plinko payout tables (Stake-style), indexed by risk then row count, bucket 0..rows.
 // mines fair multiplier after `safe` clean reveals with `count` mines on 25 tiles:
 //   HOUSE * C(25,safe) / C(25-count,safe)  ==  HOUSE * Π (25-i)/(25-count-i)
-function minesMult(count: number, safe: number): number {
+// exact values drive payouts; the round2 wrappers are what the client displays
+function minesMultExact(count: number, safe: number): number {
   let m = HOUSE;
   for (let i = 0; i < safe; i++) m *= (25 - i) / (25 - count - i);
-  return round2(m);
+  return m;
 }
+function minesMult(count: number, safe: number): number { return round2(minesMultExact(count, safe)); }
 // beef multiplier after surviving `step` lanes at per-step survival prob q
-function beefMult(q: number, step: number): number {
-  return round2(HOUSE / Math.pow(q, step));
-}
+function beefMultExact(q: number, step: number): number { return HOUSE / Math.pow(q, step); }
+function beefMult(q: number, step: number): number { return round2(beefMultExact(q, step)); }
 
 // resolve a completed blackjack hand (player stood/doubled, dealer has played)
 // deno-lint-ignore no-explicit-any
 async function settle(st: any, pv: number, dv: number, finish: (r: string, p: number, d: number) => Promise<Response>): Promise<Response> {
-  if (dv > 21) return await finish("dealer_bust", round2(st.bet * 2), dv);
-  if (pv > dv) return await finish("win", round2(st.bet * 2), dv);
+  if (dv > 21) return await finish("dealer_bust", payoutOf(st.bet, 2), dv);
+  if (pv > dv) return await finish("win", payoutOf(st.bet, 2), dv);
   if (pv < dv) return await finish("lose", 0, dv);
   return await finish("push", st.bet, dv); // tie returns the stake
 }
@@ -615,8 +642,9 @@ Deno.serve(async (req) => {
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     const roll = round2(rnd() * 100);
     const win = over ? roll > target : roll < target;
-    const mult = win ? round2((100 / chance) * HOUSE) : 0;
-    const payout = round2(bet * mult);
+    const exact = (100 / chance) * HOUSE;
+    const mult = win ? round2(exact) : 0;
+    const payout = win ? payoutOf(bet, exact) : 0;
     const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
     return json({ ok: true, roll, target, over, chance, win, multiplier: mult, payout, balance: round2(bal!) });
   }
@@ -635,7 +663,7 @@ Deno.serve(async (req) => {
     // crash point c with P(c >= t) = HOUSE/t  → fair, 1% edge
     const crash = Math.max(1, round2((1 / (1 - rnd())) * HOUSE));
     const win = crash >= target;
-    const payout = win ? round2(bet * target) : 0;
+    const payout = win ? payoutOf(bet, target) : 0;
     const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
     return json({ ok: true, crash, target, win, multiplier: win ? target : 0, payout, balance: round2(bal!) });
   }
@@ -665,7 +693,7 @@ Deno.serve(async (req) => {
     else if (kind === "column") { if (!(val >= 1 && val <= 3)) return json({ error: "column 1–3" }, 400); won = !zero && spin % 3 === (val % 3); mult = 3; }
     else return json({ error: "bad kind" }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
-    const payout = won ? round2(bet * mult) : 0;
+    const payout = won ? payoutOf(bet, mult) : 0;
     const bal = won ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
     return json({ ok: true, spin, color: zero ? "green" : (isRed ? "red" : "black"), win: won, multiplier: won ? mult : 0, payout, balance: round2(bal!) });
   }
@@ -680,14 +708,15 @@ Deno.serve(async (req) => {
     if (bet === null) return json({ error: "bad bet" }, 400);
     const risk = clip(b.risk, 8);
     const rows = Math.floor(Number(b.rows));
-    const table = PLINKO[risk] && PLINKO[risk][rows];
+    const riskTab = pick(PLINKO, risk);
+    const table = riskTab ? pick(riskTab, rows) : null;
     if (!table) return json({ error: "rows 8/12/16, risk low/medium/high" }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     const path2: number[] = [];
     let bucket = 0;
     for (let i = 0; i < rows; i++) { const r = rnd() < 0.5 ? 1 : 0; path2.push(r); bucket += r; }
     const mult = table[bucket];
-    const payout = round2(bet * mult);
+    const payout = payoutOf(bet, mult);
     const bal = await adjustBalance(u.id, payout);
     return json({ ok: true, path: path2, bucket, multiplier: mult, payout, balance: round2(bal!) });
   }
@@ -708,7 +737,7 @@ Deno.serve(async (req) => {
     if (pv.total === 21 || dv.total === 21) {
       // natural(s) resolve immediately
       if (pv.total === 21 && dv.total === 21) { result = "push"; payout = bet; }
-      else if (pv.total === 21) { result = "blackjack"; payout = round2(bet * 2.5); }
+      else if (pv.total === 21) { result = "blackjack"; payout = payoutOf(bet, 2.5); }
       else { result = "dealer_blackjack"; payout = 0; }
       state = "done";
       if (payout > 0) await adjustBalance(u.id, payout);
@@ -808,7 +837,7 @@ Deno.serve(async (req) => {
     // auto-win once every safe tile is uncovered
     if (safe === 25 - st.count) {
       await kv.delete(["mines", u.id]);
-      const payout = round2(st.bet * mult);
+      const payout = payoutOf(st.bet, minesMultExact(st.count, safe));
       const bal = await adjustBalance(u.id, payout);
       return json({ ok: true, state: "cashout", tile, multiplier: mult, payout, revealed: st.revealed, mines: st.mines, balance: round2(bal!) });
     }
@@ -827,7 +856,7 @@ Deno.serve(async (req) => {
     if (!st.revealed.length) return json({ error: "reveal a tile first" }, 400);
     await kv.delete(["mines", u.id]);
     const mult = minesMult(st.count, st.revealed.length);
-    const payout = round2(st.bet * mult);
+    const payout = payoutOf(st.bet, minesMultExact(st.count, st.revealed.length));
     const bal = await adjustBalance(u.id, payout);
     return json({ ok: true, state: "cashout", multiplier: mult, payout, mines: st.mines, balance: round2(bal!) });
   }
@@ -841,7 +870,7 @@ Deno.serve(async (req) => {
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: "bad bet" }, 400);
     const diff = clip(b.difficulty, 10);
-    const cfg = BEEF[diff];
+    const cfg = pick(BEEF, diff);
     if (!cfg) return json({ error: "difficulty easy/medium/hard/daredevil" }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     // pre-roll the death lane NOW so the outcome is fixed server-side and the
@@ -860,6 +889,12 @@ Deno.serve(async (req) => {
     const g = await kv.get<any>(["beef", u.id]);
     if (!g.value) return json({ error: "no game" }, 400);
     const st = g.value;
+    // refuse a walk whose config isn't sane (e.g. a record written before the
+    // prototype-lookup fix); drop it rather than compute NaN multipliers
+    if (!Number.isFinite(st.q) || !Number.isFinite(st.lanes) || !Number.isFinite(st.bet)) {
+      await kv.delete(["beef", u.id]);
+      return json({ error: "no game" }, 400);
+    }
     const nextStep = st.step + 1;
     if (nextStep >= st.deathStep) {
       await kv.delete(["beef", u.id]);
@@ -871,7 +906,7 @@ Deno.serve(async (req) => {
     if (nextStep >= st.lanes) {
       // reached the far side — auto cash out at the top multiplier
       await kv.delete(["beef", u.id]);
-      const payout = round2(st.bet * mult);
+      const payout = payoutOf(st.bet, beefMultExact(st.q, nextStep));
       const bal = await adjustBalance(u.id, payout);
       return json({ ok: true, state: "cashout", step: nextStep, multiplier: mult, payout, balance: round2(bal!) });
     }
@@ -887,10 +922,14 @@ Deno.serve(async (req) => {
     const g = await kv.get<any>(["beef", u.id]);
     if (!g.value) return json({ error: "no game" }, 400);
     const st = g.value;
+    if (!Number.isFinite(st.q) || !Number.isFinite(st.lanes) || !Number.isFinite(st.bet)) {
+      await kv.delete(["beef", u.id]);
+      return json({ error: "no game" }, 400);
+    }
     if (st.step < 1) return json({ error: "take a step first" }, 400);
     await kv.delete(["beef", u.id]);
     const mult = beefMult(st.q, st.step);
-    const payout = round2(st.bet * mult);
+    const payout = payoutOf(st.bet, beefMultExact(st.q, st.step));
     const bal = await adjustBalance(u.id, payout);
     return json({ ok: true, state: "cashout", step: st.step, multiplier: mult, payout, balance: round2(bal!) });
   }
