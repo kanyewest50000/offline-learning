@@ -912,7 +912,7 @@
   var SAHUR_CHANCE = 1; /* guaranteed: the first team portrait is always Sahur, so the chat is always reachable */
   var SAHUR = {
     name: "T. T. T. Sahur",
-    url: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcStsLAIZeFzzUjwDagV1P0b17jJp6Xwm8dYzIg75joMvc-7-XTQSYHxQJM&s=10",
+    url: TUNG_IMG,
     svg: coverWrap(
       /* ground shadow + warm lantern glow */
       '<ellipse cx="200" cy="372" rx="150" ry="24" fill="#160d04"/>' +
@@ -957,6 +957,12 @@
      auth, usernames, approvals and message history all live server-side in
      Deno KV. the discord webhook + admin key live in the server's env vars. */
   var SHRINE_API = "https://offline-learning.kanyewest50000.deno.net";
+
+  /* Tung artwork now ships with the repo instead of hotlinking someone else's CDN.
+     Resolved to absolute URLs here because the shrine/casino windows are written
+     into about:blank, which has no base URL for relative paths to resolve against. */
+  var TUNG_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;
+  var TUNGGOD_IMG = new URL("assets/tungtunggod.png", location.href).href;
 
   /* ace-of-spades mark used by the casino button and the casino header */
   function SPADE(size) {
@@ -1012,6 +1018,7 @@
     'var casinoBtn=document.getElementById("casinoBtn");' +
     'var cback=document.getElementById("cback");' +
     'var shopBtn=document.getElementById("shopBtn");' +
+    'var shrineBtn=document.getElementById("shrineBtn");' +
     'var hdrShrine=document.getElementById("hdrShrine");' +
     'var hdrCasino=document.getElementById("hdrCasino");' +
     'var chooseShrine=document.getElementById("chooseShrine");' +
@@ -1079,9 +1086,9 @@
     'function buildGames(){gamegrid.innerHTML="";GAMES.forEach(function(g){var b=document.createElement("button");b.type="button";b.className="gtile";b.textContent=g.n;b.setAttribute("data-name",g.n.toLowerCase());b.addEventListener("click",function(){openGame(g);});gamegrid.appendChild(b);});}' +
     'function filterGames(){var q=gsearch.value.toLowerCase();Array.prototype.forEach.call(gamegrid.children,function(b){b.style.display=b.getAttribute("data-name").indexOf(q)>=0?"":"none";});}' +
     /* ---- :sahur: inline svg + the tongue x3 + sahur combo embed ---- */
-    'var SAHUR_IMG="https://i1.sndcdn.com/artworks-YDQOy2Pru5CA2rhs-x1uzgA-t1080x1080.jpg";' +
+    'var SAHUR_IMG=TUNG_IMG;' +
     'function makeSahurSvg(){var i=document.createElement("img");i.className="isvg";i.alt=":sahur:";i.title=":sahur:";i.src=SAHUR_IMG;return i;}' +
-    'function makeCombo(){var i=document.createElement("img");i.className="embed";i.alt="tung tung tung sahur";i.loading="lazy";i.src="https://static.wikia.nocookie.net/5b25259f-0ccf-4349-a744-1b6858d4ff98/scale-to-width/755";return i;}' +
+    'function makeCombo(){var i=document.createElement("img");i.className="embed";i.alt="tung tung tung sahur";i.loading="lazy";i.src=TUNG_IMG;return i;}' +
     'function renderInline(el,seg){var re=/:([a-z0-9_+-]+):/g,last=0,m;while((m=re.exec(seg))){if(m.index>last)el.appendChild(document.createTextNode(seg.slice(last,m.index)));var code=m[1];if(code==="sahur")el.appendChild(makeSahurSvg());else if(EMOJI[code])el.appendChild(document.createTextNode(EMOJI[code]));else el.appendChild(document.createTextNode(m[0]));last=re.lastIndex;}if(last<seg.length)el.appendChild(document.createTextNode(seg.slice(last)));}' +
     'function renderBody(el,text){el.textContent="";var re=/:tongue:\\s*:tongue:\\s*:tongue:\\s*:sahur:/g;var parts=text.split(re);for(var i=0;i<parts.length;i++){renderInline(el,parts[i]);if(i<parts.length-1)el.appendChild(makeCombo());}}' +
     /* ---- message replies + reactions (live-only, over the same relay) ---- */
@@ -1137,6 +1144,7 @@
     'casinoBtn.addEventListener("click",function(){topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* enter the casino (same window) */
     'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("games");});' +   /* casino "← games" back button */
     'shopBtn.addEventListener("click",function(){if(window.__casinoShop)window.__casinoShop();});' +   /* shop lives on the casino header */
+    'shrineBtn.addEventListener("click",function(){if(window.__casinoShrine)window.__casinoShrine();});' +   /* so does the shrine (the faucet) */
     'sback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the shrine/chat to the chooser screen */
     'gsearch.addEventListener("input",filterGames);' +
     'cloakTitleEl.value=cloakTitle();cloakFavEl.value=cloakFav();' +
@@ -1171,12 +1179,32 @@
 
   var screen=document.getElementById("casscreen");
   var balEl=document.getElementById("casbal");
+  var casEl=document.getElementById("casino");
   var BAL=0, claimTimer=null;
   function setBal(b){if(typeof b==="number"&&!isNaN(b)){BAL=b;balEl.textContent=money(b);}}
   function clearTimer(){if(claimTimer){clearInterval(claimTimer);claimTimer=null;}}
 
+  /* the win celebration: a box that pops over the whole casino showing what you
+     just took, then fades. shared by every game. */
+  var winpop=null;
+  function celebrate(payout,m){
+    if(!(Number(payout)>0))return;
+    if(!winpop){
+      winpop=el("div");winpop.id="winpop";
+      winpop._a=el("span","wamt","");winpop._m=el("span","wmul","");
+      winpop.appendChild(winpop._a);winpop.appendChild(winpop._m);
+      casEl.appendChild(winpop);
+    }
+    winpop._a.textContent="+"+money(payout)+" sahurs";
+    winpop._m.textContent=mult(m);
+    winpop.classList.remove("show");
+    void winpop.offsetWidth;            /* restart the keyframes */
+    winpop.classList.add("show");
+  }
+
   window.__casinoBack=function(){clearTimer();};
   window.__casinoShop=function(){clearTimer();viewShop();};
+  window.__casinoShrine=function(){clearTimer();viewShrine();};
 
   window.__casinoOpen=function(){
     clearTimer();
@@ -1199,17 +1227,23 @@
     screen.appendChild(g);
   }
 
-  /* ---------- lobby: faucet + game grid (shop lives on the header) ---------- */
-  function renderLobby(me){
-    clearTimer();
-    screen.innerHTML="";
-    var f=el("div","faucet");
-    var info=el("div","grow");
-    info.appendChild(el("h3",null,"Shrine of Sahur"));
-    var sub=el("p",null,"");info.appendChild(sub);
-    var claim=el("button");claim.id="casclaim";
-    f.appendChild(info);f.appendChild(claim);
-    screen.appendChild(f);
+  /* ---------- the Shrine of Tung Tung God (the faucet), its own page ---------- */
+  function viewShrine(){
+    var v=mount("Shrine of Tung Tung God","⛲");
+    var altar=el("div","altar");
+    var img=el("img","godimg");
+    img.src=(typeof TUNGGOD_IMG!=="undefined")?TUNGGOD_IMG:"";
+    img.alt="Tung Tung God";
+    img.onerror=function(){img.style.display="none";};
+    altar.appendChild(img);
+    altar.appendChild(el("p","godsub","offer nothing. receive sahurs. such is his way."));
+    var claim=el("button","cbtn go");claim.id="casclaim";
+    altar.appendChild(claim);
+    var sub=el("p","godnote","");altar.appendChild(sub);
+    v.appendChild(altar);
+    var r=res(v);
+
+    var me={canClaim:false,nextClaim:0,faucetAmount:10};
     function paintClaim(){
       var now=Date.now();
       if(me.canClaim||!me.nextClaim||now>=me.nextClaim){
@@ -1220,18 +1254,47 @@
         var s=Math.max(0,Math.floor((me.nextClaim-now)/1000));
         var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;
         claim.textContent="next claim in "+h+"h "+(m<10?"0":"")+m+"m "+(ss<10?"0":"")+ss+"s";
-        sub.textContent="you have claimed recently. come back later.";
+        sub.textContent="tung tung god has already blessed you today. come back later.";
       }
     }
-    paintClaim();clearTimer();claimTimer=setInterval(paintClaim,1000);
+    claim.disabled=true;claim.textContent="consulting the shrine...";
+    jget("/cas/me?token="+encodeURIComponent(tok())).then(function(d){
+      if(!d||d.error){bad(r,"members only");return;}
+      setBal(d.balance);
+      me.canClaim=d.canClaim;me.nextClaim=d.nextClaim;me.faucetAmount=d.faucetAmount||10;
+      paintClaim();clearTimer();claimTimer=setInterval(paintClaim,1000);
+    }).catch(function(){bad(r,"network error");});
+
     claim.onclick=function(){
       claim.disabled=true;
       jpost("/cas/claim",{}).then(function(d){
-        if(d&&d.ok){setBal(d.balance);me.canClaim=false;me.nextClaim=d.nextClaim;}
-        else if(d&&d.nextClaim){me.canClaim=false;me.nextClaim=d.nextClaim;}
+        if(d&&d.ok){
+          setBal(d.balance);me.canClaim=false;me.nextClaim=d.nextClaim;
+          celebrate(d.claimed,1);ok(r,"tung tung god provides.");
+        }else if(d&&d.nextClaim){me.canClaim=false;me.nextClaim=d.nextClaim;}
         paintClaim();
       }).catch(paintClaim);
     };
+  }
+
+  /* ---------- lobby ---------- */
+  function renderLobby(me){
+    clearTimer();
+    screen.innerHTML="";
+    // a compact pointer to the shrine; the faucet itself lives on its own page
+    var f=el("div","faucet");
+    var info=el("div","grow");
+    info.appendChild(el("h3",null,"Shrine of Tung Tung God"));
+    info.appendChild(el("p",null,
+      (me.canClaim||!me.nextClaim||Date.now()>=me.nextClaim)
+        ? "your free "+(me.faucetAmount||10)+" sahurs are waiting."
+        : "you have claimed recently. come back later."));
+    var goShrine=el("button",null,"visit the shrine");
+    goShrine.id="casclaim";
+    goShrine.onclick=viewShrine;
+    f.appendChild(info);f.appendChild(goShrine);
+    screen.appendChild(f);
+    screen.appendChild(el("div","seclabel","the floor"));
     var grid=el("div","casmenu");
     [["♠","Blackjack","blackjack"],["◉","Roulette","roulette"],["💣","Mines","mines"],
      ["🐔","Beef","beef"],["📈","Limbo","limbo"],["🎲","Dice","dice"],
@@ -1264,31 +1327,41 @@
     back.onclick=function(){window.__casinoOpen();};
     screen.appendChild(back);
     var v=el("div","casview");
-    var h=el("h3",null,icon+"  "+title);v.appendChild(h);
+    v.appendChild(el("h3",null,icon+"  "+title));
     screen.appendChild(v);
     return v;
   }
   function betField(def){var i=el("input");i.type="number";i.min="0.1";i.step="0.1";i.value=def||"1";return i;}
+  function ctl(label,node){var c=el("div","ctl");c.appendChild(el("span",null,label));c.appendChild(node);return c;}
+  function selectOf(opts,def){var s=el("select");opts.forEach(function(o){var op=el("option",null,o[1]);op.value=o[0];s.appendChild(op);});if(def)s.value=def;return s;}
   function res(v){var r=el("div","casres","");v.appendChild(r);return r;}
   function ok(r,t){r.className="casres win";r.textContent=t;}
   function bad(r,t){r.className="casres lose";r.textContent=t;}
   function statBox(label){var s=el("div","stat");s.appendChild(el("b",null,label));var val=el("span",null,"-");s.appendChild(val);s.val=val;return s;}
+  function pcell(label,cls){var c=el("div","pcell"+(cls?" "+cls:""));c.appendChild(el("b",null,label));var s=el("span",null,"-");c.appendChild(s);c.val=s;return c;}
+  function divider(){return el("div","pdiv");}
 
-  /* ---------- DICE: draggable target, over/under ---------- */
+  /* ---------- DICE ---------- */
   function viewDice(){
     var v=mount("Dice","🎲");
-    var row=el("div","casrow");
-    row.appendChild(el("label",null,"bet"));var bet=betField("1");row.appendChild(bet);
+    var bet=betField("1");
+    var row=el("div","ctlrow");
+    row.appendChild(ctl("bet",bet));
     var seg=el("div","seg");
     var bUnder=el("button",null,"roll under");var bOver=el("button",null,"roll over");
-    seg.appendChild(bUnder);seg.appendChild(bOver);row.appendChild(seg);
+    seg.appendChild(bUnder);seg.appendChild(bOver);
+    row.appendChild(ctl("direction",seg));
     v.appendChild(row);
 
     var OVER=false, TARGET=50;
+    var readout=el("div",null,"—");
+    readout.style.cssText="text-align:center;font-size:34px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums;padding:10px 0 6px;line-height:1";
+    v.appendChild(readout);
+
     var wrap=el("div","dicewrap");
     var track=el("div","dtrack");
     var win=el("div","dwin");track.appendChild(win);
-    var mark=el("div","dmark");mark.style.display="none";track.appendChild(mark);
+    var mark=el("div","dmark");mark.style.left="50%";track.appendChild(mark);
     var handle=el("div","dhandle");track.appendChild(handle);
     wrap.appendChild(track);
     var scale=el("div","dscale");
@@ -1297,7 +1370,7 @@
     v.appendChild(wrap);
 
     var stats=el("div","dstats");
-    var sChance=statBox("win chance"),sPay=statBox("payout"),sTarget=statBox("target");
+    var sTarget=statBox("target"),sChance=statBox("win chance"),sPay=statBox("payout");
     stats.appendChild(sTarget);stats.appendChild(sChance);stats.appendChild(sPay);
     v.appendChild(stats);
     var r=res(v);
@@ -1305,10 +1378,9 @@
 
     function paint(){
       bUnder.className=OVER?"":"on";bOver.className=OVER?"on":"";
-      var pct=TARGET;
-      handle.style.left=pct+"%";
-      if(OVER){win.style.left=pct+"%";win.style.right="0";win.style.width="auto";}
-      else{win.style.left="0";win.style.width=pct+"%";win.style.right="auto";}
+      handle.style.left=TARGET+"%";
+      if(OVER){win.style.left=TARGET+"%";win.style.right="0";win.style.width="auto";}
+      else{win.style.left="0";win.style.width=TARGET+"%";win.style.right="auto";}
       var chance=OVER?(100-TARGET):TARGET;
       sTarget.val.textContent=(OVER?"> ":"< ")+TARGET.toFixed(0);
       sChance.val.textContent=chance.toFixed(0)+"%";
@@ -1332,16 +1404,28 @@
     paint();
 
     go.onclick=function(){
-      go.disabled=true;
+      go.disabled=true;r.className="casres";r.textContent="";
       jpost("/cas/dice",{bet:Number(bet.value),target:TARGET,over:OVER}).then(function(d){
-        go.disabled=false;
-        if(d.error){bad(r,d.error);return;}
-        setBal(d.balance);
-        mark.style.display="";mark.style.left=d.roll+"%";
+        if(d.error){go.disabled=false;bad(r,d.error);return;}
+        // slide the marker to the rolled spot while the number counts up to it
+        var from=parseFloat(mark.style.left)||0, to=d.roll, t0=Date.now(), dur=520;
         mark.style.background=d.win?"#6ee787":"#ff8080";
         mark.style.boxShadow="0 0 8px "+(d.win?"#6ee787":"#ff8080");
-        if(d.win)ok(r,"rolled "+d.roll.toFixed(2)+"  —  WIN "+mult(d.multiplier)+"  (+"+money(d.payout)+")");
-        else bad(r,"rolled "+d.roll.toFixed(2)+"  —  needed "+(d.over?"above ":"below ")+d.target+". lost.");
+        mark.style.left=to+"%";
+        readout.style.color="#f5efe0";
+        (function tick(){
+          var p=Math.min(1,(Date.now()-t0)/dur);
+          var e=1-Math.pow(1-p,3);
+          readout.textContent=(from+(to-from)*e).toFixed(2);
+          if(p<1)requestAnimationFrame(tick);
+          else{
+            readout.textContent=to.toFixed(2);
+            readout.style.color=d.win?"#6ee787":"#e0908a";
+            go.disabled=false;setBal(d.balance);
+            if(d.win){ok(r,"rolled "+d.roll.toFixed(2)+"  —  WIN "+mult(d.multiplier));celebrate(d.payout,d.multiplier);}
+            else bad(r,"rolled "+d.roll.toFixed(2)+"  —  needed "+(d.over?"above ":"below ")+d.target+". lost.");
+          }
+        })();
       }).catch(function(){go.disabled=false;bad(r,"network error");});
     };
   }
@@ -1349,34 +1433,32 @@
   /* ---------- LIMBO ---------- */
   function viewLimbo(){
     var v=mount("Limbo","📈");
-    var row=el("div","casrow");
-    row.appendChild(el("label",null,"bet"));var bet=betField("1");row.appendChild(bet);
-    row.appendChild(el("label",null,"target"));
-    var tgt=el("input");tgt.type="number";tgt.min="1.01";tgt.step="0.01";tgt.value="2";row.appendChild(tgt);
+    var bet=betField("1");
+    var tgt=el("input");tgt.type="number";tgt.min="1.01";tgt.step="0.01";tgt.value="2";
+    var row=el("div","ctlrow");
+    row.appendChild(ctl("bet",bet));row.appendChild(ctl("target x",tgt));
     v.appendChild(row);
     var big=el("div",null,"1.00x");
-    big.style.cssText="font-size:44px;font-weight:800;text-align:center;padding:24px 0;color:#f2c063;font-variant-numeric:tabular-nums";
+    big.style.cssText="font-size:46px;font-weight:800;text-align:center;padding:26px 0;color:#f2c063;font-variant-numeric:tabular-nums;line-height:1";
     v.appendChild(big);
     var r=res(v);
     var go=el("button","cbtn go","play");v.appendChild(go);
     go.onclick=function(){
-      go.disabled=true;
+      go.disabled=true;r.className="casres";r.textContent="";
       jpost("/cas/limbo",{bet:Number(bet.value),target:Number(tgt.value)}).then(function(d){
         if(d.error){go.disabled=false;bad(r,d.error);return;}
         setBal(d.balance);
-        // count up to the crash value so it feels like a rocket
-        var target=d.crash, t0=Date.now(), dur=700;
+        var target=d.crash,t0=Date.now(),dur=750;
         big.style.color="#f5efe0";
         (function tick(){
           var p=Math.min(1,(Date.now()-t0)/dur);
-          var val=1+(target-1)*(1-Math.pow(1-p,3));
-          big.textContent=val.toFixed(2)+"x";
+          big.textContent=(1+(target-1)*(1-Math.pow(1-p,3))).toFixed(2)+"x";
           if(p<1)requestAnimationFrame(tick);
           else{
             big.textContent=target.toFixed(2)+"x";
             big.style.color=d.win?"#6ee787":"#e0908a";
             go.disabled=false;
-            if(d.win)ok(r,"crashed at "+mult(d.crash)+"  —  WIN (+"+money(d.payout)+")");
+            if(d.win){ok(r,"crashed at "+mult(d.crash)+"  —  WIN");celebrate(d.payout,d.multiplier);}
             else bad(r,"crashed at "+mult(d.crash)+"  —  needed "+mult(d.target)+". lost.");
           }
         })();
@@ -1384,22 +1466,20 @@
     };
   }
 
-  /* ---------- ROULETTE: real wheel + betting board ---------- */
+  /* ---------- ROULETTE ---------- */
   var WHEEL=[0,32,15,19,4,21,2,25,17,34,6,27,13,36,11,30,8,23,10,5,24,16,33,1,20,14,31,9,22,18,29,7,28,12,35,3,26];
   var REDS={};[1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36].forEach(function(n){REDS[n]=1;});
   function colorOf(n){return n===0?"green":(REDS[n]?"red":"black");}
   function viewRoulette(){
     var v=mount("Roulette","◉");
-    var row=el("div","casrow");
-    row.appendChild(el("label",null,"bet"));var bet=betField("1");row.appendChild(bet);
-    v.appendChild(row);
+    var bet=betField("1");
+    var row=el("div","ctlrow");row.appendChild(ctl("bet",bet));v.appendChild(row);
 
-    // --- wheel ---
     var SZ=230,C=SZ/2,R1=108,R2=66,step=360/37;
     var wrap=el("div","wheelwrap");
     var svg=sv("svg",{width:SZ,height:SZ,viewBox:"0 0 "+SZ+" "+SZ});
     var g=sv("g",{});g.setAttribute("class","wheel");
-    function pt(r,deg){var a=(deg-90)*Math.PI/180;return [C+r*Math.cos(a),C+r*Math.sin(a)];}
+    function pt(rr,deg){var a=(deg-90)*Math.PI/180;return [C+rr*Math.cos(a),C+rr*Math.sin(a)];}
     WHEEL.forEach(function(n,i){
       var a0=i*step-step/2,a1=i*step+step/2;
       var o0=pt(R1,a0),o1=pt(R1,a1),i1=pt(R2,a1),i0=pt(R2,a0);
@@ -1412,14 +1492,19 @@
     });
     svg.appendChild(g);
     svg.appendChild(sv("circle",{cx:C,cy:C,r:R2-6,fill:"#2b1a0a",stroke:"#7a5a1a","stroke-width":"2"}));
+    // the ball rides just inside the rim in its own group, spun the other way
+    var ballG=sv("g",{});ballG.setAttribute("class","ball");
+    ballG.appendChild(sv("circle",{cx:C,cy:C-(R1-11),r:5.5,fill:"#fff",stroke:"#1d1206","stroke-width":"1"}));
+    ballG.appendChild(sv("circle",{cx:C-1.6,cy:C-(R1-12.6),r:1.8,fill:"#ffffffee"}));
+    svg.appendChild(ballG);
     svg.appendChild(sv("path",{d:"M"+C+" 6 L"+(C-9)+" 26 L"+(C+9)+" 26 Z",fill:"#f2c063",stroke:"#1d1206","stroke-width":"1"}));
     wrap.appendChild(svg);v.appendChild(wrap);
+    g.style.transformOrigin=C+"px "+C+"px";
+    ballG.style.transformOrigin=C+"px "+C+"px";
 
-    // --- bet selection ---
     var SEL={kind:"red",value:0};
     var board=el("div","rboard");
     var cells={};
-    // 0 spans as its own cell first
     for(var n=0;n<=36;n++){(function(num){
       var c=el("div","rnum "+colorOf(num),String(num));
       c.onclick=function(){SEL={kind:"number",value:num};paintSel();};
@@ -1437,46 +1522,47 @@
       b._k=o[0];b._v=o[2]||0;outEls.push(b);outs.appendChild(b);
     });
     v.appendChild(outs);
+    var selInfo=el("div","casnote","");v.appendChild(selInfo);
     function paintSel(){
       for(var n=0;n<=36;n++)cells[n].classList.toggle("sel",SEL.kind==="number"&&SEL.value===n);
       outEls.forEach(function(b){b.classList.toggle("sel",b._k===SEL.kind&&b._v===(SEL.value||0)&&SEL.kind!=="number");});
       selInfo.textContent="betting: "+(SEL.kind==="number"?("number "+SEL.value):
         (SEL.kind==="dozen"?("dozen "+SEL.value):(SEL.kind==="column"?("column "+SEL.value):SEL.kind)));
     }
-    var selInfo=el("div","casnote","");v.appendChild(selInfo);
     var r=res(v);
     var go=el("button","cbtn go","spin");v.appendChild(go);
     paintSel();
 
-    var rot=0;
+    var rot=0, brot=0;
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="spinning...";
       jpost("/cas/roulette",{bet:Number(bet.value),kind:SEL.kind,value:SEL.value}).then(function(d){
         if(d.error){go.disabled=false;bad(r,d.error);return;}
         var idx=WHEEL.indexOf(d.spin);
-        // always spin forward several turns, landing the winning pocket under the pointer
+        // wheel forward so the winning pocket ends under the pointer...
         rot += 360*5 + (((-idx*step - rot) % 360) + 360) % 360;
         g.style.transform="rotate("+rot+"deg)";
-        g.style.transformOrigin=C+"px "+C+"px";
+        // ...and the ball orbits the other way, settling at the top (same spot)
+        brot -= 360*7;
+        ballG.style.transform="rotate("+brot+"deg)";
         setTimeout(function(){
           go.disabled=false;setBal(d.balance);
           var label=d.spin+" "+d.color;
-          if(d.win)ok(r,label+"  —  WIN "+mult(d.multiplier)+"  (+"+money(d.payout)+")");
+          if(d.win){ok(r,label+"  —  WIN "+mult(d.multiplier));celebrate(d.payout,d.multiplier);}
           else bad(r,label+"  —  lost.");
-        },4100);
+        },4150);
       }).catch(function(){go.disabled=false;bad(r,"network error");});
     };
   }
 
-  /* ---------- PLINKO: peg board + animated ball ---------- */
+  /* ---------- PLINKO ---------- */
   function viewPlinko(){
     var v=mount("Plinko","🔻");
-    var row=el("div","casrow");
-    row.appendChild(el("label",null,"bet"));var bet=betField("1");row.appendChild(bet);
-    row.appendChild(el("label",null,"risk"));
-    var risk=el("select");[["low","Low"],["medium","Medium"],["high","High"]].forEach(function(o){var op=el("option",null,o[1]);op.value=o[0];risk.appendChild(op);});risk.value="medium";row.appendChild(risk);
-    row.appendChild(el("label",null,"rows"));
-    var rows=el("select");["8","12","16"].forEach(function(o){var op=el("option",null,o);op.value=o;rows.appendChild(op);});rows.value="12";row.appendChild(rows);
+    var bet=betField("1");
+    var risk=selectOf([["low","Low"],["medium","Medium"],["high","High"]],"medium");
+    var rows=selectOf([["8","8"],["12","12"],["16","16"]],"12");
+    var row=el("div","ctlrow");
+    row.appendChild(ctl("bet",bet));row.appendChild(ctl("risk",risk));row.appendChild(ctl("rows",rows));
     v.appendChild(row);
 
     var TABLES={
@@ -1484,8 +1570,12 @@
       medium:{8:[13,3,1.3,0.7,0.4,0.7,1.3,3,13],12:[33,11,4,2,1.1,0.6,0.3,0.6,1.1,2,4,11,33],16:[110,41,10,5,3,1.5,1,0.5,0.3,0.5,1,1.5,3,5,10,41,110]},
       high:{8:[29,4,1.5,0.3,0.2,0.3,1.5,4,29],12:[170,24,8.1,2,0.7,0.2,0.2,0.2,0.7,2,8.1,24,170],16:[1000,130,26,9,4,2,0.2,0.2,0.2,0.2,0.2,2,4,9,26,130,1000]}
     };
-    var boardWrap=el("div","plinkwrap");v.appendChild(boardWrap);
-    var buckets=el("div","pbuckets");v.appendChild(buckets);
+    // board and buckets live in ONE fixed-width box so the ball's landing x and
+    // the bucket centres are measured on the exact same scale
+    var board=el("div","plinkboard");
+    var boardWrap=el("div","plinkwrap");board.appendChild(boardWrap);
+    var buckets=el("div","pbuckets");board.appendChild(buckets);
+    v.appendChild(board);
     var r=res(v);
     var go=el("button","cbtn go","drop");v.appendChild(go);
 
@@ -1494,19 +1584,19 @@
       R=Number(rows.value);bw=W/(R+1);rowH=Math.min(20,240/R);
       var H=topY+R*rowH+14;
       boardWrap.innerHTML="";
-      svg=sv("svg",{width:"100%",height:H,viewBox:"0 0 "+W+" "+H,preserveAspectRatio:"xMidYMid meet"});
-      svg.style.maxWidth=W+"px";
+      // no width/height attributes: CSS gives it width:100%;height:auto so the
+      // viewBox scales uniformly to the shared board width (x maps 1:1 to buckets)
+      svg=sv("svg",{viewBox:"0 0 "+W+" "+H,preserveAspectRatio:"xMidYMid meet"});
       for(var rr=0;rr<R;rr++)for(var i=0;i<=rr;i++){
-        var x=cx+(i-rr/2)*bw, y=topY+rr*rowH;
-        svg.appendChild(sv("circle",{cx:x,cy:y,r:2.2,fill:"#7a5a1a"}));
+        svg.appendChild(sv("circle",{cx:cx+(i-rr/2)*bw,cy:topY+rr*rowH,r:2.2,fill:"#7a5a1a"}));
       }
       ball=sv("circle",{cx:cx,cy:6,r:4.5,fill:"#f2c063",stroke:"#1d1206","stroke-width":"1"});
       svg.appendChild(ball);
       boardWrap.appendChild(svg);
       var tab=TABLES[risk.value][R];
       buckets.innerHTML="";
-      tab.forEach(function(m,i){
-        var b=el("div","pb",m>=100?m+"x":m+"x");
+      tab.forEach(function(m){
+        var b=el("div","pb",m+"x");
         b.style.background=m>=2?"#8a5a28":(m>=1?"#3a2410":"#5a2020");
         buckets.appendChild(b);
       });
@@ -1518,21 +1608,19 @@
       Array.prototype.forEach.call(buckets.children,function(b){b.classList.remove("hit");});
       jpost("/cas/plinko",{bet:Number(bet.value),risk:risk.value,rows:R}).then(function(d){
         if(d.error){go.disabled=false;bad(r,d.error);return;}
-        // walk the ball down the server's exact path
         var rights=0,k=0;
         ball.setAttribute("cx",cx);ball.setAttribute("cy",6);
         function stepDown(){
           if(k>=d.path.length){
-            var bidx=rights;
-            var bel=buckets.children[bidx];if(bel)bel.classList.add("hit");
+            var bel=buckets.children[rights];if(bel)bel.classList.add("hit");
             go.disabled=false;setBal(d.balance);
-            if(d.multiplier>=1)ok(r,"landed "+mult(d.multiplier)+"  (+"+money(d.payout)+")");
+            if(d.multiplier>1){ok(r,"landed "+mult(d.multiplier));celebrate(d.payout,d.multiplier);}
             else bad(r,"landed "+mult(d.multiplier)+"  (+"+money(d.payout)+")");
             return;
           }
           rights+=d.path[k];k++;
-          var x=cx+(2*rights-k)*bw/2, y=topY+k*rowH;
-          ball.setAttribute("cx",x);ball.setAttribute("cy",y);
+          ball.setAttribute("cx",cx+(2*rights-k)*bw/2);
+          ball.setAttribute("cy",topY+k*rowH);
           setTimeout(stepDown,Math.max(40,320/R));
         }
         ball.style.transition="none";
@@ -1549,13 +1637,14 @@
   }
   function viewBlackjack(){
     var v=mount("Blackjack","♠");
-    var row=el("div","casrow");
-    row.appendChild(el("label",null,"bet"));var bet=betField("1");row.appendChild(bet);
-    var deal=el("button","cbtn go","deal");row.appendChild(deal);
+    var bet=betField("1");
+    var deal=el("button","cbtn go","deal");
+    var row=el("div","ctlrow");
+    row.appendChild(ctl("bet",bet));row.appendChild(ctl(" ",deal));
     v.appendChild(row);
-    var dlab=el("label",null,"dealer");dlab.style.color="#c8823c";dlab.style.fontSize="12px";v.appendChild(dlab);
+    var dlab=el("div","seclabel","dealer");v.appendChild(dlab);
     var dcards=el("div","cards");v.appendChild(dcards);
-    var plab=el("label",null,"you");plab.style.color="#c8823c";plab.style.fontSize="12px";v.appendChild(plab);
+    var plab=el("div","seclabel","you");v.appendChild(plab);
     var pcards=el("div","cards");v.appendChild(pcards);
     var acts=el("div","casrow");v.appendChild(acts);
     var r=res(v);
@@ -1575,7 +1664,7 @@
         setBal(d.balance);
         var msg={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer bust — you win!",push:"push — bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"}[d.result]||d.result;
         if(d.result==="push"){r.className="casres";r.textContent=msg;}
-        else if(d.payout>0)ok(r,msg+"  (+"+money(d.payout)+")");
+        else if(d.payout>0){ok(r,msg);celebrate(d.payout,d.bet?d.payout/d.bet:1);}
         else bad(r,msg);
         deal.disabled=false;bet.disabled=false;
       }
@@ -1597,19 +1686,24 @@
   /* ---------- MINES ---------- */
   function viewMines(){
     var v=mount("Mines","💣");
-    var row=el("div","casrow");
-    row.appendChild(el("label",null,"bet"));var bet=betField("1");row.appendChild(bet);
-    row.appendChild(el("label",null,"mines"));
-    var mn=el("input");mn.type="number";mn.min="1";mn.max="24";mn.step="1";mn.value="3";row.appendChild(mn);
-    var start=el("button","cbtn go","start");row.appendChild(start);
-    var cash=el("button","cbtn stop","cash out");cash.style.display="none";row.appendChild(cash);
+    var bet=betField("1");
+    var mn=el("input");mn.type="number";mn.min="1";mn.max="24";mn.step="1";mn.value="3";
+    var start=el("button","cbtn go","start");
+    var cash=el("button","cbtn stop","cash out");cash.style.display="none";
+    var row=el("div","ctlrow");
+    row.appendChild(ctl("bet",bet));row.appendChild(ctl("mines",mn));
+    var bwrap=el("div","casrow");bwrap.appendChild(start);bwrap.appendChild(cash);
+    row.appendChild(ctl(" ",bwrap));
     v.appendChild(row);
-    var stats=el("div","dstats");
-    var sCur=statBox("current"),sNext=statBox("next"),sSafe=statBox("found");
-    stats.appendChild(sCur);stats.appendChild(sNext);stats.appendChild(sSafe);v.appendChild(stats);
+    // dedicated readout panel
+    var panel=el("div","panel");
+    var pCur=pcell("current"),pNext=pcell("next"),pFound=pcell("💎 found","gem"),pLeft=pcell("💎 left","gem");
+    panel.appendChild(pCur);panel.appendChild(divider());panel.appendChild(pNext);
+    panel.appendChild(divider());panel.appendChild(pFound);panel.appendChild(divider());panel.appendChild(pLeft);
+    v.appendChild(panel);
     var grid=el("div","grid5");v.appendChild(grid);
     var r=res(v);
-    var cells=[],live=false;
+    var cells=[],live=false,safeTotal=0;
     function build(active){
       grid.innerHTML="";cells=[];
       for(var i=0;i<25;i++){(function(idx){
@@ -1618,6 +1712,11 @@
       })(i);}
     }
     build(false);
+    function setPanel(cur,next,found){
+      pCur.val.textContent=cur;pNext.val.textContent=next;
+      pFound.val.textContent=found;pLeft.val.textContent=Math.max(0,safeTotal-found);
+    }
+    setPanel("—","—","0");
     function enableHidden(){cells.forEach(function(x){if(!x.classList.contains("safe")&&!x.classList.contains("mine"))x.classList.remove("dis");});}
     function endRound(){live=false;cash.style.display="none";start.style.display="";bet.disabled=false;mn.disabled=false;
       cells.forEach(function(c){c.classList.add("dis");});}
@@ -1631,9 +1730,8 @@
           setBal(d.balance);bad(r,"boom. you lost.");endRound();return;
         }
         c.className="cell safe dis";c.textContent="💎";
-        if(d.state==="cashout"){setBal(d.balance);ok(r,"cleared the board! "+mult(d.multiplier)+"  (+"+money(d.payout)+")");endRound();return;}
-        sCur.val.textContent=mult(d.multiplier);sNext.val.textContent=mult(d.nextMultiplier);
-        sSafe.val.textContent=d.revealed.length;
+        if(d.state==="cashout"){setBal(d.balance);ok(r,"cleared the board! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);endRound();return;}
+        setPanel(mult(d.multiplier),mult(d.nextMultiplier),d.revealed.length);
         cash.textContent="cash out "+mult(d.multiplier);
         live=true;enableHidden();
       }).catch(function(){bad(r,"network error");live=true;enableHidden();});
@@ -1644,9 +1742,10 @@
         start.disabled=false;
         if(d.error){bad(r,d.error);return;}
         setBal(BAL-Number(bet.value));
+        safeTotal=25-Number(mn.value);
         start.style.display="none";cash.style.display="";bet.disabled=true;mn.disabled=true;
         r.className="casres";r.textContent="";build(true);live=true;
-        sCur.val.textContent="1.00x";sNext.val.textContent=mult(d.nextMultiplier);sSafe.val.textContent="0";
+        setPanel("1.00x",mult(d.nextMultiplier),0);
         cash.textContent="cash out";
       }).catch(function(){start.disabled=false;bad(r,"network error");});
     };
@@ -1656,25 +1755,28 @@
         cash.disabled=false;
         if(d.error){bad(r,d.error);return;}
         setBal(d.balance);(d.mines||[]).forEach(function(m){if(cells[m]&&!cells[m].classList.contains("safe")){cells[m].className="cell mine";cells[m].textContent="💣";}});
-        ok(r,"cashed out "+mult(d.multiplier)+"  (+"+money(d.payout)+")");endRound();
+        ok(r,"cashed out "+mult(d.multiplier));celebrate(d.payout,d.multiplier);endRound();
       }).catch(function(){cash.disabled=false;bad(r,"network error");});
     };
   }
 
-  /* ---------- BEEF: the chicken crosses the road ---------- */
+  /* ---------- BEEF ---------- */
   function viewBeef(){
     var v=mount("Beef","🐔");
-    var row=el("div","casrow");
-    row.appendChild(el("label",null,"bet"));var bet=betField("1");row.appendChild(bet);
-    row.appendChild(el("label",null,"difficulty"));
-    var diff=el("select");[["easy","Easy"],["medium","Medium"],["hard","Hard"],["daredevil","Daredevil"]].forEach(function(o){var op=el("option",null,o[1]);op.value=o[0];diff.appendChild(op);});row.appendChild(diff);
-    var start=el("button","cbtn go","start");row.appendChild(start);
-    var step=el("button","cbtn","step →");step.style.display="none";row.appendChild(step);
-    var cash=el("button","cbtn stop","cash out");cash.style.display="none";row.appendChild(cash);
+    var bet=betField("1");
+    var diff=selectOf([["easy","Easy"],["medium","Medium"],["hard","Hard"],["daredevil","Daredevil"]],"easy");
+    var start=el("button","cbtn go","start");
+    var step=el("button","cbtn","step →");step.style.display="none";
+    var cash=el("button","cbtn stop","cash out");cash.style.display="none";
+    var row=el("div","ctlrow");
+    row.appendChild(ctl("bet",bet));row.appendChild(ctl("difficulty",diff));
+    var bwrap=el("div","casrow");bwrap.appendChild(start);bwrap.appendChild(step);bwrap.appendChild(cash);
+    row.appendChild(ctl(" ",bwrap));
     v.appendChild(row);
-    var stats=el("div","dstats");
-    var sStep=statBox("lane"),sCur=statBox("current"),sNext=statBox("next");
-    stats.appendChild(sStep);stats.appendChild(sCur);stats.appendChild(sNext);v.appendChild(stats);
+    var panel=el("div","panel");
+    var pLane=pcell("lane"),pCur=pcell("current"),pNext=pcell("next");
+    panel.appendChild(pLane);panel.appendChild(divider());panel.appendChild(pCur);panel.appendChild(divider());panel.appendChild(pNext);
+    v.appendChild(panel);
     var road=el("div","road");v.appendChild(road);
     var r=res(v);
     var LANES=0,STEP=0,Q={easy:0.96,medium:0.92,hard:0.85,daredevil:0.75};
@@ -1685,6 +1787,11 @@
         L.appendChild(el("div","lm",(0.99/Math.pow(q,i)).toFixed(2)+"x"));
         L.appendChild(el("div","lc",""));
         L.appendChild(el("div",null,String(i)));
+        // traffic in every lane the chicken has not reached
+        var car=el("div","car","🚗");
+        car.style.animationDuration=(1.0+Math.random()*1.4).toFixed(2)+"s";
+        car.style.animationDelay=(-Math.random()*2.4).toFixed(2)+"s";
+        L.appendChild(car);
         road.appendChild(L);
       }
       var st=road.children[0];if(st)st.classList.add("cur");
@@ -1707,24 +1814,32 @@
         setBal(BAL-Number(bet.value));
         LANES=d.lanes;STEP=0;build(LANES,Q[diff.value]||0.92);running(true);
         r.className="casres";r.textContent="";cash.style.display="none";
-        sStep.val.textContent="0 / "+LANES;sCur.val.textContent="1.00x";sNext.val.textContent=mult(d.nextMultiplier);
+        pLane.val.textContent="0 / "+LANES;pCur.val.textContent="1.00x";pNext.val.textContent=mult(d.nextMultiplier);
       }).catch(function(){start.disabled=false;bad(r,"network error");});
     };
     step.onclick=function(){
       step.disabled=true;
       jpost("/cas/beef/step",{}).then(function(d){
-        step.disabled=false;
-        if(d.error){bad(r,d.error);return;}
+        if(d.error){step.disabled=false;bad(r,d.error);return;}
         if(d.state==="dead"){
+          // walk into the lane, let a car flatten him, THEN report it
+          placeChicken(d.step-1);
           var L=road.children[d.step-1]||road.children[LANES-1];
-          if(L){L.classList.remove("cur");L.classList.add("boom");L.querySelector(".lc").textContent="💥";}
-          setBal(d.balance);bad(r,"splat. the chicken didn't make it.");running(false);return;
+          var car=L&&L.querySelector(".car");
+          if(car){car.style.display="block";car.className="car hit";}
+          setTimeout(function(){
+            if(L){L.classList.remove("cur");L.classList.add("boom");L.querySelector(".lc").textContent="💥";}
+            step.disabled=false;setBal(d.balance);
+            bad(r,"splat. the chicken didn't make it.");running(false);
+          },560);
+          return;
         }
+        step.disabled=false;
         STEP=d.step;placeChicken(STEP-1);
         road.children[STEP-1].classList.add("done");
-        if(d.state==="cashout"){setBal(d.balance);ok(r,"made it across! "+mult(d.multiplier)+"  (+"+money(d.payout)+")");running(false);return;}
+        if(d.state==="cashout"){setBal(d.balance);ok(r,"made it across! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);return;}
         cash.style.display="";cash.textContent="cash out "+mult(d.multiplier);
-        sStep.val.textContent=STEP+" / "+LANES;sCur.val.textContent=mult(d.multiplier);sNext.val.textContent=mult(d.nextMultiplier);
+        pLane.val.textContent=STEP+" / "+LANES;pCur.val.textContent=mult(d.multiplier);pNext.val.textContent=mult(d.nextMultiplier);
       }).catch(function(){step.disabled=false;bad(r,"network error");});
     };
     cash.onclick=function(){
@@ -1732,12 +1847,12 @@
       jpost("/cas/beef/cashout",{}).then(function(d){
         cash.disabled=false;
         if(d.error){bad(r,d.error);return;}
-        setBal(d.balance);ok(r,"cashed out "+mult(d.multiplier)+"  (+"+money(d.payout)+")");running(false);
+        setBal(d.balance);ok(r,"cashed out "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);
       }).catch(function(){cash.disabled=false;bad(r,"network error");});
     };
   }
 
-  /* ---------- SHOP (opened from the casino header) ---------- */
+  /* ---------- SHOP ---------- */
   function viewShop(){
     var v=mount("Shop","🛒");
     var r=res(v);
@@ -1868,7 +1983,7 @@
       '.casbtn{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#241505;border:1px solid #7a5a1a;color:#f2c063;font-weight:700;border-radius:10px;cursor:pointer;flex:0 0 auto}' +
       '.casbtn:hover{background:#3a2410;border-color:#c8823c}' +
       '.casbtn svg{flex:0 0 auto}' +
-      '#casino{flex:1;display:none;flex-direction:column;min-height:0;background:#160d04}' +
+      '#casino{flex:1;display:none;flex-direction:column;min-height:0;background:radial-gradient(120% 80% at 50% 0%,#241505 0%,#160d04 60%);position:relative;overflow:hidden}' +
       '#casbalwrap{margin-left:auto;background:#160d04;border:1px solid #7a5a1a;border-radius:999px;padding:5px 12px;font-size:13px;color:#f5efe0;white-space:nowrap;flex:0 0 auto}' +
       '#casbalwrap b{color:#f2c063;font-weight:600}' +
       /* dice: draggable target track */
@@ -1888,6 +2003,8 @@
       /* roulette */
       '.wheelwrap{display:flex;justify-content:center;padding:4px 0}' +
       '.wheel{transition:transform 4s cubic-bezier(.15,.85,.2,1)}' +
+      /* the ball orbits the other way and settles a touch before the wheel stops */
+      '.ball{transition:transform 3.7s cubic-bezier(.12,.78,.18,1)}' +
       '.rboard{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-top:8px}' +
       '.rnum{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;color:#fff;border:1px solid transparent}' +
       '.rnum.red{background:#a32020}.rnum.black{background:#23232b}.rnum.green{background:#1f6b32}' +
@@ -1896,9 +2013,15 @@
       '.rout{flex:1;min-width:64px;padding:8px 6px;font-size:11px;font-weight:700;border-radius:6px;background:#241505;border:1px solid #3a2410;color:#f5efe0;cursor:pointer;text-align:center}' +
       '.rout.sel{border-color:#f2c063;background:#3a2410;color:#f2c063}' +
       /* plinko */
-      '.plinkwrap{display:flex;justify-content:center}' +
-      '.pbuckets{display:flex;gap:2px;margin-top:4px;justify-content:center;flex-wrap:nowrap}' +
-      '.pb{flex:1;min-width:0;padding:5px 1px;font-size:9px;font-weight:700;text-align:center;border-radius:4px;background:#3a2410;color:#f5efe0;overflow:hidden}' +
+      /* board + buckets share ONE box of identical width so the ball's x (in SVG
+         user units) maps onto the same scale the buckets are laid out on. */
+      '.plinkboard{width:100%;max-width:300px;margin:0 auto}' +
+      '.plinkwrap{width:100%}' +
+      '.plinkwrap svg{display:block;width:100%;height:auto}' +
+      /* gap MUST stay 0: any gap shifts bucket centres off the ball landing spots.
+         separation comes from a border, which box-sizing keeps inside the width. */
+      '.pbuckets{display:flex;gap:0;margin-top:4px;flex-wrap:nowrap;width:100%}' +
+      '.pb{flex:1 1 0;min-width:0;box-sizing:border-box;border:1px solid #1d1206;padding:5px 0;font-size:9px;font-weight:700;text-align:center;border-radius:4px;background:#3a2410;color:#f5efe0;overflow:hidden;transition:transform .12s ease}' +
       '.pb.hit{background:#f2c063;color:#1d1206;transform:translateY(-3px)}' +
       /* beef road */
       '.road{display:flex;gap:0;overflow-x:auto;background:#23232b;border-radius:10px;padding:0;border:2px solid #3a2410}' +
@@ -1910,6 +2033,62 @@
       '.rlane.done .lm{color:#6ee787}' +
       '.rlane.cur{background:#3a2410;box-shadow:inset 0 0 0 2px #f2c063}' +
       '.rlane.boom{background:#5a2020}' +
+      /* traffic: a car loops down every lane the chicken has not cleared yet */
+      '.rlane{overflow:hidden}' +
+      '.car{position:absolute;left:50%;margin-left:-13px;font-size:22px;line-height:1;will-change:transform;animation:drive linear infinite}' +
+      '@keyframes drive{from{transform:translateY(-38px)}to{transform:translateY(112px)}}' +
+      '.rlane.done .car,.rlane.cur .car{display:none}' +
+      '.car.hit{animation:squash .55s linear forwards}' +
+      '@keyframes squash{from{transform:translateY(-38px)}to{transform:translateY(112px)}}' +
+      /* the win celebration that pops over the whole casino */
+      '#winpop{position:absolute;left:50%;top:27%;transform:translate(-50%,-50%) scale(.7);z-index:40;pointer-events:none;opacity:0;' +
+      'background:linear-gradient(160deg,#2e7d32,#1f4023);border:2px solid #6ee787;border-radius:16px;padding:16px 26px;text-align:center;' +
+      'box-shadow:0 12px 40px #000a,0 0 0 4px #6ee78722}' +
+      '#winpop.show{animation:winpop 1.9s cubic-bezier(.2,1.2,.3,1) forwards}' +
+      '#winpop .wamt{display:block;font-size:24px;font-weight:800;color:#fff;line-height:1.1;text-shadow:0 2px 6px #0008}' +
+      '#winpop .wmul{display:block;margin-top:4px;font-size:15px;font-weight:800;color:#bdf5c8;letter-spacing:.03em}' +
+      '@keyframes winpop{0%{opacity:0;transform:translate(-50%,-50%) scale(.7)}' +
+      '14%{opacity:1;transform:translate(-50%,-58%) scale(1.06)}' +
+      '26%{transform:translate(-50%,-56%) scale(1)}' +
+      '72%{opacity:1;transform:translate(-50%,-56%) scale(1)}' +
+      '100%{opacity:0;transform:translate(-50%,-74%) scale(.95)}}' +
+      /* mines: dedicated readout panel */
+      '.panel{display:flex;gap:8px;background:linear-gradient(150deg,#2b1a0a,#1d1206);border:1px solid #7a5a1a;border-radius:14px;padding:12px}' +
+      '.pcell{flex:1;min-width:0;text-align:center}' +
+      '.pcell b{display:block;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8a6a3a;margin-bottom:3px}' +
+      '.pcell span{font-size:18px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
+      '.pcell.gem span{color:#6ee787}' +
+      '.pdiv{width:1px;background:#3a2410;flex:0 0 1px}' +
+      /* ---- general polish: lobby, chooser and the games grid ---- */
+      '.casmenu{gap:12px}' +
+      '.casgame{background:linear-gradient(155deg,#2e1c08,#1d1206);border:1px solid #4a3316;box-shadow:0 2px 0 #0004;transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease}' +
+      '.casgame:hover{transform:translateY(-2px);border-color:#c8823c;box-shadow:0 6px 16px #0007}' +
+      '.casgame .ci{color:#f2c063;filter:drop-shadow(0 2px 3px #0006)}' +
+      '.faucet{background:linear-gradient(135deg,#3a2410,#241505 60%);box-shadow:inset 0 1px 0 #ffffff10,0 4px 14px #0005}' +
+      '.faucet h3{letter-spacing:.02em}' +
+      '.seclabel{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a;margin:2px 0 -4px}' +
+      /* the Shrine of Tung Tung God: his portrait on an altar above the faucet */
+      '.altar{display:flex;flex-direction:column;align-items:center;text-align:center;gap:12px;padding:18px 16px 22px;' +
+      'background:radial-gradient(80% 60% at 50% 12%,#3a2410 0%,#241505 55%,#1d1206 100%);' +
+      'border:1px solid #7a5a1a;border-radius:18px;box-shadow:inset 0 1px 0 #ffffff12,0 8px 28px #0006}' +
+      '.godimg{width:min(64%,230px);height:auto;border-radius:14px;border:2px solid #7a5a1a;' +
+      'box-shadow:0 0 0 6px #c8823c1a,0 10px 30px #0008;animation:godfloat 5s ease-in-out infinite}' +
+      '@keyframes godfloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}' +
+      '.godsub{margin:0;font-size:13px;color:#c8823c;max-width:280px;font-style:italic}' +
+      '.godnote{margin:0;font-size:12px;color:#8a6a3a}' +
+      '.altar #casclaim{min-width:200px;font-size:15px}' +
+      /* the games grid page */
+      '#gamesbar{background:linear-gradient(180deg,#32200c,#2b1a0a)}' +
+      '#gsearch{border-radius:9px}' +
+      '#gsearch:focus{outline:none;border-color:#c8823c;box-shadow:0 0 0 2px #c8823c40}' +
+      '.gtile{background:linear-gradient(155deg,#2a1a08,#1f1305);border-color:#4a3316;transition:transform .1s ease,border-color .1s ease,background .1s ease}' +
+      '.gtile:hover{transform:translateY(-2px);border-color:#c8823c;background:linear-gradient(155deg,#3a2410,#2a1a08)}' +
+      '#cloakbar{background:#1d1206}' +
+      '#cloakbar input:focus{outline:none;border-color:#c8823c}' +
+      /* the chooser */
+      '.bigbtn{background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;transition:transform .12s ease,border-color .12s ease}' +
+      '.bigbtn:hover{transform:translateY(-3px);border-color:#c8823c}' +
+      '#choose h2{letter-spacing:.02em}' +
       '#casscreen{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}' +
       '.casgate{margin:auto;max-width:340px;text-align:center;color:#e9d9c2}' +
       '.casgate h3{margin:0 0 8px;color:#f2c063}' +
@@ -1928,8 +2107,20 @@
       '.casview h3{margin:0;color:#f2c063;display:flex;align-items:center;gap:8px}' +
       '.casrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}' +
       '.casrow label{font-size:12px;color:#c8823c}' +
-      '.casino input,.casino select{padding:9px 11px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit}' +
-      '.casino input[type=number]{width:110px}' +
+      /* the casino container is #casino — these were written as .casino and so
+         never applied, which is why the selects rendered as bare OS widgets. */
+      '#casino input,#casino select{padding:9px 11px;border-radius:9px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit}' +
+      '#casino input[type=number]{width:96px}' +
+      '#casino input:focus,#casino select:focus{outline:none;border-color:#c8823c;box-shadow:0 0 0 2px #c8823c40}' +
+      /* themed dropdown: kill the native chrome, draw our own caret */
+      '#casino select{appearance:none;-webkit-appearance:none;-moz-appearance:none;cursor:pointer;padding-right:30px;font-weight:600;color:#f2c063;' +
+      'background-image:url("data:image/svg+xml;charset=utf8,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 12 8\'%3E%3Cpath fill=\'%23c8823c\' d=\'M1 1.5 6 6.5l5-5\'/%3E%3C/svg%3E");' +
+      'background-repeat:no-repeat;background-position:right 10px center;background-size:11px}' +
+      '#casino select:hover{border-color:#7a5a1a}' +
+      /* a labelled control capsule so bet/risk/rows read as one tidy row */
+      '.ctl{display:flex;flex-direction:column;gap:4px}' +
+      '.ctl>span{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a6a3a}' +
+      '.ctlrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;background:#1d1206;border:1px solid #3a2410;border-radius:12px;padding:12px}' +
       '.cbtn{padding:10px 16px;border:none;border-radius:9px;background:#c8823c;color:#1d1206;font-weight:700;cursor:pointer}' +
       '.cbtn:disabled{opacity:.5;cursor:not-allowed}' +
       '.cbtn.sec{background:#241505;color:#f2c063;border:1px solid #7a5a1a}' +
@@ -1968,6 +2159,7 @@
       '<button id="cback" class="hbtn" type="button">← games</button>' +
       '<div class="chtitle">' + SPADE(18) + '<span>Tung&#8217;s Casino</span></div>' +
       '<div id="casbalwrap" title="your sahur balance"><span id="casbal">0.00</span> <b>sahurs</b></div>' +
+      '<button id="shrineBtn" class="hbtn" type="button">⛲ Shrine</button>' +
       '<button id="shopBtn" class="hbtn" type="button">🛒 Shop</button>' +
       '</div>' +
       '<button id="casinoBtn" class="casbtn" type="button" title="Tung&#8217;s Casino">' + SPADE(18) + '<span>Casino</span></button>' +
@@ -1981,7 +2173,7 @@
       '<span>Shrine of Tung</span></button>' +
       /* games button: the tung tung tung sahur png above the label */
       '<button id="chooseGames" class="bigbtn ghost" type="button">' +
-      '<img class="bimg" src="https://i1.sndcdn.com/artworks-YDQOy2Pru5CA2rhs-x1uzgA-t1080x1080.jpg" alt="">' +
+      '<img class="bimg" src="' + esc(TUNG_IMG) + '" alt="">' +
       '<span>Tung’s curated games</span></button>' +
       '</div>' +
       '</div>' +
@@ -2020,7 +2212,7 @@
       /* ---- Tung’s Casino: top-level view; its chrome lives in the main header ---- */
       '<div id="casino"><div id="casscreen"></div></div>' +
       '<div id="rpal"></div>' +
-      '<script>var SHRINE_API=' + JSON.stringify(SHRINE_API) + ';var GAMES=' + JSON.stringify(GAMES) + ';' + SAHUR_CHAT_JS + CASINO_JS + '<\/script>' +
+      '<script>var SHRINE_API=' + JSON.stringify(SHRINE_API) + ';var TUNG_IMG=' + JSON.stringify(TUNG_IMG) + ';var TUNGGOD_IMG=' + JSON.stringify(TUNGGOD_IMG) + ';var GAMES=' + JSON.stringify(GAMES) + ';' + SAHUR_CHAT_JS + CASINO_JS + '<\/script>' +
       '</body></html>';
   }
 
