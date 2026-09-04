@@ -21,6 +21,161 @@ const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
 const TTL_MS = 14 * 24 * 60 * 60 * 1000; // messages auto-expire after 2 weeks
 
+// ---------------------------------------------------------------------------
+// Tung's Casino — FUN-MONEY ONLY. "Sahurs" have no cash value, cannot be bought,
+// and cannot be cashed out. The ONLY way sahurs enter circulation is the Shrine
+// of Sahur faucet (a free claim every 20h). There is deliberately NO endpoint,
+// admin or otherwise, that lets anyone set, add, or edit another user's balance —
+// admins can only *view* balances. This keeps the whole thing unmistakably a toy.
+// Every outcome is decided here on the server with crypto RNG, so nothing about a
+// bet, a shuffle, a mine layout, or a crash point is manipulable from the client.
+const HOUSE = 0.99;                       // 1% house edge baked into fair payouts
+const FAUCET_AMOUNT = 10;                 // sahurs per claim
+const FAUCET_INTERVAL = 20 * 60 * 60 * 1000; // every 20 hours
+const MIN_BET = 0.1;                      // smallest allowed wager
+const MAX_BET = 100000;                   // sanity cap
+const CAS_TTL = 400 * 24 * 60 * 60 * 1000;   // balances persist ~13 months of inactivity
+const GAME_TTL = 6 * 60 * 60 * 1000;      // an abandoned in-progress hand self-expires
+
+// Casino KV key-space (layered on top of the chat key-space above):
+//   ["cas", id]        -> {bal, lastClaim}   a user's sahur balance + faucet clock
+//   ["bj", id]         -> blackjack hand in progress (deleted when it resolves)
+//   ["mines", id]      -> mines board in progress
+//   ["beef", id]       -> beef (crash-chicken) walk in progress
+//   ["shopitem", itemId] -> {id,name,desc,price,active,ts}  a redeemable shop entry
+// One active hand per game per user; starting a new one replaces the old.
+
+// crypto-strong float in [0,1)
+function rnd(): number {
+  const a = new Uint32Array(2);
+  crypto.getRandomValues(a);
+  // 53-bit precision from two 32-bit draws
+  return (a[0] * 0x100000000 + a[1]) / 0x20000000000000;
+}
+function rndInt(n: number): number { return Math.floor(rnd() * n); }
+function round2(n: number): number { return Math.round(n * 100) / 100; }
+
+// bet validation shared by every game
+function parseBet(v: unknown): number | null {
+  const b = round2(Number(v));
+  if (!isFinite(b) || b < MIN_BET || b > MAX_BET) return null;
+  return b;
+}
+
+// deno-lint-ignore no-explicit-any
+async function getCas(id: string): Promise<{ bal: number; lastClaim: number }> {
+  const r = await kv.get<{ bal: number; lastClaim: number }>(["cas", id]);
+  return r.value ?? { bal: 0, lastClaim: 0 };
+}
+
+// Atomic balance change. delta may be negative (a wager). Returns the new balance,
+// or null if the balance would go negative (insufficient funds) — the check+commit
+// loop makes double-spends from concurrent requests impossible.
+async function adjustBalance(id: string, delta: number): Promise<number | null> {
+  for (;;) {
+    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", id]);
+    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+    const nb = round2(rec.bal + delta);
+    if (nb < -1e-9) return null; // would overdraw
+    const res = await kv.atomic().check(cur)
+      .set(["cas", id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL }).commit();
+    if (res.ok) return Math.max(0, nb);
+  }
+}
+
+// A logged-in, un-blocked casino player. Casino access == chat access: you must be
+// an approved member and not currently banned or timed out.
+// deno-lint-ignore no-explicit-any
+async function casUser(token: unknown): Promise<any | null> {
+  const u = await authUser(typeof token === "string" ? token : null);
+  if (!u) return null;
+  if (blockState(u).blocked) return null;
+  return u;
+}
+
+// post a shop redemption to the chat webhook (best-effort, never blocks the reply)
+function notifyRedeem(username: string, item: { name: string; price: number }) {
+  if (!WEBHOOK) return;
+  fetch(WEBHOOK, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      content: "🛒 **shop redemption**\nuser: **" + username + "**\nitem: **" +
+        item.name + "**\ncost: **" + item.price + " sahurs**",
+    }),
+  }).catch(() => {});
+}
+
+// --- card helpers (blackjack) ---
+const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+const SUITS = ["♠", "♥", "♦", "♣"];
+function drawCard(): string { return RANKS[rndInt(13)] + SUITS[rndInt(4)]; }
+// best hand value treating aces as 11 then dropping to 1 as needed
+function handValue(cards: string[]): { total: number; soft: boolean } {
+  let total = 0, aces = 0;
+  for (const c of cards) {
+    const r = c.slice(0, c.length - 1);
+    if (r === "A") { aces++; total += 11; }
+    else if (r === "K" || r === "Q" || r === "J" || r === "10") total += 10;
+    else total += Number(r);
+  }
+  let soft = aces > 0;
+  while (total > 21 && aces > 0) { total -= 10; aces--; soft = aces > 0; }
+  return { total, soft };
+}
+
+// roulette: which pockets are red on a European wheel
+const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+
+// beef (crash-chicken) difficulties: per-step SURVIVAL probability + lane cap.
+// higher risk => lower survival => steeper multiplier (0.99 / survival^step).
+const BEEF: Record<string, { q: number; lanes: number }> = {
+  easy: { q: 0.96, lanes: 24 },
+  medium: { q: 0.92, lanes: 22 },
+  hard: { q: 0.85, lanes: 20 },
+  daredevil: { q: 0.75, lanes: 18 },
+};
+
+// plinko payout tables (Stake-style), indexed by risk then row count, bucket 0..rows.
+// mines fair multiplier after `safe` clean reveals with `count` mines on 25 tiles:
+//   HOUSE * C(25,safe) / C(25-count,safe)  ==  HOUSE * Π (25-i)/(25-count-i)
+function minesMult(count: number, safe: number): number {
+  let m = HOUSE;
+  for (let i = 0; i < safe; i++) m *= (25 - i) / (25 - count - i);
+  return round2(m);
+}
+// beef multiplier after surviving `step` lanes at per-step survival prob q
+function beefMult(q: number, step: number): number {
+  return round2(HOUSE / Math.pow(q, step));
+}
+
+// resolve a completed blackjack hand (player stood/doubled, dealer has played)
+// deno-lint-ignore no-explicit-any
+async function settle(st: any, pv: number, dv: number, finish: (r: string, p: number, d: number) => Promise<Response>): Promise<Response> {
+  if (dv > 21) return await finish("dealer_bust", round2(st.bet * 2), dv);
+  if (pv > dv) return await finish("win", round2(st.bet * 2), dv);
+  if (pv < dv) return await finish("lose", 0, dv);
+  return await finish("push", st.bet, dv); // tie returns the stake
+}
+
+const PLINKO: Record<string, Record<number, number[]>> = {
+  low: {
+    8: [5.6, 2.1, 1.1, 1, 0.5, 1, 1.1, 2.1, 5.6],
+    12: [10, 3, 1.6, 1.4, 1.1, 1, 0.5, 1, 1.1, 1.4, 1.6, 3, 10],
+    16: [16, 9, 2, 1.4, 1.4, 1.2, 1.1, 1, 0.5, 1, 1.1, 1.2, 1.4, 1.4, 2, 9, 16],
+  },
+  medium: {
+    8: [13, 3, 1.3, 0.7, 0.4, 0.7, 1.3, 3, 13],
+    12: [24, 5, 2, 1.4, 0.6, 0.4, 0.3, 0.4, 0.6, 1.4, 2, 5, 24],
+    16: [110, 41, 10, 5, 3, 1.5, 1, 0.5, 0.3, 0.5, 1, 1.5, 3, 5, 10, 41, 110],
+  },
+  high: {
+    8: [29, 4, 1.5, 0.3, 0.2, 0.3, 1.5, 4, 29],
+    12: [58, 8, 3, 2, 0.7, 0.2, 0.2, 0.2, 0.7, 2, 3, 8, 58],
+    16: [1000, 130, 26, 9, 4, 2, 0.2, 0.2, 0.2, 0.2, 0.2, 2, 4, 9, 26, 130, 1000],
+  },
+};
+
 // Deno KV key-space (how the pieces connect):
 //   ["seq"]            -> number   monotonically increasing event counter
 //   ["ev", seq]        -> event    the append-only chat log (msg/react), trimmed to HISTORY
@@ -405,6 +560,416 @@ Deno.serve(async (req) => {
     return json({ ok: true, cleared: n });
   }
 
+  // ======================= TUNG'S CASINO (fun money) =======================
+
+  // ---------- my balance + faucet clock ----------
+  if (req.method === "GET" && path === "/cas/me") {
+    const u = await casUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const c = await getCas(u.id);
+    const next = c.lastClaim + FAUCET_INTERVAL;
+    return json({
+      username: u.username, balance: round2(c.bal),
+      canClaim: Date.now() >= next, nextClaim: c.lastClaim ? next : 0,
+      faucetAmount: FAUCET_AMOUNT, faucetInterval: FAUCET_INTERVAL,
+    });
+  }
+
+  // ---------- Shrine of Sahur: claim the free faucet ----------
+  if (req.method === "POST" && path === "/cas/claim") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // guard the faucet clock atomically so a double-click can't double-claim
+    for (;;) {
+      const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
+      const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+      const now = Date.now();
+      const next = rec.lastClaim + FAUCET_INTERVAL;
+      if (rec.lastClaim && now < next) return json({ error: "cooldown", nextClaim: next }, 429);
+      const nb = round2(rec.bal + FAUCET_AMOUNT);
+      const res = await kv.atomic().check(cur)
+        .set(["cas", u.id], { bal: nb, lastClaim: now }, { expireIn: CAS_TTL }).commit();
+      if (res.ok) return json({ ok: true, balance: nb, claimed: FAUCET_AMOUNT, nextClaim: now + FAUCET_INTERVAL });
+    }
+  }
+
+  // ---------- DICE (roll under) — instant ----------
+  if (req.method === "POST" && path === "/cas/dice") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: "bad bet" }, 400);
+    const target = round2(Number(b.target)); // win if roll < target
+    if (!(target >= 2 && target <= 98)) return json({ error: "target 2–98" }, 400);
+    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const roll = round2(rnd() * 100);
+    const win = roll < target;
+    const mult = win ? round2((100 / target) * HOUSE) : 0;
+    const payout = round2(bet * mult);
+    const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
+    return json({ ok: true, roll, target, win, multiplier: mult, payout, balance: round2(bal!) });
+  }
+
+  // ---------- LIMBO — instant ----------
+  if (req.method === "POST" && path === "/cas/limbo") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: "bad bet" }, 400);
+    const target = round2(Number(b.target)); // desired cash-out multiplier
+    if (!(target >= 1.01 && target <= 1000000)) return json({ error: "target 1.01–1e6" }, 400);
+    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    // crash point c with P(c >= t) = HOUSE/t  → fair, 1% edge
+    const crash = Math.max(1, round2((1 / (1 - rnd())) * HOUSE));
+    const win = crash >= target;
+    const payout = win ? round2(bet * target) : 0;
+    const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
+    return json({ ok: true, crash, target, win, multiplier: win ? target : 0, payout, balance: round2(bal!) });
+  }
+
+  // ---------- ROULETTE (European single-zero) — instant ----------
+  if (req.method === "POST" && path === "/cas/roulette") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: "bad bet" }, 400);
+    const kind = clip(b.kind, 12);   // number|red|black|odd|even|low|high|dozen|column
+    const val = Math.floor(Number(b.value)); // for number(0-36), dozen(1-3), column(1-3)
+    // resolve payout multiplier (winnings-to-stake) for each bet kind
+    const spin = rndInt(37);
+    const isRed = RED.has(spin), zero = spin === 0;
+    let won = false, mult = 0;
+    if (kind === "number") { if (!(val >= 0 && val <= 36)) return json({ error: "number 0–36" }, 400); won = spin === val; mult = 36; }
+    else if (kind === "red") { won = isRed; mult = 2; }
+    else if (kind === "black") { won = !isRed && !zero; mult = 2; }
+    else if (kind === "odd") { won = !zero && spin % 2 === 1; mult = 2; }
+    else if (kind === "even") { won = !zero && spin % 2 === 0; mult = 2; }
+    else if (kind === "low") { won = spin >= 1 && spin <= 18; mult = 2; }
+    else if (kind === "high") { won = spin >= 19 && spin <= 36; mult = 2; }
+    else if (kind === "dozen") { if (!(val >= 1 && val <= 3)) return json({ error: "dozen 1–3" }, 400); won = !zero && Math.ceil(spin / 12) === val; mult = 3; }
+    else if (kind === "column") { if (!(val >= 1 && val <= 3)) return json({ error: "column 1–3" }, 400); won = !zero && spin % 3 === (val % 3); mult = 3; }
+    else return json({ error: "bad kind" }, 400);
+    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const payout = won ? round2(bet * mult) : 0;
+    const bal = won ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
+    return json({ ok: true, spin, color: zero ? "green" : (isRed ? "red" : "black"), win: won, multiplier: won ? mult : 0, payout, balance: round2(bal!) });
+  }
+
+  // ---------- PLINKO — instant ----------
+  if (req.method === "POST" && path === "/cas/plinko") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: "bad bet" }, 400);
+    const risk = clip(b.risk, 8);
+    const rows = Math.floor(Number(b.rows));
+    const table = PLINKO[risk] && PLINKO[risk][rows];
+    if (!table) return json({ error: "rows 8/12/16, risk low/medium/high" }, 400);
+    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const path2: number[] = [];
+    let bucket = 0;
+    for (let i = 0; i < rows; i++) { const r = rnd() < 0.5 ? 1 : 0; path2.push(r); bucket += r; }
+    const mult = table[bucket];
+    const payout = round2(bet * mult);
+    const bal = await adjustBalance(u.id, payout);
+    return json({ ok: true, path: path2, bucket, multiplier: mult, payout, balance: round2(bal!) });
+  }
+
+  // ---------- BLACKJACK (start / hit / stand / double) ----------
+  if (req.method === "POST" && path === "/cas/bj/start") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const player = [drawCard(), drawCard()];
+    const dealer = [drawCard(), drawCard()];
+    const pv = handValue(player), dv = handValue(dealer);
+    let state = "playing", result = "", payout = 0;
+    if (pv.total === 21 || dv.total === 21) {
+      // natural(s) resolve immediately
+      if (pv.total === 21 && dv.total === 21) { result = "push"; payout = bet; }
+      else if (pv.total === 21) { result = "blackjack"; payout = round2(bet * 2.5); }
+      else { result = "dealer_blackjack"; payout = 0; }
+      state = "done";
+      if (payout > 0) await adjustBalance(u.id, payout);
+    }
+    if (state === "playing") {
+      await kv.set(["bj", u.id], { player, dealer, bet, done: false }, { expireIn: GAME_TTL });
+    } else {
+      await kv.delete(["bj", u.id]);
+    }
+    const bal = (await getCas(u.id)).bal;
+    return json({
+      ok: true, state, result,
+      player, playerValue: pv.total,
+      dealer: state === "done" ? dealer : [dealer[0], "??"],
+      dealerValue: state === "done" ? dv.total : handValue([dealer[0]]).total,
+      bet, payout, balance: round2(bal),
+      canDouble: state === "playing" && player.length === 2,
+    });
+  }
+  if (req.method === "POST" && (path === "/cas/bj/hit" || path === "/cas/bj/stand" || path === "/cas/bj/double")) {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const g = await kv.get<any>(["bj", u.id]);
+    if (!g.value || g.value.done) return json({ error: "no hand" }, 400);
+    const st = g.value;
+    const finish = async (result: string, payout: number, dv: number) => {
+      await kv.delete(["bj", u.id]);
+      if (payout > 0) await adjustBalance(u.id, payout);
+      const bal = (await getCas(u.id)).bal;
+      return json({ ok: true, state: "done", result, player: st.player, playerValue: handValue(st.player).total, dealer: st.dealer, dealerValue: dv, bet: st.bet, payout, balance: round2(bal) });
+    };
+    const dealerPlay = () => { while (handValue(st.dealer).total < 17) st.dealer.push(drawCard()); return handValue(st.dealer).total; };
+    if (path === "/cas/bj/hit") {
+      st.player.push(drawCard());
+      const pv = handValue(st.player).total;
+      if (pv > 21) return await finish("bust", 0, handValue(st.dealer).total);
+      await kv.set(["bj", u.id], st, { expireIn: GAME_TTL });
+      const bal = (await getCas(u.id)).bal;
+      return json({ ok: true, state: "playing", player: st.player, playerValue: pv, dealer: [st.dealer[0], "??"], dealerValue: handValue([st.dealer[0]]).total, bet: st.bet, balance: round2(bal), canDouble: false });
+    }
+    if (path === "/cas/bj/double") {
+      if (st.player.length !== 2) return json({ error: "can only double on first move" }, 400);
+      if (await adjustBalance(u.id, -st.bet) === null) return json({ error: "insufficient" }, 402);
+      st.bet = round2(st.bet * 2);
+      st.player.push(drawCard());
+      const pv = handValue(st.player).total;
+      if (pv > 21) return await finish("bust", 0, handValue(st.dealer).total);
+      const dv = dealerPlay();
+      return await settle(st, pv, dv, finish);
+    }
+    // stand
+    const pv = handValue(st.player).total;
+    const dv = dealerPlay();
+    return await settle(st, pv, dv, finish);
+  }
+
+  // ---------- MINES (start / pick / cashout) ----------
+  if (req.method === "POST" && path === "/cas/mines/start") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: "bad bet" }, 400);
+    const count = Math.floor(Number(b.mines));
+    if (!(count >= 1 && count <= 24)) return json({ error: "mines 1–24" }, 400);
+    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    // choose `count` distinct mine cells out of 25
+    const cells = [...Array(25).keys()];
+    for (let i = cells.length - 1; i > 0; i--) { const j = rndInt(i + 1); [cells[i], cells[j]] = [cells[j], cells[i]]; }
+    const mines = cells.slice(0, count).sort((a, c) => a - c);
+    await kv.set(["mines", u.id], { mines, bet, count, revealed: [] }, { expireIn: GAME_TTL });
+    return json({ ok: true, state: "playing", mines: count, revealed: [], multiplier: 1, nextMultiplier: minesMult(count, 1) });
+  }
+  if (req.method === "POST" && path === "/cas/mines/pick") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const g = await kv.get<any>(["mines", u.id]);
+    if (!g.value) return json({ error: "no game" }, 400);
+    const st = g.value;
+    const tile = Math.floor(Number(b.tile));
+    if (!(tile >= 0 && tile <= 24) || st.revealed.includes(tile)) return json({ error: "bad tile" }, 400);
+    if (st.mines.includes(tile)) {
+      await kv.delete(["mines", u.id]);
+      const bal = (await getCas(u.id)).bal;
+      return json({ ok: true, state: "boom", tile, mines: st.mines, balance: round2(bal) });
+    }
+    st.revealed.push(tile);
+    const safe = st.revealed.length;
+    const mult = minesMult(st.count, safe);
+    // auto-win once every safe tile is uncovered
+    if (safe === 25 - st.count) {
+      await kv.delete(["mines", u.id]);
+      const payout = round2(st.bet * mult);
+      const bal = await adjustBalance(u.id, payout);
+      return json({ ok: true, state: "cashout", tile, multiplier: mult, payout, revealed: st.revealed, mines: st.mines, balance: round2(bal!) });
+    }
+    await kv.set(["mines", u.id], st, { expireIn: GAME_TTL });
+    return json({ ok: true, state: "playing", tile, revealed: st.revealed, multiplier: mult, nextMultiplier: minesMult(st.count, safe + 1) });
+  }
+  if (req.method === "POST" && path === "/cas/mines/cashout") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const g = await kv.get<any>(["mines", u.id]);
+    if (!g.value) return json({ error: "no game" }, 400);
+    const st = g.value;
+    if (!st.revealed.length) return json({ error: "reveal a tile first" }, 400);
+    await kv.delete(["mines", u.id]);
+    const mult = minesMult(st.count, st.revealed.length);
+    const payout = round2(st.bet * mult);
+    const bal = await adjustBalance(u.id, payout);
+    return json({ ok: true, state: "cashout", multiplier: mult, payout, mines: st.mines, balance: round2(bal!) });
+  }
+
+  // ---------- BEEF (crash-chicken: start / step / cashout) ----------
+  if (req.method === "POST" && path === "/cas/beef/start") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: "bad bet" }, 400);
+    const diff = clip(b.difficulty, 10);
+    const cfg = BEEF[diff];
+    if (!cfg) return json({ error: "difficulty easy/medium/hard/daredevil" }, 400);
+    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    // pre-roll the death lane NOW so the outcome is fixed server-side and the
+    // client cannot influence any step. deathStep = first lane the chicken dies on.
+    let deathStep = cfg.lanes + 1; // survives the whole road unless rolled sooner
+    for (let s = 1; s <= cfg.lanes; s++) { if (rnd() >= cfg.q) { deathStep = s; break; } }
+    await kv.set(["beef", u.id], { bet, q: cfg.q, lanes: cfg.lanes, deathStep, step: 0 }, { expireIn: GAME_TTL });
+    return json({ ok: true, state: "playing", step: 0, lanes: cfg.lanes, multiplier: 1, nextMultiplier: beefMult(cfg.q, 1) });
+  }
+  if (req.method === "POST" && path === "/cas/beef/step") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const g = await kv.get<any>(["beef", u.id]);
+    if (!g.value) return json({ error: "no game" }, 400);
+    const st = g.value;
+    const nextStep = st.step + 1;
+    if (nextStep >= st.deathStep) {
+      await kv.delete(["beef", u.id]);
+      const bal = (await getCas(u.id)).bal;
+      return json({ ok: true, state: "dead", step: nextStep, deathStep: st.deathStep, balance: round2(bal) });
+    }
+    st.step = nextStep;
+    const mult = beefMult(st.q, nextStep);
+    if (nextStep >= st.lanes) {
+      // reached the far side — auto cash out at the top multiplier
+      await kv.delete(["beef", u.id]);
+      const payout = round2(st.bet * mult);
+      const bal = await adjustBalance(u.id, payout);
+      return json({ ok: true, state: "cashout", step: nextStep, multiplier: mult, payout, balance: round2(bal!) });
+    }
+    await kv.set(["beef", u.id], st, { expireIn: GAME_TTL });
+    return json({ ok: true, state: "playing", step: nextStep, multiplier: mult, nextMultiplier: beefMult(st.q, nextStep + 1) });
+  }
+  if (req.method === "POST" && path === "/cas/beef/cashout") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const g = await kv.get<any>(["beef", u.id]);
+    if (!g.value) return json({ error: "no game" }, 400);
+    const st = g.value;
+    if (st.step < 1) return json({ error: "take a step first" }, 400);
+    await kv.delete(["beef", u.id]);
+    const mult = beefMult(st.q, st.step);
+    const payout = round2(st.bet * mult);
+    const bal = await adjustBalance(u.id, payout);
+    return json({ ok: true, state: "cashout", step: st.step, multiplier: mult, payout, balance: round2(bal!) });
+  }
+
+  // ---------- SHOP: list active items + redeem ----------
+  if (req.method === "GET" && path === "/shop/list") {
+    const u = await casUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const items: unknown[] = [];
+    // deno-lint-ignore no-explicit-any
+    for await (const e of kv.list<any>({ prefix: ["shopitem"] })) {
+      if (e.value.active) items.push({ id: e.value.id, name: e.value.name, desc: e.value.desc, price: e.value.price });
+    }
+    // deno-lint-ignore no-explicit-any
+    items.sort((a: any, c: any) => a.price - c.price);
+    const bal = (await getCas(u.id)).bal;
+    return json({ items, balance: round2(bal) });
+  }
+  if (req.method === "POST" && path === "/shop/redeem") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const it = await kv.get<any>(["shopitem", clip(b.itemId, 32)]);
+    if (!it.value || !it.value.active) return json({ error: "unavailable" }, 404);
+    const price = round2(Number(it.value.price));
+    const bal = await adjustBalance(u.id, -price);
+    if (bal === null) return json({ error: "insufficient" }, 402);
+    notifyRedeem(u.username, { name: it.value.name, price });
+    return json({ ok: true, balance: round2(bal), item: it.value.name, price });
+  }
+
+  // ---------- admin: VIEW balances (read-only — no editing, ever) ----------
+  if (req.method === "GET" && path === "/admin/balances") {
+    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const rows: { id: string; username: string; balance: number }[] = [];
+    // map app id -> username for approved users
+    const names: Record<string, string> = {};
+    // deno-lint-ignore no-explicit-any
+    for await (const e of kv.list<any>({ prefix: ["app"] })) {
+      if (e.value.status === "approved") names[e.value.id] = e.value.username;
+    }
+    // deno-lint-ignore no-explicit-any
+    for await (const e of kv.list<any>({ prefix: ["cas"] })) {
+      const id = String(e.key[1]);
+      rows.push({ id, username: names[id] || "(deleted)", balance: round2(e.value.bal || 0) });
+    }
+    rows.sort((a, c) => c.balance - a.balance);
+    return json({ balances: rows });
+  }
+
+  // ---------- admin: shop management (list all / upsert / delete) ----------
+  if (req.method === "GET" && path === "/admin/shop") {
+    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const items: unknown[] = [];
+    // deno-lint-ignore no-explicit-any
+    for await (const e of kv.list<any>({ prefix: ["shopitem"] })) items.push(e.value);
+    // deno-lint-ignore no-explicit-any
+    items.sort((a: any, c: any) => (a.ts || 0) - (c.ts || 0));
+    return json({ items });
+  }
+  if (req.method === "POST" && path === "/admin/shop/set") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const name = clip(b.name, 60);
+    const desc = clip(b.desc, 200);
+    const price = round2(Number(b.price));
+    if (!name || !(price >= 0)) return json({ error: "name + price required" }, 400);
+    const id = clip(b.id, 32) || rid(6);
+    const active = b.active !== false;
+    // deno-lint-ignore no-explicit-any
+    const existing = await kv.get<any>(["shopitem", id]);
+    const ts = existing.value?.ts || Date.now();
+    await kv.set(["shopitem", id], { id, name, desc, price, active, ts });
+    return json({ ok: true, item: { id, name, desc, price, active, ts } });
+  }
+  if (req.method === "POST" && path === "/admin/shop/delete") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    await kv.delete(["shopitem", clip(b.id, 32)]);
+    return json({ ok: true, deleted: true });
+  }
+
   // ---------- health ----------
   return new Response("Shrine of Tung backend is alive", {
     headers: { "content-type": "text/plain", ...CORS },
@@ -447,11 +1012,17 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <div id="list"><div class="empty">enter your admin key and hit load.</div></div>
 <h2 class="sec">approved users</h2>
 <div id="users"><div class="empty">load to see approved users.</div></div>
+<h2 class="sec">🎰 casino — player balances <small style="font-weight:400;color:#8a6a3a">(view only · balances can never be edited)</small></h2>
+<div id="balances"><div class="empty">load to see player balances.</div></div>
+<h2 class="sec">🛒 shop items</h2>
+<div id="shop"><div class="empty">load to manage the shop.</div></div>
+<div class="row" style="margin-top:12px"><button class="load" id="addItem">+ add shop item</button></div>
 </main>
 <script>
 var keyEl=document.getElementById("key"),list=document.getElementById("list"),users=document.getElementById("users");
+var balances=document.getElementById("balances"),shop=document.getElementById("shop");
 try{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}catch(e){}
-function loadAll(){refresh();refreshUsers();}   /* both panels share the one "load" button */
+function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();}   /* all panels share the one "load" button */
 document.getElementById("load").onclick=loadAll;
 document.getElementById("clear").onclick=function(){
   if(!confirm("Delete ALL applications (pending + approved)? Everyone will have to re-apply."))return;
@@ -574,4 +1145,68 @@ function repend(id,name){
   if(!confirm("Send "+name+" back to review? They'll return to the application screen where you can ask follow-up questions."))return;
   fetch("/admin/repend",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refresh();refreshUsers();});
 }
+/* ---- casino: player balances (READ ONLY — there is deliberately no edit path) ---- */
+function refreshBalances(){
+  var key=keyEl.value.trim();
+  balances.innerHTML='<div class="empty">loading...</div>';
+  fetch("/admin/balances?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+    if(d.error){balances.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';return;}
+    if(!d.balances.length){balances.innerHTML='<div class="empty">no balances yet (nobody has claimed sahurs).</div>';return;}
+    balances.innerHTML="";
+    d.balances.forEach(function(u){
+      var el=document.createElement("div");el.className="app";
+      var row=document.createElement("div");row.className="row";
+      var name=document.createElement("h3");name.style.flex="1";name.style.margin="0";name.textContent=u.username;
+      var bal=document.createElement("small");bal.textContent=u.balance.toFixed(2)+" sahurs";bal.style.color="#f2c063";bal.style.fontWeight="700";
+      row.appendChild(name);row.appendChild(bal);el.appendChild(row);
+      balances.appendChild(el);
+    });
+  }).catch(function(){balances.innerHTML='<div class="empty">network error.</div>';});
+}
+/* ---- casino: shop management (add / edit / enable / delete items) ---- */
+function refreshShop(){
+  var key=keyEl.value.trim();
+  shop.innerHTML='<div class="empty">loading...</div>';
+  fetch("/admin/shop?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+    if(d.error){shop.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';return;}
+    shop.innerHTML="";
+    if(!d.items.length){shop.innerHTML='<div class="empty">no shop items yet. hit “add shop item”.</div>';return;}
+    d.items.forEach(function(it){shop.appendChild(itemCard(it));});
+  }).catch(function(){shop.innerHTML='<div class="empty">network error.</div>';});
+}
+function itemCard(it){
+  it=it||{name:"",desc:"",price:0,active:true};
+  var el=document.createElement("div");el.className="app";
+  var r1=document.createElement("div");r1.className="row";
+  var name=document.createElement("input");name.className="uname";name.placeholder="item name";name.value=it.name||"";name.maxLength=60;
+  var price=document.createElement("input");price.type="number";price.min="0";price.step="0.1";price.className="tin";price.placeholder="price";price.value=(it.price!=null?it.price:"");price.style.flex="0 1 120px";
+  r1.appendChild(name);r1.appendChild(price);el.appendChild(r1);
+  var r2=document.createElement("div");r2.className="row";
+  var desc=document.createElement("input");desc.className="uname";desc.placeholder="description (optional)";desc.value=it.desc||"";desc.maxLength=200;
+  r2.appendChild(desc);el.appendChild(r2);
+  var r3=document.createElement("div");r3.className="row";
+  var lab=document.createElement("label");lab.style.cssText="display:flex;align-items:center;gap:6px;color:#e9d9c2;font-size:14px";
+  var chk=document.createElement("input");chk.type="checkbox";chk.checked=it.active!==false;chk.style.flex="0";
+  lab.appendChild(chk);lab.appendChild(document.createTextNode("visible in shop"));
+  var save=document.createElement("button");save.className="load";save.textContent=it.id?"save":"create";
+  save.onclick=function(){saveItem(it.id,name.value.trim(),desc.value.trim(),price.value,chk.checked,el);};
+  r3.appendChild(lab);r3.appendChild(save);
+  if(it.id){var del=document.createElement("button");del.className="no";del.textContent="delete";del.onclick=function(){deleteItem(it.id,it.name);};r3.appendChild(del);}
+  el.appendChild(r3);
+  return el;
+}
+function saveItem(id,name,desc,price,active,card){
+  if(!name){alert("item needs a name");return;}
+  if(!(Number(price)>=0)){alert("price must be 0 or more");return;}
+  fetch("/admin/shop/set",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id||"",name:name,desc:desc,price:Number(price),active:active})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshShop();});
+}
+function deleteItem(id,name){
+  if(!confirm("Delete shop item: "+name+" ?"))return;
+  fetch("/admin/shop/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshShop();});
+}
+document.getElementById("addItem").onclick=function(){
+  if(!keyEl.value.trim()){alert("enter your admin key first");return;}
+  var ph=shop.querySelector(".empty");if(ph)ph.remove();
+  shop.appendChild(itemCard(null));
+};
 </script></body></html>`;
