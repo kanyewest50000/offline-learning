@@ -104,16 +104,25 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
 .nav a:hover { background: var(--paper-2); color: var(--ink-900); }
 .nav a.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
 
+/* Buttons must match index.html's inline rules exactly, or the masthead drifts
+   between the home page and the subpages. Three things mattered:
+   - no letter-spacing and no 1px border: those added 7px to the nav's width,
+     which tipped "Request a pilot" onto a second line at widths where the home
+     page kept it inline.
+   - padding/font-size matched to index so the header is the same height.
+   - .btn-primary's colour needs !important: `.nav a` (0,1,1) outranks
+     `.btn-primary` (0,1,0), so without it the header button's white label lost
+     to the nav link colour and rendered dark brown. */
 .btn {
   display: inline-block; font-family: var(--ui);
-  padding: 11px 20px; border-radius: 999px;
-  font-size: .88rem; font-weight: 700; letter-spacing: .01em;
-  text-decoration: none; border: 1px solid transparent; cursor: pointer;
+  padding: 12px 22px; border-radius: 999px;
+  font-size: .92rem; font-weight: 700;
+  text-decoration: none; border: none; cursor: pointer;
   transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
 }
-.btn-primary { background: var(--accent); color: #fff; box-shadow: var(--shadow-sm); }
-.btn-primary:hover { background: var(--accent-2); color: #fff; transform: translateY(-1px); box-shadow: var(--shadow-md); }
-.btn-ghost { border-color: var(--line); color: var(--ink-700); background: transparent; }
+.btn-primary { background: var(--accent); color: #fff !important; box-shadow: var(--shadow-sm); }
+.btn-primary:hover { background: var(--accent-2); color: #fff !important; transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.btn-ghost { border: 1.5px solid var(--line); color: var(--ink-700) !important; background: transparent; }
 .btn-ghost:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .btn-sm { padding: 7px 14px; font-size: .8rem; }
 
