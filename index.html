@@ -1077,8 +1077,35 @@
     '</style></head><body><div id="wrap"><div id="bar">' +
     '<button id="x" title="close">✕</button><span id="ttl">${g.n}</span>' +
     '<button id="fs" title="fullscreen">⛶</button></div>' +
-    '<iframe id="gf" src="${g.u}" allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write" allowfullscreen></iframe>' +
+    '<iframe id="gf" allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write" allowfullscreen></iframe>' +
     '</div><script>' +
+    /* gn-math games are fetched as text and injected via srcdoc rather than
+       pointed at with iframe src. that keeps any single blocked CDN from taking
+       the library down: we walk a list of hosts until one answers, and only fall
+       back to a plain src if every one of them fails. a <base> tag is injected so
+       the game resolves its own relative assets against wherever it came from.
+       (no regex here on purpose — slashes inside this template literal bite.) */
+    'var GURL="${g.u}";' +
+    'var gf=document.getElementById("gf");' +
+    '(function(){' +
+    'var mark="gn-math/html/";var idx=GURL.indexOf(mark);' +
+    'if(idx<0){gf.src=GURL;return;}' +
+    'var rest=GURL.slice(idx+mark.length);var s=rest.indexOf("/");' +
+    'if(s<0){gf.src=GURL;return;}' +
+    'var CM=rest.slice(0,s),FILE=rest.slice(s+1);' +
+    'var BASES=["https://cdn.jsdelivr.net/gh/gn-math/html@"+CM+"/","https://raw.githubusercontent.com/gn-math/html/"+CM+"/","https://rawcdn.githack.com/gn-math/html/"+CM+"/"];' +
+    'function inject(h,base){' +
+    'var btag="<base href=\'"+base+"\'>";' +
+    'var lo=h.toLowerCase(),hi=lo.indexOf("<head");' +
+    'if(hi>=0){var c=h.indexOf(">",hi);if(c>=0){gf.srcdoc=h.slice(0,c+1)+btag+h.slice(c+1);return;}}' +
+    'gf.srcdoc=btag+h;}' +
+    'function tryBase(i){' +
+    'if(i>=BASES.length){gf.src=GURL;return;}' +
+    'fetch(BASES[i]+FILE).then(function(r){if(!r.ok)throw 0;return r.text();})' +
+    '.then(function(h){inject(h,BASES[i]);})' +
+    '.catch(function(){tryBase(i+1);});}' +
+    'tryBase(0);' +
+    '})();' +
     'document.getElementById("x").onclick=function(){window.close();};' +   /* X = close this game tab */
     'document.getElementById("fs").onclick=function(){var f=document.getElementById("gf");' +
     'if(document.fullscreenElement){(document.exitFullscreen||function(){}).call(document);}' +
