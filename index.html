@@ -1711,6 +1711,7 @@
   function icoDouble(){var s=icoBox();s.appendChild(strokePath("M6 5l6 6 6-6"));s.appendChild(strokePath("M6 13l6 6 6-6"));return s;}
   function icoDeal(){var s=icoBox();s.appendChild(sv("rect",{x:"4",y:"5",width:"9",height:"13",rx:"2",fill:"none",stroke:"currentColor","stroke-width":"2"}));
     s.appendChild(sv("rect",{x:"11",y:"7",width:"9",height:"13",rx:"2",fill:"none",stroke:"currentColor","stroke-width":"2",opacity:".55"}));return s;}
+  function icoSplit(){var s=icoBox();s.appendChild(strokePath("M12 20v-6"));s.appendChild(strokePath("M12 14l-5-5"));s.appendChild(strokePath("M12 14l5-5"));return s;}
   function bjBtn(cls,label,icon){var b=el("button","bjbtn "+cls);b.appendChild(icon);b.appendChild(el("span",null,label));return b;}
   function viewBlackjack(){
     var v=mount("Blackjack",icoBlackjack());
@@ -1720,22 +1721,23 @@
     row.appendChild(ctl("bet",bet));row.appendChild(ctl(" ",deal));
     v.appendChild(row);
 
-    // the table: dealer above, you below, both centred
+    // the table: dealer above, your hand(s) below, everything centred
     var table=el("div","bjtable");
     var dlab=el("div","bjlabel","dealer"),dval=el("div","bjval","-"),dcards=el("div","bjcards");
-    var plab=el("div","bjlabel","you"),pval=el("div","bjval","-"),pcards=el("div","bjcards");
-    [dlab,dval,dcards,el("div","bjsplit"),plab,pval,pcards].forEach(function(x){table.appendChild(x);});
+    var plab=el("div","bjlabel","you"),phands=el("div","bjhands");
+    [dlab,dval,dcards,el("div","bjsplit"),plab,phands].forEach(function(x){table.appendChild(x);});
     v.appendChild(table);
 
     var acts=el("div","bjacts");v.appendChild(acts);   // actions sit under your hand
     var r=el("div","bjres","");v.appendChild(r);
     function setRes(cls,txt){r.className="bjres"+(cls?" "+cls:"");r.textContent=txt;}
 
-    /* only cards that actually changed get re-dealt; the rest snap to their
-       final face, so hitting doesn't replay the whole hand's animation. this
-       also makes the dealer's hole card flip when it is finally revealed. */
-    var prevD=[],prevP=[];
-    function render(wrap,cards,prev){
+    /* Only cards that actually changed get re-dealt; the rest snap to their
+       final face, so hitting doesn't replay the whole hand's animation. The
+       dealer's hole card still flips when it is finally revealed, and a fresh
+       split hand deals in on its own. */
+    var prevD=[],prevH=[];
+    function paintCards(wrap,cards,prev){
       wrap.innerHTML="";
       var n=0;
       cards.forEach(function(c,i){
@@ -1751,24 +1753,57 @@
         wrap.appendChild(e);
       });
     }
+    var LABEL={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer busts - you win!",push:"push - bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"};
+    function renderHands(d){
+      var multi=d.hands.length>1;
+      phands.className="bjhands"+(multi?" multi":"");
+      phands.innerHTML="";
+      d.hands.forEach(function(h,i){
+        var live=d.state==="playing"&&i===d.active;
+        var box=el("div","bjhand"+(live?" active":"")+(h.done&&d.state!=="playing"?" settled":""));
+        if(multi){
+          var cls=h.result?((h.payout>h.bet)?"win":(h.result==="push"?"":"lose")):"";
+          var tag=el("div","bjhtag"+(cls?" "+cls:""),h.result?(LABEL[h.result]||h.result):("hand "+(i+1)));
+          box.appendChild(tag);
+        }
+        box.appendChild(el("div","bjval",String(h.value)));
+        var cw=el("div","bjcards");
+        paintCards(cw,h.cards,prevH[i]||[]);
+        box.appendChild(cw);
+        phands.appendChild(box);
+      });
+      prevH=d.hands.map(function(h){return h.cards.slice();});
+    }
     function paint(d){
-      render(dcards,d.dealer,prevD);render(pcards,d.player,prevP);
-      prevD=d.dealer.slice();prevP=d.player.slice();
+      // the server sends an authoritative balance on every reply — reflect it as
+      // we go, so the stake taken by a split or a double shows up immediately
+      if(typeof d.balance==="number")setBal(d.balance);
+      paintCards(dcards,d.dealer,prevD);prevD=d.dealer.slice();
       dval.textContent=(d.dealerValue!=null?d.dealerValue:"?");
-      pval.textContent=d.playerValue;
+      renderHands(d);
+      plab.textContent=d.hands.length>1?("your hands ("+d.hands.length+")"):"you";
       acts.innerHTML="";
       if(d.state==="playing"){
         var hit=bjBtn("hit","hit",icoHit());hit.onclick=function(){act("/cas/bj/hit");};
         var stand=bjBtn("stand","stand",icoStand());stand.onclick=function(){act("/cas/bj/stand");};
         acts.appendChild(hit);acts.appendChild(stand);
         if(d.canDouble){var db=bjBtn("dbl","double",icoDouble());db.onclick=function(){act("/cas/bj/double");};acts.appendChild(db);}
-        setRes("","");
+        if(d.canSplit){var sp=bjBtn("split","split",icoSplit());sp.onclick=function(){act("/cas/bj/split");};acts.appendChild(sp);}
+        setRes("",d.hands.length>1?("playing hand "+(d.active+1)+" of "+d.hands.length):"");
       }else{
-        setBal(d.balance);
-        var msg={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer busts - you win!",push:"push - bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"}[d.result]||d.result;
-        if(d.result==="push")setRes("",msg);
-        else if(d.payout>0){setRes("win",msg);celebrate(d.payout,d.bet?d.payout/d.bet:1);}
-        else setRes("lose",msg);
+        if(d.hands.length>1){
+          // a split round is summarised by what came back versus what was staked
+          var net=Math.round((d.payout-d.bet)*100)/100;
+          setRes(net>0?"win":(net<0?"lose":""),
+            net>0?("you take "+money(d.payout)+" on "+money(d.bet)+" staked"):
+            (net<0?("you lose "+money(-net)):"push - stake returned"));
+        }else{
+          var msg=LABEL[d.result]||d.result;
+          if(d.result==="push")setRes("",msg);
+          else if(d.payout>0)setRes("win",msg);
+          else setRes("lose",msg);
+        }
+        if(d.payout>d.bet)celebrate(d.payout,d.bet?d.payout/d.bet:1);
         deal.disabled=false;bet.disabled=false;
       }
     }
@@ -1779,7 +1814,7 @@
     }
     deal.onclick=function(){
       deal.disabled=true;bet.disabled=true;
-      prevD=[];prevP=[];                 // a new hand deals every card fresh
+      prevD=[];prevH=[];                 // a new round deals every card fresh
       jpost("/cas/bj/start",{bet:Number(bet.value)}).then(function(d){
         if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}
         paint(d);
@@ -2254,6 +2289,20 @@
       '.bjval{font-size:30px;font-weight:800;color:#f2c063;line-height:1;font-variant-numeric:tabular-nums}' +
       '.bjcards{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;min-height:112px;align-items:center}' +
       '.bjsplit{width:100%;max-width:280px;height:1px;background:#3a2410;margin:4px 0}' +
+      /* split hands sit side by side; the one you are playing is ringed. cards
+         shrink once there is more than one hand so two fit across a phone. */
+      '.bjhands{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;width:100%}' +
+      '.bjhand{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 10px;border-radius:14px;border:2px solid transparent;transition:border-color .15s ease,background .15s ease}' +
+      '.bjhand.active{border-color:#f2c063;background:#ffffff0d}' +
+      '.bjhand.settled{opacity:.72}' +
+      '.bjhtag{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a}' +
+      '.bjhtag.win{color:#6ee787}.bjhtag.lose{color:#e0908a}' +
+      '.bjhands.multi .pcard{width:56px;height:80px}' +
+      '.bjhands.multi .pcface{font-size:19px;border-radius:8px}' +
+      '.bjhands.multi .pcback{font-size:22px}' +
+      '.bjhands.multi .bjval{font-size:22px}' +
+      '.bjhands.multi .bjcards{min-height:84px;gap:6px}' +
+      '.bjbtn.split{background:linear-gradient(160deg,#9a5cd0,#6a3596)}' +
       /* A card that flips face-up as it is dealt. Deliberately 2D: a rotateY +
          backface-visibility version rendered the BACK of every card, because the
          preserve-3d context gets flattened here and flattening inverts which
