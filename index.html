@@ -1174,6 +1174,32 @@
   function jpost(p,b){b=b||{};b.token=tok();return fetch(API+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}).then(function(r){return r.json().catch(function(){return{};});});}
   function el(t,c,txt){var e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;}
   function sv(t,a){var e=document.createElementNS("http://www.w3.org/2000/svg",t);for(var k in a)e.setAttribute(k,a[k]);return e;}
+
+  /* ---- drawn game icons (the rest stay emoji) ---- */
+  var SPADE_D="M12 2.2c-.3 0-.5.1-.7.3C9 4.9 3.6 9.6 3.6 13.6c0 2.2 1.8 3.9 3.9 3.9.8 0 1.6-.3 2.2-.7-.2 1.5-1 2.8-2.3 3.6-.3.2-.4.5-.3.8.1.3.4.5.7.5h8.4c.3 0 .6-.2.7-.5.1-.3 0-.6-.3-.8-1.3-.8-2.1-2.1-2.3-3.6.6.4 1.4.7 2.2.7 2.1 0 3.9-1.7 3.9-3.9 0-4-5.4-8.7-7.7-11.1-.2-.2-.4-.3-.7-.3z";
+  // plinko: a ball dropping with speed lines trailing above it
+  function icoPlinko(){
+    var s=sv("svg",{viewBox:"0 0 24 24",width:"26",height:"26","aria-hidden":"true"});
+    [["M8.5 3.2h7",".38"],["M6 7h12",".6"],["M8.8 10.8h6.4",".85"]].forEach(function(p){
+      s.appendChild(sv("path",{d:p[0],stroke:"currentColor","stroke-width":"1.9","stroke-linecap":"round",fill:"none",opacity:p[1]}));
+    });
+    s.appendChild(sv("circle",{cx:"12",cy:"18",r:"4.2",fill:"currentColor"}));
+    return s;
+  }
+  // blackjack: a playing card with the ace of spades centred on it
+  function icoBlackjack(){
+    var s=sv("svg",{viewBox:"0 0 24 24",width:"26",height:"26","aria-hidden":"true"});
+    s.appendChild(sv("rect",{x:"5",y:"2.5",width:"14",height:"19",rx:"2.6",fill:"currentColor","fill-opacity":".15",stroke:"currentColor","stroke-width":"1.5"}));
+    var g=sv("g",{transform:"translate(6.48,6.48) scale(0.46)"});
+    g.appendChild(sv("path",{fill:"currentColor",d:SPADE_D}));
+    s.appendChild(g);
+    return s;
+  }
+  function gameIcon(id){
+    if(id==="plinko")return icoPlinko();
+    if(id==="blackjack")return icoBlackjack();
+    return el("span",null,{roulette:"◉",mines:"💣",beef:"🐄",limbo:"📈",dice:"🎲"}[id]||"");
+  }
   function money(n){return (Math.round(Number(n)*100)/100).toFixed(2);}
   function mult(n){return (Math.round(Number(n)*100)/100).toFixed(2)+"x";}
 
@@ -1281,28 +1307,17 @@
   function renderLobby(me){
     clearTimer();
     screen.innerHTML="";
-    // a compact pointer to the shrine; the faucet itself lives on its own page
-    var f=el("div","faucet");
-    var info=el("div","grow");
-    info.appendChild(el("h3",null,"Shrine of Tung Tung God"));
-    info.appendChild(el("p",null,
-      (me.canClaim||!me.nextClaim||Date.now()>=me.nextClaim)
-        ? "your free "+(me.faucetAmount||10)+" sahurs are waiting."
-        : "you have claimed recently. come back later."));
-    var goShrine=el("button",null,"visit the shrine");
-    goShrine.id="casclaim";
-    goShrine.onclick=viewShrine;
-    f.appendChild(info);f.appendChild(goShrine);
-    screen.appendChild(f);
+    // no shrine card here: the Shrine button in the header is the only way in
     screen.appendChild(el("div","seclabel","the floor"));
     var grid=el("div","casmenu");
-    [["♠","Blackjack","blackjack"],["◉","Roulette","roulette"],["💣","Mines","mines"],
-     ["🐔","Beef","beef"],["📈","Limbo","limbo"],["🎲","Dice","dice"],
-     ["🔻","Plinko","plinko"]].forEach(function(g){
+    [["Blackjack","blackjack"],["Roulette","roulette"],["Mines","mines"],
+     ["Beef","beef"],["Limbo","limbo"],["Dice","dice"],
+     ["Plinko","plinko"]].forEach(function(g){
       var b=el("button","casgame");
-      b.appendChild(el("div","ci",g[0]));
-      b.appendChild(el("div",null,g[1]));
-      b.onclick=function(){openGame(g[2]);};
+      var ci=el("div","ci");ci.appendChild(gameIcon(g[1]));
+      b.appendChild(ci);
+      b.appendChild(el("div",null,g[0]));
+      b.onclick=function(){openGame(g[1]);};
       grid.appendChild(b);
     });
     screen.appendChild(grid);
@@ -1327,7 +1342,10 @@
     back.onclick=function(){window.__casinoOpen();};
     screen.appendChild(back);
     var v=el("div","casview");
-    v.appendChild(el("h3",null,icon+"  "+title));
+    var h=el("h3");
+    h.appendChild(typeof icon==="string"?el("span",null,icon):icon);
+    h.appendChild(el("span",null,title));
+    v.appendChild(h);
     screen.appendChild(v);
     return v;
   }
@@ -1557,7 +1575,7 @@
 
   /* ---------- PLINKO ---------- */
   function viewPlinko(){
-    var v=mount("Plinko","🔻");
+    var v=mount("Plinko",icoPlinko());
     var bet=betField("1");
     var risk=selectOf([["low","Low"],["medium","Medium"],["high","High"]],"medium");
     var rows=selectOf([["8","8"],["12","12"],["16","16"]],"12");
@@ -1636,7 +1654,7 @@
     return el("div","card"+(isRed?" red":""),c);
   }
   function viewBlackjack(){
-    var v=mount("Blackjack","♠");
+    var v=mount("Blackjack",icoBlackjack());
     var bet=betField("1");
     var deal=el("button","cbtn go","deal");
     var row=el("div","ctlrow");
@@ -1762,7 +1780,7 @@
 
   /* ---------- BEEF ---------- */
   function viewBeef(){
-    var v=mount("Beef","🐔");
+    var v=mount("Beef","🐄");
     var bet=betField("1");
     var diff=selectOf([["easy","Easy"],["medium","Medium"],["hard","Hard"],["daredevil","Daredevil"]],"easy");
     var start=el("button","cbtn go","start");
@@ -1787,7 +1805,7 @@
         L.appendChild(el("div","lm",(0.99/Math.pow(q,i)).toFixed(2)+"x"));
         L.appendChild(el("div","lc",""));
         L.appendChild(el("div",null,String(i)));
-        // traffic in every lane the chicken has not reached
+        // traffic in every lane the cow has not reached
         var car=el("div","car","🚗");
         car.style.animationDuration=(1.0+Math.random()*1.4).toFixed(2)+"s";
         car.style.animationDelay=(-Math.random()*2.4).toFixed(2)+"s";
@@ -1796,14 +1814,14 @@
       }
       var st=road.children[0];if(st)st.classList.add("cur");
     }
-    function placeChicken(idx){
+    function placeAnimal(idx){
       Array.prototype.forEach.call(road.children,function(L,i){
         L.classList.remove("cur");
         L.querySelector(".lc").textContent="";
         if(i<idx)L.classList.add("done");
       });
       var cur=road.children[idx];
-      if(cur){cur.classList.add("cur");cur.querySelector(".lc").textContent="🐔";cur.scrollIntoView({block:"nearest",inline:"center"});}
+      if(cur){cur.classList.add("cur");cur.querySelector(".lc").textContent="🐄";cur.scrollIntoView({block:"nearest",inline:"center"});}
     }
     function running(on){start.style.display=on?"none":"";step.style.display=on?"":"none";cash.style.display=on?"":"none";bet.disabled=on;diff.disabled=on;}
     start.onclick=function(){
@@ -1823,19 +1841,19 @@
         if(d.error){step.disabled=false;bad(r,d.error);return;}
         if(d.state==="dead"){
           // walk into the lane, let a car flatten him, THEN report it
-          placeChicken(d.step-1);
+          placeAnimal(d.step-1);
           var L=road.children[d.step-1]||road.children[LANES-1];
           var car=L&&L.querySelector(".car");
           if(car){car.style.display="block";car.className="car hit";}
           setTimeout(function(){
             if(L){L.classList.remove("cur");L.classList.add("boom");L.querySelector(".lc").textContent="💥";}
             step.disabled=false;setBal(d.balance);
-            bad(r,"splat. the chicken didn't make it.");running(false);
+            bad(r,"splat. the cow didn't make it.");running(false);
           },560);
           return;
         }
         step.disabled=false;
-        STEP=d.step;placeChicken(STEP-1);
+        STEP=d.step;placeAnimal(STEP-1);
         road.children[STEP-1].classList.add("done");
         if(d.state==="cashout"){setBal(d.balance);ok(r,"made it across! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);return;}
         cash.style.display="";cash.textContent="cash out "+mult(d.multiplier);
