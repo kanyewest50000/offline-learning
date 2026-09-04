@@ -1079,12 +1079,15 @@
     '<button id="fs" title="fullscreen">⛶</button></div>' +
     '<iframe id="gf" allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write" allowfullscreen></iframe>' +
     '</div><script>' +
-    /* gn-math games are fetched as text and injected via srcdoc rather than
-       pointed at with iframe src. that keeps any single blocked CDN from taking
-       the library down: we walk a list of hosts until one answers, and only fall
-       back to a plain src if every one of them fails. a <base> tag is injected so
-       the game resolves its own relative assets against wherever it came from.
-       (no regex here on purpose — slashes inside this template literal bite.) */
+    /* gn-math games are loaded with a real iframe src, walking a list of mirrors
+       until one loads. srcdoc was tried and reverted: it gives the document no
+       real URL (location.href becomes about:srcdoc) and an inherited origin, so
+       Unity loaders that derive their build paths from location computed broken
+       asset URLs and hung at 0% on the progress bar. A real src keeps relative
+       paths, location and same-origin asset fetches working exactly as before.
+       If a host is blocked its load event never fires, so a timeout advances to
+       the next mirror. (indexOf rather than regex — slashes in a regex literal
+       inside this template literal would terminate it early.) */
     'var GURL="${g.u}";' +
     'var gf=document.getElementById("gf");' +
     '(function(){' +
@@ -1093,18 +1096,15 @@
     'var rest=GURL.slice(idx+mark.length);var s=rest.indexOf("/");' +
     'if(s<0){gf.src=GURL;return;}' +
     'var CM=rest.slice(0,s),FILE=rest.slice(s+1);' +
-    'var BASES=["https://cdn.jsdelivr.net/gh/gn-math/html@"+CM+"/","https://raw.githubusercontent.com/gn-math/html/"+CM+"/","https://rawcdn.githack.com/gn-math/html/"+CM+"/"];' +
-    'function inject(h,base){' +
-    'var btag="<base href=\'"+base+"\'>";' +
-    'var lo=h.toLowerCase(),hi=lo.indexOf("<head");' +
-    'if(hi>=0){var c=h.indexOf(">",hi);if(c>=0){gf.srcdoc=h.slice(0,c+1)+btag+h.slice(c+1);return;}}' +
-    'gf.srcdoc=btag+h;}' +
-    'function tryBase(i){' +
-    'if(i>=BASES.length){gf.src=GURL;return;}' +
-    'fetch(BASES[i]+FILE).then(function(r){if(!r.ok)throw 0;return r.text();})' +
-    '.then(function(h){inject(h,BASES[i]);})' +
-    '.catch(function(){tryBase(i+1);});}' +
-    'tryBase(0);' +
+    'var HOSTS=["https://cdn.statically.io/gh/gn-math/html/"+CM+"/","https://rawcdn.githack.com/gn-math/html/"+CM+"/","https://raw.githack.com/gn-math/html/"+CM+"/"];' +
+    'var i=0,timer=null,loaded=false;' +
+    'gf.addEventListener("load",function(){loaded=true;if(timer){clearTimeout(timer);timer=null;}});' +
+    'function tryHost(){' +
+    'if(loaded||i>=HOSTS.length)return;' +
+    'gf.src=HOSTS[i]+FILE;i++;' +
+    'if(timer)clearTimeout(timer);' +
+    'timer=setTimeout(function(){if(!loaded)tryHost();},7000);}' +
+    'tryHost();' +
     '})();' +
     'document.getElementById("x").onclick=function(){window.close();};' +   /* X = close this game tab */
     'document.getElementById("fs").onclick=function(){var f=document.getElementById("gf");' +
@@ -2194,6 +2194,36 @@
       '.lane.on{background:#1f4023;border-color:#2e7d32;color:#6ee787}' +
       '.lane.dead{background:#5a2020;border-color:#7a2e2e}' +
       '.cards{display:flex;gap:6px;flex-wrap:wrap}' +
+      /* ---- blackjack table ---- */
+      '.bjtable{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 0 2px}' +
+      '.bjlabel{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8a6a3a}' +
+      '.bjval{font-size:30px;font-weight:800;color:#f2c063;line-height:1;font-variant-numeric:tabular-nums}' +
+      '.bjcards{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;min-height:112px;align-items:center;perspective:900px}' +
+      '.bjsplit{width:100%;max-width:280px;height:1px;background:#3a2410;margin:4px 0}' +
+      /* a card that flips face-up as it is dealt */
+      '.pcard{width:76px;height:108px;position:relative;flex:0 0 auto}' +
+      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;transform-style:preserve-3d;animation:dealIn .5s cubic-bezier(.2,.9,.3,1) both}' +
+      '.pcard.hole .pcinner{animation:dealBack .5s cubic-bezier(.2,.9,.3,1) both}' +
+      '.pcface{position:absolute;left:0;top:0;right:0;bottom:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;' +
+      'border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;box-shadow:0 6px 16px #0007}' +
+      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;transform:rotateY(180deg)}' +
+      '.pcfront.red{color:#b3261e}' +
+      '.pcback{background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border:1px solid #7a5a1a;font-size:30px}' +
+      '@keyframes dealIn{0%{opacity:0;transform:translateY(-20px) rotateY(0deg)}35%{opacity:1}100%{opacity:1;transform:translateY(0) rotateY(180deg)}}' +
+      '@keyframes dealBack{0%{opacity:0;transform:translateY(-20px) rotateY(0deg)}100%{opacity:1;transform:translateY(0) rotateY(0deg)}}' +
+      /* action buttons, each with its own colour */
+      '.bjacts{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px;min-height:60px}' +
+      '.bjbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:88px;padding:10px 16px;' +
+      'border:none;border-radius:14px;font-weight:800;font-size:13px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:#fff;' +
+      'box-shadow:0 4px 0 #0007,0 6px 14px #0005;transition:transform .1s ease,filter .1s ease}' +
+      '.bjbtn:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.12)}' +
+      '.bjbtn:active:not(:disabled){transform:translateY(2px);box-shadow:0 1px 0 #0007}' +
+      '.bjbtn:disabled{opacity:.4;cursor:not-allowed}' +
+      '.bjbtn.hit{background:linear-gradient(160deg,#34a85a,#1d6b36)}' +
+      '.bjbtn.stand{background:linear-gradient(160deg,#c8514a,#8a2b26)}' +
+      '.bjbtn.dbl{background:linear-gradient(160deg,#5286d8,#2d5192)}' +
+      '.bjbtn.deal{background:linear-gradient(160deg,#e0a44a,#b57420);color:#1d1206}' +
+      '.bjres{text-align:center;font-size:16px;font-weight:800;min-height:24px}' +
       '.card{min-width:38px;height:54px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;background:#f5efe0;color:#1d1206;border-radius:6px;border:1px solid #ccc}' +
       '.card.red{color:#b3261e}' +
       '.shopitem{display:flex;align-items:center;gap:12px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:12px 14px}' +
