@@ -19,6 +19,16 @@ const kv = await Deno.openKv();
 const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
+
+// gn-math loader proxy (see the /g/ route). GN_COMMIT pins which snapshot is
+// served and must match the commit the client's menu URLs are built from.
+const GN_COMMIT = "9b343737669dd2067dd6cd731859a99008772388";
+const GN_MIRRORS = [
+  "https://cdn.statically.io/gh/gn-math/html/" + GN_COMMIT + "/",
+  "https://raw.githubusercontent.com/gn-math/html/" + GN_COMMIT + "/",
+  "https://rawcdn.githack.com/gn-math/html/" + GN_COMMIT + "/",
+];
+const GN_MAX = 2 * 1024 * 1024; // a loader page is ~20KB; anything huge is wrong
 const TTL_MS = 14 * 24 * 60 * 60 * 1000; // messages auto-expire after 2 weeks
 
 // ---------------------------------------------------------------------------
@@ -1077,6 +1087,43 @@ Deno.serve(async (req) => {
     if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
     await kv.delete(["shopitem", clip(b.id, 32)]);
     return json({ ok: true, deleted: true });
+  }
+
+  // ---------- gn-math loader proxy ----------
+  // Re-serves the pinned gn-math loader pages from THIS origin, so a network
+  // that blocks the raw-GitHub CDNs can still reach them. Only the ~20KB loader
+  // passes through here; the heavy Unity payloads are fetched by the game itself
+  // straight from its own CDN and never touch this server, which keeps the
+  // bandwidth cost per launch tiny. A <base> tag is injected so the game still
+  // resolves its own relative assets against the mirror it came from.
+  // Deliberately narrow: one repo, one pinned commit, .html only — it cannot be
+  // pointed at an arbitrary URL. GN_COMMIT must match the commit the client
+  // builds its menu URLs from.
+  if (req.method === "GET" && path.startsWith("/g/")) {
+    const file = decodeURIComponent(path.slice(3));
+    if (!/^[A-Za-z0-9._-]{1,64}\.html$/.test(file) || file.includes("..")) {
+      return new Response("bad file", { status: 400, headers: CORS });
+    }
+    for (const base of GN_MIRRORS) {
+      try {
+        const r = await fetch(base + file, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) continue;
+        let html = await r.text();
+        if (html.length > GN_MAX) continue;
+        const btag = '<base href="' + base + '">';
+        const hi = html.toLowerCase().indexOf("<head");
+        const close = hi >= 0 ? html.indexOf(">", hi) : -1;
+        html = close >= 0 ? html.slice(0, close + 1) + btag + html.slice(close + 1) : btag + html;
+        return new Response(html, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "public, max-age=86400",
+            ...CORS,
+          },
+        });
+      } catch { /* mirror down or blocked from here — try the next */ }
+    }
+    return new Response("upstream unavailable", { status: 502, headers: CORS });
   }
 
   // ---------- health ----------

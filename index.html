@@ -1096,7 +1096,10 @@
     'var rest=GURL.slice(idx+mark.length);var s=rest.indexOf("/");' +
     'if(s<0){gf.src=GURL;return;}' +
     'var CM=rest.slice(0,s),FILE=rest.slice(s+1);' +
-    'var HOSTS=["https://cdn.statically.io/gh/gn-math/html/"+CM+"/","https://rawcdn.githack.com/gn-math/html/"+CM+"/","https://raw.githack.com/gn-math/html/"+CM+"/"];' +
+    /* our own backend first: it re-serves the loader from a domain the network
+       already allows. the public CDNs stay behind it so games still work if the
+       backend is down or not yet redeployed. */
+    'var HOSTS=["${SHRINE_API}/g/","https://cdn.statically.io/gh/gn-math/html/"+CM+"/","https://rawcdn.githack.com/gn-math/html/"+CM+"/","https://raw.githack.com/gn-math/html/"+CM+"/"];' +
     'var i=0,timer=null,loaded=false;' +
     'gf.addEventListener("load",function(){loaded=true;if(timer){clearTimeout(timer);timer=null;}});' +
     'function tryHost(){' +
