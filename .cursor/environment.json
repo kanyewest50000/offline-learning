@@ -1,0 +1,15 @@
+{
+  "name": "offline-learning (Shrine of Tung)",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": "export PATH=\"$HOME/.deno/bin:$PATH\"; ADMIN_KEY=\"${ADMIN_KEY:-devadminkey}\" deno run --allow-net --allow-env --unstable-kv server.ts"
+    },
+    {
+      "name": "static-site",
+      "command": "export PATH=\"$HOME/.deno/bin:$PATH\"; deno run --allow-net --allow-read --allow-sys jsr:@std/http/file-server -p 8080 ."
+    }
+  ],
+  "ports": [8000, 8080]
+}
