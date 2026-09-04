@@ -1245,12 +1245,19 @@
   /* the win celebration: a box that pops over the whole casino showing what you
      just took, then fades. shared by every game. */
   var winpop=null;
+  /* The toast has to go inert once it has played. Leaving the casino sets
+     #casino to display:none, and returning flips it back to display:flex —
+     which RESTARTS any css animation still attached, replaying the previous
+     game's win out of nowhere. So .show is stripped the moment the keyframes
+     finish, and again whenever the casino is entered or left. */
+  function hideWin(){ if(winpop) winpop.classList.remove("show"); }
   function celebrate(payout,m){
     if(!(Number(payout)>0))return;
     if(!winpop){
       winpop=el("div");winpop.id="winpop";
       winpop._a=el("span","wamt","");winpop._m=el("span","wmul","");
       winpop.appendChild(winpop._a);winpop.appendChild(winpop._m);
+      winpop.addEventListener("animationend",hideWin);
       casEl.appendChild(winpop);
     }
     winpop._a.textContent="+"+money(payout)+" sahurs";
@@ -1260,12 +1267,12 @@
     winpop.classList.add("show");
   }
 
-  window.__casinoBack=function(){clearTimer();};
-  window.__casinoShop=function(){clearTimer();viewShop();};
-  window.__casinoShrine=function(){clearTimer();viewShrine();};
+  window.__casinoBack=function(){clearTimer();hideWin();};
+  window.__casinoShop=function(){clearTimer();hideWin();viewShop();};
+  window.__casinoShrine=function(){clearTimer();hideWin();viewShrine();};
 
   window.__casinoOpen=function(){
-    clearTimer();
+    clearTimer();hideWin();
     screen.innerHTML="";
     var l=el("div","casgate");l.appendChild(el("p",null,"loading the tables..."));screen.appendChild(l);
     jget("/cas/me?token="+encodeURIComponent(tok())).then(function(d){
@@ -1680,56 +1687,103 @@
   }
 
   /* ---------- BLACKJACK ---------- */
-  function cardEl(c){
-    if(c==="??"){var b=el("div","card back","♠");b.style.cssText="background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border-color:#7a5a1a";return b;}
-    var isRed=c.indexOf("♥")>=0||c.indexOf("♦")>=0;
-    return el("div","card"+(isRed?" red":""),c);
+  /* a card with a back and a front; the deal animation spins it face-up */
+  function cardEl(c,delay){
+    var wrap=el("div","pcard"+(c==="??"?" hole":""));
+    // stagger lives on the card so the faces and the squeeze stay in step
+    if(delay)wrap.style.setProperty("--d",delay.toFixed(2)+"s");
+    var inner=el("div","pcinner");
+    var back=el("div","pcface pcback","♠");
+    var front=el("div","pcface pcfront");
+    if(c!=="??"){
+      if(c.indexOf("♥")>=0||c.indexOf("♦")>=0)front.className="pcface pcfront red";
+      front.textContent=c;
+    }
+    inner.appendChild(back);inner.appendChild(front);
+    wrap.appendChild(inner);wrap._inner=inner;
+    return wrap;
   }
+  /* one icon per action so the buttons read at a glance */
+  function strokePath(d,w){return sv("path",{d:d,fill:"none",stroke:"currentColor","stroke-width":w||"2.4","stroke-linecap":"round","stroke-linejoin":"round"});}
+  function icoBox(){return sv("svg",{viewBox:"0 0 24 24",width:"20",height:"20","aria-hidden":"true"});}
+  function icoHit(){var s=icoBox();s.appendChild(strokePath("M12 4v13"));s.appendChild(strokePath("M6 12l6 6 6-6"));return s;}
+  function icoStand(){var s=icoBox();s.appendChild(strokePath("M5 11h14","2.9"));var p=strokePath("M5 16h14","2.9");p.setAttribute("opacity",".45");s.appendChild(p);return s;}
+  function icoDouble(){var s=icoBox();s.appendChild(strokePath("M6 5l6 6 6-6"));s.appendChild(strokePath("M6 13l6 6 6-6"));return s;}
+  function icoDeal(){var s=icoBox();s.appendChild(sv("rect",{x:"4",y:"5",width:"9",height:"13",rx:"2",fill:"none",stroke:"currentColor","stroke-width":"2"}));
+    s.appendChild(sv("rect",{x:"11",y:"7",width:"9",height:"13",rx:"2",fill:"none",stroke:"currentColor","stroke-width":"2",opacity:".55"}));return s;}
+  function bjBtn(cls,label,icon){var b=el("button","bjbtn "+cls);b.appendChild(icon);b.appendChild(el("span",null,label));return b;}
   function viewBlackjack(){
     var v=mount("Blackjack",icoBlackjack());
     var bet=betField("1");
-    var deal=el("button","cbtn go","deal");
+    var deal=bjBtn("deal","deal",icoDeal());
     var row=el("div","ctlrow");
-    row.appendChild(ctl("bet",bet));row.appendChild(ctl(" ",deal));
+    row.appendChild(ctl("bet",bet));row.appendChild(ctl(" ",deal));
     v.appendChild(row);
-    var dlab=el("div","seclabel","dealer");v.appendChild(dlab);
-    var dcards=el("div","cards");v.appendChild(dcards);
-    var plab=el("div","seclabel","you");v.appendChild(plab);
-    var pcards=el("div","cards");v.appendChild(pcards);
-    var acts=el("div","casrow");v.appendChild(acts);
-    var r=res(v);
-    function render(wrap,cards){wrap.innerHTML="";cards.forEach(function(c){wrap.appendChild(cardEl(c));});}
+
+    // the table: dealer above, you below, both centred
+    var table=el("div","bjtable");
+    var dlab=el("div","bjlabel","dealer"),dval=el("div","bjval","-"),dcards=el("div","bjcards");
+    var plab=el("div","bjlabel","you"),pval=el("div","bjval","-"),pcards=el("div","bjcards");
+    [dlab,dval,dcards,el("div","bjsplit"),plab,pval,pcards].forEach(function(x){table.appendChild(x);});
+    v.appendChild(table);
+
+    var acts=el("div","bjacts");v.appendChild(acts);   // actions sit under your hand
+    var r=el("div","bjres","");v.appendChild(r);
+    function setRes(cls,txt){r.className="bjres"+(cls?" "+cls:"");r.textContent=txt;}
+
+    /* only cards that actually changed get re-dealt; the rest snap to their
+       final face, so hitting doesn't replay the whole hand's animation. this
+       also makes the dealer's hole card flip when it is finally revealed. */
+    var prevD=[],prevP=[];
+    function render(wrap,cards,prev){
+      wrap.innerHTML="";
+      var n=0;
+      cards.forEach(function(c,i){
+        var fresh=prev[i]!==c;
+        var e=cardEl(c,fresh?(n++*0.13):0);
+        if(!fresh){                       // already on the table: snap to its final face
+          e._inner.style.animation="none";e._inner.style.transform="none";
+          var f=e.querySelector(".pcfront"),b=e.querySelector(".pcback");
+          f.style.animation="none";b.style.animation="none";
+          f.style.opacity=(c==="??")?"0":"1";
+          b.style.opacity=(c==="??")?"1":"0";
+        }
+        wrap.appendChild(e);
+      });
+    }
     function paint(d){
-      render(dcards,d.dealer);render(pcards,d.player);
-      dlab.textContent="dealer ("+(d.dealerValue!=null?d.dealerValue:"?")+")";
-      plab.textContent="you ("+d.playerValue+")";
+      render(dcards,d.dealer,prevD);render(pcards,d.player,prevP);
+      prevD=d.dealer.slice();prevP=d.player.slice();
+      dval.textContent=(d.dealerValue!=null?d.dealerValue:"?");
+      pval.textContent=d.playerValue;
       acts.innerHTML="";
       if(d.state==="playing"){
-        var hit=el("button","cbtn","hit");hit.onclick=function(){act("/cas/bj/hit");};
-        var stand=el("button","cbtn sec","stand");stand.onclick=function(){act("/cas/bj/stand");};
+        var hit=bjBtn("hit","hit",icoHit());hit.onclick=function(){act("/cas/bj/hit");};
+        var stand=bjBtn("stand","stand",icoStand());stand.onclick=function(){act("/cas/bj/stand");};
         acts.appendChild(hit);acts.appendChild(stand);
-        if(d.canDouble){var db=el("button","cbtn sec","double");db.onclick=function(){act("/cas/bj/double");};acts.appendChild(db);}
-        r.className="casres";r.textContent="";
+        if(d.canDouble){var db=bjBtn("dbl","double",icoDouble());db.onclick=function(){act("/cas/bj/double");};acts.appendChild(db);}
+        setRes("","");
       }else{
         setBal(d.balance);
-        var msg={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer bust — you win!",push:"push — bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"}[d.result]||d.result;
-        if(d.result==="push"){r.className="casres";r.textContent=msg;}
-        else if(d.payout>0){ok(r,msg);celebrate(d.payout,d.bet?d.payout/d.bet:1);}
-        else bad(r,msg);
+        var msg={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer busts - you win!",push:"push - bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"}[d.result]||d.result;
+        if(d.result==="push")setRes("",msg);
+        else if(d.payout>0){setRes("win",msg);celebrate(d.payout,d.bet?d.payout/d.bet:1);}
+        else setRes("lose",msg);
         deal.disabled=false;bet.disabled=false;
       }
     }
     function act(p){
       Array.prototype.forEach.call(acts.querySelectorAll("button"),function(b){b.disabled=true;});
-      jpost(p,{}).then(function(d){if(d.error){bad(r,d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
-        .catch(function(){bad(r,"network error");deal.disabled=false;bet.disabled=false;});
+      jpost(p,{}).then(function(d){if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
+        .catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     }
     deal.onclick=function(){
       deal.disabled=true;bet.disabled=true;
+      prevD=[];prevP=[];                 // a new hand deals every card fresh
       jpost("/cas/bj/start",{bet:Number(bet.value)}).then(function(d){
-        if(d.error){bad(r,d.error);deal.disabled=false;bet.disabled=false;return;}
+        if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}
         paint(d);
-      }).catch(function(){bad(r,"network error");deal.disabled=false;bet.disabled=false;});
+      }).catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     };
   }
 
@@ -2198,19 +2252,30 @@
       '.bjtable{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 0 2px}' +
       '.bjlabel{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8a6a3a}' +
       '.bjval{font-size:30px;font-weight:800;color:#f2c063;line-height:1;font-variant-numeric:tabular-nums}' +
-      '.bjcards{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;min-height:112px;align-items:center;perspective:900px}' +
+      '.bjcards{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;min-height:112px;align-items:center}' +
       '.bjsplit{width:100%;max-width:280px;height:1px;background:#3a2410;margin:4px 0}' +
-      /* a card that flips face-up as it is dealt */
-      '.pcard{width:76px;height:108px;position:relative;flex:0 0 auto}' +
-      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;transform-style:preserve-3d;animation:dealIn .5s cubic-bezier(.2,.9,.3,1) both}' +
-      '.pcard.hole .pcinner{animation:dealBack .5s cubic-bezier(.2,.9,.3,1) both}' +
-      '.pcface{position:absolute;left:0;top:0;right:0;bottom:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;' +
+      /* A card that flips face-up as it is dealt. Deliberately 2D: a rotateY +
+         backface-visibility version rendered the BACK of every card, because the
+         preserve-3d context gets flattened here and flattening inverts which
+         face is hidden. Squeezing scaleX through zero and swapping the faces at
+         the halfway point reads the same and has no 3D context to lose.
+         The per-card stagger rides on --d so faces and card stay in step. */
+      '.pcard{width:76px;height:108px;position:relative;flex:0 0 auto;--d:0s}' +
+      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;animation:dealIn .5s cubic-bezier(.3,.8,.4,1) both;animation-delay:var(--d)}' +
+      '.pcface{position:absolute;left:0;top:0;right:0;bottom:0;' +
       'border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;box-shadow:0 6px 16px #0007}' +
-      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;transform:rotateY(180deg)}' +
+      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;opacity:0;animation:faceIn .5s both;animation-delay:var(--d)}' +
       '.pcfront.red{color:#b3261e}' +
-      '.pcback{background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border:1px solid #7a5a1a;font-size:30px}' +
-      '@keyframes dealIn{0%{opacity:0;transform:translateY(-20px) rotateY(0deg)}35%{opacity:1}100%{opacity:1;transform:translateY(0) rotateY(180deg)}}' +
-      '@keyframes dealBack{0%{opacity:0;transform:translateY(-20px) rotateY(0deg)}100%{opacity:1;transform:translateY(0) rotateY(0deg)}}' +
+      '.pcback{background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border:1px solid #7a5a1a;font-size:30px;' +
+      'animation:faceOut .5s both;animation-delay:var(--d)}' +
+      /* the dealer hole card just drops in and stays face down */
+      '.pcard.hole .pcinner{animation-name:dealBack}' +
+      '.pcard.hole .pcback{animation:none;opacity:1}' +
+      '.pcard.hole .pcfront{animation:none;opacity:0}' +
+      '@keyframes dealIn{0%{opacity:0;transform:translateY(-20px) scaleX(1)}30%{opacity:1}50%{transform:translateY(0) scaleX(.06)}100%{opacity:1;transform:translateY(0) scaleX(1)}}' +
+      '@keyframes dealBack{0%{opacity:0;transform:translateY(-20px)}100%{opacity:1;transform:translateY(0)}}' +
+      '@keyframes faceIn{0%,49%{opacity:0}50%,100%{opacity:1}}' +
+      '@keyframes faceOut{0%,49%{opacity:1}50%,100%{opacity:0}}' +
       /* action buttons, each with its own colour */
       '.bjacts{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:6px;min-height:60px}' +
       '.bjbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:88px;padding:10px 16px;' +
@@ -2224,6 +2289,7 @@
       '.bjbtn.dbl{background:linear-gradient(160deg,#5286d8,#2d5192)}' +
       '.bjbtn.deal{background:linear-gradient(160deg,#e0a44a,#b57420);color:#1d1206}' +
       '.bjres{text-align:center;font-size:16px;font-weight:800;min-height:24px}' +
+      '.bjres.win{color:#6ee787}.bjres.lose{color:#e0908a}' +
       '.card{min-width:38px;height:54px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;background:#f5efe0;color:#1d1206;border-radius:6px;border:1px solid #ccc}' +
       '.card.red{color:#b3261e}' +
       '.shopitem{display:flex;align-items:center;gap:12px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:12px 14px}' +
