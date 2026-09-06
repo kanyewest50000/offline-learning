@@ -29,8 +29,9 @@
   var warn, foe, nextFoeAt, deathKind;
   try{best=parseInt(localStorage.getItem("sahur-snake-best")||"0",10)||0;}catch(e){best=0;}
   var STEP=120;
-  var WARN_MS=2600;
-  var FOE_MIN=3500, FOE_SPAN=3500;
+  var DEMO=/\bdemo\b/.test(location.search||"");
+  var WARN_MS=DEMO?2000:2600;
+  var FOE_MIN=DEMO?700:3500, FOE_SPAN=DEMO?0:3500;
   var STAY_MIN=6500, STAY_SPAN=3500;
 
   function onSnake(x,y){
@@ -57,6 +58,10 @@
     return firstFree()||{x:x,y:y};
   }
   function pickClearCell(){
+    if(DEMO){
+      var prefer=[{x:12,y:9},{x:13,y:9},{x:11,y:9},{x:12,y:8},{x:12,y:10}];
+      for(var i=0;i<prefer.length;i++) if(!reserved(prefer[i].x, prefer[i].y)) return prefer[i];
+    }
     var tries=0, x, y;
     do { x=(Math.random()*N)|0; y=(Math.random()*N)|0; tries++; }
     while(reserved(x,y) && tries<200);

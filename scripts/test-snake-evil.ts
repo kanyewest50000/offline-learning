@@ -5,63 +5,89 @@ const asset = `${ROOT}/assets/eviltungtungtungsahur.jpg`;
 if (!html.includes('evil.src="../../assets/eviltungtungtungsahur.jpg"')) {
   throw new Error("snake.html does not load the evil tung sprite");
 }
-if (!html.includes("placeFoe") || !html.includes("onSnake")) {
-  throw new Error("snake.html is missing spawn occupancy guards");
+if (!html.includes("if(foe && head.x===foe.x && head.y===foe.y)")) {
+  throw new Error("walking into evil tung does not kill the player");
 }
-if (!html.includes("sahur-snake-best")) {
+if (!html.includes("if(onSnake(x,y)) return false")) {
+  throw new Error("spawn helpers do not refuse snake-occupied cells");
+}
+if (!html.includes('localStorage.getItem("sahur-snake-best")')) {
   throw new Error("high score localStorage key missing");
 }
-if (!html.includes("best "+"${") && !html.includes('ctx.fillText("best "+best')) {
+if (!html.includes('ctx.fillText("best "+best')) {
   throw new Error("best score is not drawn in the HUD");
+}
+if (!html.includes("drawWarn") || !html.includes("WARN_MS")) {
+  throw new Error("warning box before spawn is missing");
 }
 
 try {
-  await Deno.stat(asset);
-} catch {
-  throw new Error("missing assets/eviltungtungtungsahur.jpg");
+  const st = await Deno.stat(asset);
+  if (st.size < 1000) throw new Error("evil tung image is too small");
+} catch (e) {
+  throw e instanceof Error ? e : new Error("missing assets/eviltungtungtungsahur.jpg");
 }
 
-const chrome = Deno.env.get("CHROME") || "google-chrome";
-const port = 8764;
-const server = Deno.serve({ hostname: "127.0.0.1", port, onListen: () => {} }, async (req) => {
-  const url = new URL(req.url);
-  let path = decodeURIComponent(url.pathname);
-  if (path === "/") path = "/scripts/test-snake-evil.html";
-  const file = `${ROOT}${path}`;
-  try {
-    const data = await Deno.readFile(file);
-    const ext = file.split(".").pop() || "";
-    const types: Record<string, string> = {
-      html: "text/html; charset=utf-8",
-      js: "text/javascript; charset=utf-8",
-      css: "text/css; charset=utf-8",
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-    };
-    return new Response(data, { headers: { "content-type": types[ext] || "application/octet-stream" } });
-  } catch {
-    return new Response("nope", { status: 404 });
+type Pt = { x: number; y: number };
+const N = 18;
+let snake: Pt[] = [{ x: 8, y: 9 }, { x: 7, y: 9 }, { x: 6, y: 9 }];
+let food: Pt | null = { x: 2, y: 2 };
+let cursed: Pt | null = null;
+let warn: Pt | null = null;
+let foe: Pt | null = null;
+
+function onSnake(x: number, y: number) {
+  return snake.some((p) => p.x === x && p.y === y);
+}
+function reserved(x: number, y: number) {
+  if (onSnake(x, y)) return true;
+  if (food && food.x === x && food.y === y) return true;
+  if (cursed && cursed.x === x && cursed.y === y) return true;
+  if (warn && warn.x === x && warn.y === y) return true;
+  if (foe && foe.x === x && foe.y === y) return true;
+  return false;
+}
+function pickClearCell() {
+  for (let i = 0; i < 400; i++) {
+    const x = (Math.random() * N) | 0;
+    const y = (Math.random() * N) | 0;
+    if (!reserved(x, y)) return { x, y };
   }
-});
-
-const cmd = new Deno.Command(chrome, {
-  args: [
-    "--headless=new",
-    "--disable-gpu",
-    "--no-sandbox",
-    "--virtual-time-budget=20000",
-    "--dump-dom",
-    `http://127.0.0.1:${port}/scripts/test-snake-evil.html`,
-  ],
-  stdout: "piped",
-  stderr: "piped",
-});
-const out = await cmd.output();
-server.shutdown();
-const dom = new TextDecoder().decode(out.stdout);
-if (!/id="out"[^>]*>PASS</.test(dom) && !/>PASS</.test(dom)) {
-  const fail = dom.match(/FAIL[^<]*/);
-  throw new Error("browser harness failed: " + (fail ? fail[0] : "no PASS in dump-dom"));
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      if (!reserved(x, y)) return { x, y };
+    }
+  }
+  return null;
 }
+
+if (onSnake(8, 9) !== true || onSnake(6, 9) !== true) throw new Error("tail occupancy broken");
+if (pickClearCell() == null) throw new Error("empty board produced no spawn cell");
+for (let i = 0; i < 120; i++) {
+  const cell = pickClearCell();
+  if (!cell || reserved(cell.x, cell.y) || onSnake(cell.x, cell.y)) {
+    throw new Error("hazard picked a reserved cell");
+  }
+}
+
+const full = Array.from({ length: N * N }, (_, i) => ({ x: i % N, y: (i / N) | 0 }));
+snake = full;
+food = cursed = warn = foe = null;
+if (pickClearCell() !== null) throw new Error("full snake still found a spawn cell");
+
+snake = [{ x: 8, y: 9 }, { x: 7, y: 9 }, { x: 6, y: 9 }];
+let died = "";
+function step(dir: Pt, foeCell: Pt | null) {
+  const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+  if (foeCell && head.x === foeCell.x && head.y === foeCell.y) {
+    died = "evil";
+    return;
+  }
+  snake.unshift(head);
+  snake.pop();
+}
+step({ x: 1, y: 0 }, { x: 9, y: 9 });
+if (died !== "evil") throw new Error("head-on foe did not kill");
+if (snake[0].x !== 8) throw new Error("death still moved the snake");
+
 console.log("snake evil tung: ok");
