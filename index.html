@@ -1051,8 +1051,11 @@
     'var chooseShrine=document.getElementById("chooseShrine");' +
     'var chooseGames=document.getElementById("chooseGames");' +
     'var chooseOriginals=document.getElementById("chooseOriginals");' +
+    'var chooseProxy=document.getElementById("chooseProxy");' +
     'var originalsEl=document.getElementById("originals");' +
+    'var proxyEl=document.getElementById("proxy");' +
     'var oback=document.getElementById("oback");' +
+    'var pback=document.getElementById("pback");' +
     'var orighub=document.getElementById("orighub");' +
     'var origplay=document.getElementById("origplay");' +
     'var origframe=document.getElementById("origframe");' +
@@ -1075,7 +1078,7 @@
     /* ---- the chooser + tung curated games ---- */
     /* the main header swaps identity with the view: shrine title everywhere, a
        full casino header (back / title / balance / shop) once inside the casino. */
-    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";gamesEl.style.display=v==="games"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";' +
+    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";gamesEl.style.display=v==="games"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";proxyEl.style.display=v==="proxy"?"flex":"none";' +
     /* casino is a chooser destination; the header swaps identity once you are in it */
     'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";if(v!=="originals")hideOrigPlay();}' +
     /* clicking a game opens it in its OWN about:blank tab. we write a tiny self-
@@ -1200,7 +1203,9 @@
     'chooseShrine.addEventListener("click",function(){topShow("shrine");refreshGate();});' +
     'chooseGames.addEventListener("click",function(){topShow("games");});' +
     'chooseOriginals.addEventListener("click",function(){topShow("originals");});' +
+    'chooseProxy.addEventListener("click",function(){topShow("proxy");});' +
     'oback.addEventListener("click",function(){if(origplay.style.display==="flex"){hideOrigPlay();}else{topShow("choose");}});' +
+    'pback.addEventListener("click",function(){topShow("choose");});' +
     'chooseCasino.addEventListener("click",function(){topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the games grid to the chooser screen */
     'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("choose");});' +   /* casino "← back" returns to the chooser */
@@ -2179,7 +2184,7 @@
       '#rpal button:hover{background:#3a2410;border-radius:6px}' +
       '#choose{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px}' +
       '#choose h2{margin:0 0 6px;text-align:center}' +
-      '#choicerow{display:flex;gap:14px;width:100%;max-width:640px;flex-wrap:wrap;justify-content:center}' +
+      '#choicerow{display:flex;gap:14px;width:100%;max-width:800px;flex-wrap:wrap;justify-content:center}' +
       '.bigbtn{flex:1;min-width:150px;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:12px;font-size:15px;border-radius:14px;line-height:1.25}' +
       '.bicon{width:44%;height:auto}' +   /* the chat speech-bubble svg */
       '.bimg{width:58%;aspect-ratio:1;object-fit:cover;border-radius:10px}' +   /* the sahur png */
@@ -2209,6 +2214,12 @@
       '.origtile span{font-size:12px;color:#c8823c;font-style:italic;font-weight:400}' +
       '#origplay{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#origframe{display:block;flex:1;width:100%;border:0;background:#160d04}' +
+      '#proxy{flex:1;display:none;flex-direction:column;min-height:0;background:radial-gradient(120% 80% at 50% 0%,#241505 0%,#160d04 60%)}' +
+      '#proxybar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:linear-gradient(180deg,#32200c,#2b1a0a);border-bottom:1px solid #3a2410}' +
+      '#proxyTitle{font-weight:700;color:#f2c063}' +
+      '#proxybody{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:28px 24px;text-align:center}' +
+      '#proxybody h2{margin:0;font-size:28px;color:#f2c063;letter-spacing:.04em}' +
+      '#proxybody p{margin:0;max-width:420px;font-size:15px;color:#c8823c;font-style:italic;line-height:1.45}' +
       /* ---- casino ---- */
       '.casbtn{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#241505;border:1px solid #7a5a1a;color:#f2c063;font-weight:700;border-radius:10px;cursor:pointer;flex:0 0 auto}' +
       '.casbtn:hover{background:#3a2410;border-color:#c8823c}' +
@@ -2498,6 +2509,9 @@
       '<button id="chooseOriginals" class="bigbtn ghost" type="button">' +
       '<img class="bimg" src="' + esc(TUNGGOD_IMG) + '" alt="">' +
       '<span>Tung&#8217;s Original Games</span></button>' +
+      '<button id="chooseProxy" class="bigbtn ghost" type="button">' +
+      '<svg class="bicon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>' +
+      '<span>Web Proxy</span></button>' +
       '</div>' +
       '</div>' +
       '<div id="shrine">' +
@@ -2543,6 +2557,13 @@
       '<div id="orighub"></div>' +
       '<div id="origplay"><iframe id="origframe" allow="autoplay; fullscreen; gamepad" allowfullscreen></iframe></div>' +
       '</div>' +
+      '<div id="proxy">' +
+      '<div id="proxybar"><button id="pback" class="ghost" type="button">← back</button><span id="proxyTitle">Web Proxy</span></div>' +
+      '<div id="proxybody">' +
+      '<h2>Coming Soon</h2>' +
+      '<p>the veil is thin. the path is not yet for you.</p>' +
+      '<p>tung walks it already. he will open the gate when the hour is his.</p>' +
+      '</div></div>' +
       /* ---- Tung’s Casino: top-level view; its chrome lives in the main header ---- */
       '<div id="casino"><div id="casscreen"></div></div>' +
       '<div id="rpal"></div>' +
