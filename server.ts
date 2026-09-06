@@ -1174,9 +1174,20 @@ const ADMIN_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 :root{color-scheme:dark}
 body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#1d1206;color:#f5efe0}
 header{padding:16px 20px;background:#2b1a0a;border-bottom:1px solid #3a2410;font-weight:700}
-main{max-width:720px;margin:0 auto;padding:20px}
+.shell{display:flex;min-height:calc(100vh - 53px)}
+aside.nav{width:230px;flex-shrink:0;background:#241505;border-right:1px solid #3a2410;padding:12px 8px;display:flex;flex-direction:column;gap:4px}
+.navbtn{width:100%;text-align:left;background:transparent;color:#e9d9c2;padding:10px 12px;border-radius:8px;font-size:13px;display:flex;align-items:center;gap:8px}
+.navbtn:hover{background:#3a2410}
+.navbtn.on{background:#c8823c;color:#1d1206}
+.navbtn .count{margin-left:auto;font-weight:700;opacity:.85;font-variant-numeric:tabular-nums}
+.content{flex:1;min-width:0;padding:20px 24px;max-width:780px}
+.pane{display:none}
+.pane.on{display:block}
+.pane h2{margin:0 0 4px;font-size:18px}
+.hint{color:#c8823c;font-size:13px;margin:0 0 14px}
 .keybar{display:flex;gap:8px;margin-bottom:16px}
 input{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px}
+.search{width:100%;flex:none;box-sizing:border-box;margin:0 0 14px}
 button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:pointer}
 .load{background:#c8823c;color:#1d1206}
 .app{background:#241505;border:1px solid #3a2410;border-radius:12px;padding:14px 16px;margin-bottom:12px}
@@ -1188,7 +1199,6 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .ok{background:#2e7d32;color:#fff}
 .no{background:#7a2e2e;color:#fff}
 .empty{color:#c8823c;padding:20px 0}
-.sec{margin:26px 0 10px;font-size:18px;font-weight:700}
 .uname{flex:1;min-width:120px}
 .tin{flex:0 1 220px;min-width:150px}
 .app small.rev{color:#e0908a}
@@ -1196,65 +1206,137 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .tmsg{padding:7px 11px;border-radius:10px;font-size:.86rem;max-width:85%;white-space:pre-wrap;word-break:break-word}
 .tmsg.admin{align-self:flex-end;background:#c8823c;color:#1d1206}
 .tmsg.applicant{align-self:flex-start;background:#241505;border:1px solid #3a2410}
+.danger p{color:#e9d9c2;line-height:1.45}
 </style></head><body>
-<header>Shrine of Tung — pending applications</header>
-<main>
-<div class="keybar"><input id="key" type="password" placeholder="admin key" autocomplete="off"><button class="load" id="load">load</button><button class="no" id="clear">clear all</button></div>
+<header>Shrine of Tung — admin</header>
+<div class="shell">
+<aside class="nav">
+<button type="button" class="navbtn on" data-pane="pending">Approve / deny <span class="count" id="count-pending"></span></button>
+<button type="button" class="navbtn" data-pane="users">Manage users <span class="count" id="count-users"></span></button>
+<button type="button" class="navbtn" data-pane="balances">Casino balances <span class="count" id="count-balances"></span></button>
+<button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
+<button type="button" class="navbtn" data-pane="danger">Wipe data</button>
+</aside>
+<div class="content">
+<div class="keybar"><input id="key" type="password" placeholder="admin key" autocomplete="off"><button class="load" id="load">load</button></div>
+<section class="pane on" id="pane-pending">
+<h2>Approve / deny users</h2>
+<p class="hint">Pending applications. Search by name, id, or application text.</p>
+<input class="search" id="search-pending" placeholder="search pending users…" autocomplete="off">
 <div id="list"><div class="empty">enter your admin key and hit load.</div></div>
-<h2 class="sec">approved users</h2>
+</section>
+<section class="pane" id="pane-users">
+<h2>Manage users</h2>
+<p class="hint">Approved users: rename, ban, timeout, note, re-review, or delete.</p>
+<input class="search" id="search-users" placeholder="search approved users…" autocomplete="off">
 <div id="users"><div class="empty">load to see approved users.</div></div>
-<h2 class="sec">🎰 casino — player balances</h2>
+</section>
+<section class="pane" id="pane-balances">
+<h2>Manage casino balances</h2>
+<p class="hint">Fun-money sahurs. Set a balance only as a moderation tool.</p>
+<input class="search" id="search-balances" placeholder="search player balances…" autocomplete="off">
 <div id="balances"><div class="empty">load to see player balances.</div></div>
-<h2 class="sec">🛒 shop items</h2>
+</section>
+<section class="pane" id="pane-shop">
+<h2>Shop items</h2>
+<p class="hint">Add, edit, hide, or delete redeemable shop entries.</p>
 <div id="shop"><div class="empty">load to manage the shop.</div></div>
 <div class="row" style="margin-top:12px"><button class="load" id="addItem">+ add shop item</button></div>
-</main>
+</section>
+<section class="pane danger" id="pane-danger">
+<h2>Wipe data</h2>
+<p>Delete every application (pending and approved). Usernames and tokens are wiped; everyone must re-apply. Casino balances and shop items are not cleared by this.</p>
+<div class="row" style="margin-top:12px"><button class="no" id="clear">clear all applications</button></div>
+</section>
+</div>
+</div>
 <script>
 var keyEl=document.getElementById("key"),list=document.getElementById("list"),users=document.getElementById("users");
 var balances=document.getElementById("balances"),shop=document.getElementById("shop");
+var pendingCache=null,usersCache=null,balancesCache=null,pendingErr=null,usersErr=null,balancesErr=null;
 try{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}catch(e){}
-function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();}   /* all panels share the one "load" button */
+function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();}
 document.getElementById("load").onclick=loadAll;
 document.getElementById("clear").onclick=function(){
   if(!confirm("Delete ALL applications (pending + approved)? Everyone will have to re-apply."))return;
   fetch("/admin/clear",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim()})}).then(function(r){return r.json();}).then(function(d){alert(d.error?d.error:("cleared "+d.cleared+" entries"));loadAll();});
 };
+function showPane(id){
+  var panes=document.querySelectorAll(".pane");
+  for(var i=0;i<panes.length;i++) panes[i].classList.toggle("on", panes[i].id==="pane-"+id);
+  var btns=document.querySelectorAll(".navbtn");
+  for(var j=0;j<btns.length;j++) btns[j].classList.toggle("on", btns[j].getAttribute("data-pane")===id);
+}
+var navBtns=document.querySelectorAll(".navbtn");
+for(var n=0;n<navBtns.length;n++){
+  navBtns[n].onclick=function(){showPane(this.getAttribute("data-pane"));};
+}
+function qOf(id){var el=document.getElementById(id);return el?el.value.trim().toLowerCase():"";}
+function matches(q, parts){
+  if(!q) return true;
+  for(var i=0;i<parts.length;i++){
+    if(String(parts[i]==null?"":parts[i]).toLowerCase().indexOf(q)>=0) return true;
+  }
+  return false;
+}
+function setCount(id, n){
+  var el=document.getElementById("count-"+id);
+  if(el) el.textContent = (n==null || n==="") ? "" : String(n);
+}
+function bindSearch(id, fn){
+  var el=document.getElementById(id);
+  if(!el) return;
+  el.addEventListener("input", fn);
+}
+bindSearch("search-pending", function(){renderPending();});
+bindSearch("search-users", function(){renderUsers();});
+bindSearch("search-balances", function(){renderBalances();});
 function refresh(){
   var key=keyEl.value.trim();try{localStorage.setItem("shrine-admin-key",key);}catch(e){}
   list.innerHTML='<div class="empty">loading...</div>';
   fetch("/admin/pending?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
-    if(d.error){list.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';return;}
-    if(!d.pending.length){list.innerHTML='<div class="empty">no pending applications.</div>';return;}
-    list.innerHTML="";
-    d.pending.forEach(function(a){
-      var el=document.createElement("div");el.className="app";
-      var h=document.createElement("h3");h.textContent=a.username;el.appendChild(h);
-      var p=document.createElement("p");p.textContent=a.application;el.appendChild(p);
-      var s=document.createElement("small");s.textContent=new Date(a.ts).toLocaleString();el.appendChild(s);
-      var row=document.createElement("div");row.className="row";row.style.marginTop="10px";
-      var ok=document.createElement("button");ok.className="ok";ok.textContent="approve";ok.onclick=function(){decide(a.id,"approve");};
-      var no=document.createElement("button");no.className="no";no.textContent="reject";no.onclick=function(){decide(a.id,"reject");};
-      row.appendChild(ok);row.appendChild(no);el.appendChild(row);
-      // follow-up thread (tung's questions + the applicant's answers)
-      if((a.thread||[]).length){
-        var th=document.createElement("div");th.className="thread";
-        a.thread.forEach(function(m){
-          var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"applicant");
-          b.textContent=(m.from==="admin"?"tung: ":a.username+": ")+m.text;
-          th.appendChild(b);
-        });
-        el.appendChild(th);
-      }
-      // ask a follow-up question
-      var mrow=document.createElement("div");mrow.className="row";mrow.style.marginTop="8px";
-      var mi=document.createElement("input");mi.className="uname";mi.placeholder="ask a follow-up question…";mi.maxLength=1000;
-      var mb=document.createElement("button");mb.className="load";mb.textContent="send";
-      mb.onclick=function(){var t=mi.value.trim();if(!t)return;mi.value="";sendMsg(a.id,t);};
-      mi.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();mb.onclick();}});
-      mrow.appendChild(mi);mrow.appendChild(mb);el.appendChild(mrow);
-      list.appendChild(el);
-    });
-  }).catch(function(){list.innerHTML='<div class="empty">network error.</div>';});
+    if(d.error){pendingCache=null;pendingErr=d.error;renderPending();return;}
+    pendingErr=null;pendingCache=d.pending||[];renderPending();
+  }).catch(function(){pendingCache=null;pendingErr="network error.";renderPending();});
+}
+function renderPending(){
+  setCount("pending", pendingCache?pendingCache.length:"");
+  if(pendingErr){list.innerHTML='<div class="empty">'+pendingErr+' — check your key.</div>';return;}
+  if(!pendingCache){list.innerHTML='<div class="empty">enter your admin key and hit load.</div>';return;}
+  var q=qOf("search-pending");
+  var shown=pendingCache.filter(function(a){
+    var thread=(a.thread||[]).map(function(m){return m.text||"";});
+    return matches(q, [a.username, a.id, a.application].concat(thread));
+  });
+  if(!pendingCache.length){list.innerHTML='<div class="empty">no pending applications.</div>';return;}
+  if(!shown.length){list.innerHTML='<div class="empty">no matching applications.</div>';return;}
+  list.innerHTML="";
+  shown.forEach(function(a){
+    var el=document.createElement("div");el.className="app";
+    var h=document.createElement("h3");h.textContent=a.username;el.appendChild(h);
+    var p=document.createElement("p");p.textContent=a.application;el.appendChild(p);
+    var s=document.createElement("small");s.textContent="id "+a.id+" · "+new Date(a.ts).toLocaleString();el.appendChild(s);
+    var row=document.createElement("div");row.className="row";row.style.marginTop="10px";
+    var ok=document.createElement("button");ok.className="ok";ok.textContent="approve";ok.onclick=function(){decide(a.id,"approve");};
+    var no=document.createElement("button");no.className="no";no.textContent="reject";no.onclick=function(){decide(a.id,"reject");};
+    row.appendChild(ok);row.appendChild(no);el.appendChild(row);
+    if((a.thread||[]).length){
+      var th=document.createElement("div");th.className="thread";
+      a.thread.forEach(function(m){
+        var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"applicant");
+        b.textContent=(m.from==="admin"?"tung: ":a.username+": ")+m.text;
+        th.appendChild(b);
+      });
+      el.appendChild(th);
+    }
+    var mrow=document.createElement("div");mrow.className="row";mrow.style.marginTop="8px";
+    var mi=document.createElement("input");mi.className="uname";mi.placeholder="ask a follow-up question…";mi.maxLength=1000;
+    var mb=document.createElement("button");mb.className="load";mb.textContent="send";
+    mb.onclick=function(){var t=mi.value.trim();if(!t)return;mi.value="";sendMsg(a.id,t);};
+    mi.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();mb.onclick();}});
+    mrow.appendChild(mi);mrow.appendChild(mb);el.appendChild(mrow);
+    list.appendChild(el);
+  });
 }
 function decide(id,action){
   fetch("/admin/decide",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,action:action})}).then(function(r){return r.json();}).then(function(){refresh();refreshUsers();});
@@ -1262,58 +1344,65 @@ function decide(id,action){
 function sendMsg(id,text){
   fetch("/admin/message",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,text:text})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refresh();});
 }
-/* the "approved users" panel: rename, ban/unban, and time users out */
-// format a ms-epoch into the value a <input type=datetime-local> expects (local, no seconds)
 function toLocalInput(ms){var d=new Date(ms - new Date(ms).getTimezoneOffset()*60000);return d.toISOString().slice(0,16);}
 function refreshUsers(){
   var key=keyEl.value.trim();
   users.innerHTML='<div class="empty">loading...</div>';
   fetch("/admin/users?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
-    if(d.error){users.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';return;}
-    if(!d.users.length){users.innerHTML='<div class="empty">no approved users yet.</div>';return;}
-    users.innerHTML="";
-    d.users.forEach(function(u){
-      var el=document.createElement("div");el.className="app";
-      // row 1: username field + save + ban/unban
-      var row=document.createElement("div");row.className="row";
-      var inp=document.createElement("input");inp.className="uname";inp.value=u.username;inp.maxLength=24;
-      var save=document.createElement("button");save.className="load";save.textContent="save name";
-      save.onclick=function(){rename(u.id,inp.value.trim());};
-      var ban=document.createElement("button");
-      if(u.banned){ban.className="ok";ban.textContent="unban";ban.onclick=function(){setBan(u.id,false);};}
-      else{ban.className="no";ban.textContent="ban";ban.onclick=function(){setBan(u.id,true);};}
-      var rev=document.createElement("button");rev.className="load";rev.textContent="re-review";rev.title="send back to the application screen to ask follow-up questions";
-      rev.onclick=function(){repend(u.id,u.username);};
-      var del=document.createElement("button");del.className="no";del.textContent="delete";del.title="remove the user entirely (frees the username)";
-      del.onclick=function(){deleteUser(u.id,u.username);};
-      row.appendChild(inp);row.appendChild(save);row.appendChild(rev);row.appendChild(ban);row.appendChild(del);
-      el.appendChild(row);
-      // row 2: timeout-until picker + apply + clear
-      var trow=document.createElement("div");trow.className="row";
-      var dt=document.createElement("input");dt.type="datetime-local";dt.className="tin";
-      if(u.timeoutUntil&&u.timeoutUntil>Date.now())dt.value=toLocalInput(u.timeoutUntil);
-      var apply=document.createElement("button");apply.className="no";apply.textContent="time out until";
-      apply.onclick=function(){if(!dt.value){alert("pick a date/time first");return;}var ms=new Date(dt.value).getTime();if(!(ms>Date.now())){alert("pick a time in the future");return;}setTimeoutUntil(u.id,ms);};
-      var clr=document.createElement("button");clr.className="load";clr.textContent="clear timeout";
-      clr.onclick=function(){setTimeoutUntil(u.id,0);};
-      trow.appendChild(dt);trow.appendChild(apply);trow.appendChild(clr);
-      el.appendChild(trow);
-      // row 3: private admin note
-      var nrow=document.createElement("div");nrow.className="row";
-      var note=document.createElement("input");note.className="uname";note.placeholder="private note (admin only)";note.value=u.note||"";note.maxLength=500;
-      var nsave=document.createElement("button");nsave.className="load";nsave.textContent="save note";
-      nsave.onclick=function(){saveNote(u.id,note.value.trim());};
-      nrow.appendChild(note);nrow.appendChild(nsave);
-      el.appendChild(nrow);
-      // status line
-      var meta=document.createElement("small");
-      if(u.banned){meta.textContent="banned (permanent)";meta.className="rev";}
-      else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString();meta.className="rev";}
-      else{meta.textContent="active · joined "+new Date(u.ts).toLocaleString();}
-      el.appendChild(meta);
-      users.appendChild(el);
-    });
-  }).catch(function(){users.innerHTML='<div class="empty">network error.</div>';});
+    if(d.error){usersCache=null;usersErr=d.error;renderUsers();return;}
+    usersErr=null;usersCache=d.users||[];renderUsers();
+  }).catch(function(){usersCache=null;usersErr="network error.";renderUsers();});
+}
+function renderUsers(){
+  setCount("users", usersCache?usersCache.length:"");
+  if(usersErr){users.innerHTML='<div class="empty">'+usersErr+' — check your key.</div>';return;}
+  if(!usersCache){users.innerHTML='<div class="empty">load to see approved users.</div>';return;}
+  var q=qOf("search-users");
+  var shown=usersCache.filter(function(u){
+    var st=u.banned?"banned":(u.timeoutUntil&&u.timeoutUntil>Date.now()?"timeout timed out":"active");
+    return matches(q, [u.username, u.id, u.note||"", st]);
+  });
+  if(!usersCache.length){users.innerHTML='<div class="empty">no approved users yet.</div>';return;}
+  if(!shown.length){users.innerHTML='<div class="empty">no matching users.</div>';return;}
+  users.innerHTML="";
+  shown.forEach(function(u){
+    var el=document.createElement("div");el.className="app";
+    var row=document.createElement("div");row.className="row";
+    var inp=document.createElement("input");inp.className="uname";inp.value=u.username;inp.maxLength=24;
+    var save=document.createElement("button");save.className="load";save.textContent="save name";
+    save.onclick=function(){rename(u.id,inp.value.trim());};
+    var ban=document.createElement("button");
+    if(u.banned){ban.className="ok";ban.textContent="unban";ban.onclick=function(){setBan(u.id,false);};}
+    else{ban.className="no";ban.textContent="ban";ban.onclick=function(){setBan(u.id,true);};}
+    var rev=document.createElement("button");rev.className="load";rev.textContent="re-review";rev.title="send back to the application screen to ask follow-up questions";
+    rev.onclick=function(){repend(u.id,u.username);};
+    var del=document.createElement("button");del.className="no";del.textContent="delete";del.title="remove the user entirely (frees the username)";
+    del.onclick=function(){deleteUser(u.id,u.username);};
+    row.appendChild(inp);row.appendChild(save);row.appendChild(rev);row.appendChild(ban);row.appendChild(del);
+    el.appendChild(row);
+    var trow=document.createElement("div");trow.className="row";
+    var dt=document.createElement("input");dt.type="datetime-local";dt.className="tin";
+    if(u.timeoutUntil&&u.timeoutUntil>Date.now())dt.value=toLocalInput(u.timeoutUntil);
+    var apply=document.createElement("button");apply.className="no";apply.textContent="time out until";
+    apply.onclick=function(){if(!dt.value){alert("pick a date/time first");return;}var ms=new Date(dt.value).getTime();if(!(ms>Date.now())){alert("pick a time in the future");return;}setTimeoutUntil(u.id,ms);};
+    var clr=document.createElement("button");clr.className="load";clr.textContent="clear timeout";
+    clr.onclick=function(){setTimeoutUntil(u.id,0);};
+    trow.appendChild(dt);trow.appendChild(apply);trow.appendChild(clr);
+    el.appendChild(trow);
+    var nrow=document.createElement("div");nrow.className="row";
+    var note=document.createElement("input");note.className="uname";note.placeholder="private note (admin only)";note.value=u.note||"";note.maxLength=500;
+    var nsave=document.createElement("button");nsave.className="load";nsave.textContent="save note";
+    nsave.onclick=function(){saveNote(u.id,note.value.trim());};
+    nrow.appendChild(note);nrow.appendChild(nsave);
+    el.appendChild(nrow);
+    var meta=document.createElement("small");
+    var idline=" · id "+u.id;
+    if(u.banned){meta.textContent="banned (permanent)"+idline;meta.className="rev";}
+    else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString()+idline;meta.className="rev";}
+    else{meta.textContent="active · joined "+new Date(u.ts).toLocaleString()+idline;}
+    el.appendChild(meta);
+    users.appendChild(el);
+  });
 }
 function rename(id,name){
   if(!name)return;
@@ -1330,35 +1419,45 @@ function saveNote(id,note){
 }
 function deleteUser(id,name){
   if(!confirm("Delete "+name+" entirely? This frees the username and cannot be undone."))return;
-  fetch("/admin/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+  fetch("/admin/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();refreshBalances();});
 }
 function repend(id,name){
   if(!confirm("Send "+name+" back to review? They'll return to the application screen where you can ask follow-up questions."))return;
   fetch("/admin/repend",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refresh();refreshUsers();});
 }
-/* ---- casino: player balances (READ ONLY — there is deliberately no edit path) ---- */
 function refreshBalances(){
   var key=keyEl.value.trim();
   balances.innerHTML='<div class="empty">loading...</div>';
   fetch("/admin/balances?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
-    if(d.error){balances.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';return;}
-    if(!d.balances.length){balances.innerHTML='<div class="empty">no balances yet (nobody has claimed sahurs).</div>';return;}
-    balances.innerHTML="";
-    d.balances.forEach(function(u){
-      var el=document.createElement("div");el.className="app";
-      var row=document.createElement("div");row.className="row";
-      var name=document.createElement("h3");name.style.flex="1";name.style.margin="0";name.textContent=u.username;
-      var bal=document.createElement("small");bal.textContent=u.balance.toFixed(2)+" sahurs";bal.style.color="#f2c063";bal.style.fontWeight="700";
-      row.appendChild(name);row.appendChild(bal);el.appendChild(row);
-      // moderation: set this player's balance to an exact value
-      var srow=document.createElement("div");srow.className="row";srow.style.marginTop="8px";
-      var inp=document.createElement("input");inp.type="number";inp.min="0";inp.step="0.01";inp.className="tin";inp.placeholder="new balance";inp.value=u.balance.toFixed(2);inp.style.flex="0 1 160px";
-      var set=document.createElement("button");set.className="no";set.textContent="set balance";
-      set.onclick=function(){setBalance(u.id,u.username,inp.value);};
-      srow.appendChild(inp);srow.appendChild(set);el.appendChild(srow);
-      balances.appendChild(el);
-    });
-  }).catch(function(){balances.innerHTML='<div class="empty">network error.</div>';});
+    if(d.error){balancesCache=null;balancesErr=d.error;renderBalances();return;}
+    balancesErr=null;balancesCache=d.balances||[];renderBalances();
+  }).catch(function(){balancesCache=null;balancesErr="network error.";renderBalances();});
+}
+function renderBalances(){
+  setCount("balances", balancesCache?balancesCache.length:"");
+  if(balancesErr){balances.innerHTML='<div class="empty">'+balancesErr+' — check your key.</div>';return;}
+  if(!balancesCache){balances.innerHTML='<div class="empty">load to see player balances.</div>';return;}
+  var q=qOf("search-balances");
+  var shown=balancesCache.filter(function(u){
+    return matches(q, [u.username, u.id, String(u.balance), (u.balance!=null?Number(u.balance).toFixed(2):"")+" sahurs"]);
+  });
+  if(!balancesCache.length){balances.innerHTML='<div class="empty">no balances yet (nobody has claimed sahurs).</div>';return;}
+  if(!shown.length){balances.innerHTML='<div class="empty">no matching balances.</div>';return;}
+  balances.innerHTML="";
+  shown.forEach(function(u){
+    var el=document.createElement("div");el.className="app";
+    var row=document.createElement("div");row.className="row";
+    var name=document.createElement("h3");name.style.flex="1";name.style.margin="0";name.textContent=u.username;
+    var bal=document.createElement("small");bal.textContent=u.balance.toFixed(2)+" sahurs";bal.style.color="#f2c063";bal.style.fontWeight="700";
+    row.appendChild(name);row.appendChild(bal);el.appendChild(row);
+    var idline=document.createElement("small");idline.textContent="id "+u.id;el.appendChild(idline);
+    var srow=document.createElement("div");srow.className="row";srow.style.marginTop="8px";
+    var inp=document.createElement("input");inp.type="number";inp.min="0";inp.step="0.01";inp.className="tin";inp.placeholder="new balance";inp.value=u.balance.toFixed(2);inp.style.flex="0 1 160px";
+    var set=document.createElement("button");set.className="no";set.textContent="set balance";
+    set.onclick=function(){setBalance(u.id,u.username,inp.value);};
+    srow.appendChild(inp);srow.appendChild(set);el.appendChild(srow);
+    balances.appendChild(el);
+  });
 }
 function setBalance(id,name,val){
   var b=Number(val);
@@ -1366,13 +1465,13 @@ function setBalance(id,name,val){
   if(!confirm("Set "+name+"'s balance to "+b.toFixed(2)+" sahurs?"))return;
   fetch("/admin/setbal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,balance:b})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshBalances();});
 }
-/* ---- casino: shop management (add / edit / enable / delete items) ---- */
 function refreshShop(){
   var key=keyEl.value.trim();
   shop.innerHTML='<div class="empty">loading...</div>';
   fetch("/admin/shop?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
-    if(d.error){shop.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';return;}
+    if(d.error){shop.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';setCount("shop","");return;}
     shop.innerHTML="";
+    setCount("shop", (d.items||[]).length);
     if(!d.items.length){shop.innerHTML='<div class="empty">no shop items yet. hit “add shop item”.</div>';return;}
     d.items.forEach(function(it){shop.appendChild(itemCard(it));});
   }).catch(function(){shop.innerHTML='<div class="empty">network error.</div>';});
