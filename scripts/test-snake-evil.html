@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>snake-evil-harness</title></head>
+<body>
+<p id="out">running</p>
+<iframe id="g" src="../games/tung/snake.html?test=1" style="width:500px;height:560px;border:0"></iframe>
+<script>
+(function(){
+  var out=document.getElementById("out");
+  function fail(msg){ document.title="FAIL"; out.textContent="FAIL "+msg; }
+  function pass(){ document.title="PASS"; out.textContent="PASS"; }
+  function waitFor(fn, tries){
+    return new Promise(function(resolve, reject){
+      (function tick(n){
+        try { var v=fn(); if(v) return resolve(v); } catch(e){}
+        if(n<=0) return reject(new Error("timeout"));
+        setTimeout(function(){ tick(n-1); }, 50);
+      })(tries||80);
+    });
+  }
+  async function main(){
+    var frame=document.getElementById("g");
+    var api=await waitFor(function(){
+      return frame.contentWindow && frame.contentWindow.__snake;
+    }, 120);
+    var g=api.get();
+    if(g.state!=="idle") throw new Error("expected idle, got "+g.state);
+    if(typeof g.best!=="number") throw new Error("missing best score");
+
+    var blocked=api.placeFoe(8,9);
+    if(blocked) throw new Error("foe spawned on snake head");
+    blocked=api.placeFoe(7,9);
+    if(blocked) throw new Error("foe spawned on snake body");
+    blocked=api.placeFoe(6,9);
+    if(blocked) throw new Error("foe spawned on snake tail");
+
+    var i, cell;
+    for(i=0;i<80;i++){
+      cell=api.pickClearCell();
+      if(!cell) throw new Error("pickClearCell returned null on empty board");
+      if(api.onSnake(cell.x, cell.y)) throw new Error("pickClearCell landed on snake "+cell.x+","+cell.y);
+    }
+
+    if(!api.placeFoe(12,9)) throw new Error("could not place foe on empty cell");
+    if(api.reserved(12,9)!==true) throw new Error("foe cell should be reserved");
+    api.start();
+    if(api.get().state!=="play") throw new Error("did not enter play");
+    api.setDir(1,0);
+    for(i=0;i<20 && api.get().state==="play";i++) api.step();
+    g=api.get();
+    if(g.state!=="dead") throw new Error("expected death after walking into foe, state="+g.state);
+    if(g.deathKind!=="evil") throw new Error("expected evil death, got "+g.deathKind);
+
+    api.reset();
+    if(api.placeWarn(6,9, 9999)) throw new Error("warning placed on tail");
+    if(!api.placeWarn(4,9, 9999)) throw new Error("warning refused on empty cell");
+    if(api.onSnake(4,9)) throw new Error("warning cell marked as snake");
+
+    pass();
+  }
+  main().catch(function(err){ fail(err && err.message ? err.message : String(err)); });
+})();
+</script>
+</body>
+</html>

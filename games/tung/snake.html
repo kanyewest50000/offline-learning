@@ -10,13 +10,13 @@
   <div class="hud">
     <div>
       <h1>Sahur Snake</h1>
-      <p class="line">eat. lengthen. forget why.</p>
+      <p class="line">eat. lengthen. the red square is already taken.</p>
     </div>
   </div>
   <div class="stage" style="--gw:480;--gh:480">
     <div class="frame"><canvas id="c" width="480" height="480"></canvas></div>
   </div>
-  <p class="hint">arrows / wasd / swipe to slither · cursed relics turn you around</p>
+  <p class="hint">arrows / wasd / swipe · cursed relics reverse you · a glowing square is a warning</p>
 <script src="tung-fit.js"></script>
 <script>
 (function(){
@@ -24,28 +24,61 @@
   var c=document.getElementById("c"), ctx=c.getContext("2d");
   var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
   var god=new Image(); god.src="../../assets/tungtunggod.png";
-  var snake, dir, next, food, cursed, score, best, state, tickAcc, last;
+  var evil=new Image(); evil.src="../../assets/eviltungtungtungsahur.jpg";
+  var snake, dir, next, food, cursed, score, best, state, tickAcc, last, clock;
+  var warn, foe, nextFoeAt, deathKind;
   try{best=parseInt(localStorage.getItem("sahur-snake-best")||"0",10)||0;}catch(e){best=0;}
   var STEP=120;
+  var WARN_MS=2600;
+  var FOE_MIN=3500, FOE_SPAN=3500;
+  var STAY_MIN=6500, STAY_SPAN=3500;
 
-  function keyOf(x,y){return x+","+y;}
-  function occupied(){
-    var m={};
-    for(var i=0;i<snake.length;i++) m[keyOf(snake[i].x,snake[i].y)]=1;
-    return m;
+  function onSnake(x,y){
+    for(var i=0;i<snake.length;i++) if(snake[i].x===x && snake[i].y===y) return true;
+    return false;
+  }
+  function reserved(x,y){
+    if(onSnake(x,y)) return true;
+    if(food && food.x===x && food.y===y) return true;
+    if(cursed && cursed.x===x && cursed.y===y) return true;
+    if(warn && warn.x===x && warn.y===y) return true;
+    if(foe && foe.x===x && foe.y===y) return true;
+    return false;
+  }
+  function firstFree(){
+    for(var y=0;y<N;y++) for(var x=0;x<N;x++) if(!reserved(x,y)) return {x:x,y:y};
+    return null;
   }
   function emptyCell(){
-    var m=occupied(), tries=0, x, y;
+    var tries=0, x, y;
     do { x=(Math.random()*N)|0; y=(Math.random()*N)|0; tries++; }
-    while((m[keyOf(x,y)] || (food && food.x===x && food.y===y) || (cursed && cursed.x===x && cursed.y===y)) && tries<80);
-    return {x:x,y:y};
+    while(reserved(x,y) && tries<80);
+    if(!reserved(x,y)) return {x:x,y:y};
+    return firstFree()||{x:x,y:y};
   }
+  function pickClearCell(){
+    var tries=0, x, y;
+    do { x=(Math.random()*N)|0; y=(Math.random()*N)|0; tries++; }
+    while(reserved(x,y) && tries<200);
+    if(!reserved(x,y)) return {x:x,y:y};
+    return firstFree();
+  }
+  function scheduleFoe(now){
+    nextFoeAt=now+FOE_MIN+Math.random()*FOE_SPAN;
+  }
+  function clearHazard(){ warn=null; foe=null; nextFoeAt=0; }
   function reset(){
     snake=[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
     dir={x:1,y:0}; next={x:1,y:0};
-    food=emptyCell(); cursed=null; score=0; state="idle"; tickAcc=0;
+    food=null; cursed=null; score=0; state="idle"; tickAcc=0; deathKind="self";
+    clearHazard();
+    food=emptyCell();
   }
-  function die(){ state="dead"; if(score>best){best=score; try{localStorage.setItem("sahur-snake-best",String(best));}catch(e){}} }
+  function die(kind){
+    state="dead";
+    deathKind=kind||"self";
+    if(score>best){best=score; try{localStorage.setItem("sahur-snake-best",String(best));}catch(e){}}
+  }
   function start(){
     if(state==="dead"){ reset(); state="play"; return; }
     if(state==="idle") state="play";
@@ -59,8 +92,9 @@
   function step(){
     dir=next;
     var head={x:snake[0].x+dir.x, y:snake[0].y+dir.y};
-    if(head.x<0||head.y<0||head.x>=N||head.y>=N){ die(); return; }
-    for(var i=0;i<snake.length;i++) if(snake[i].x===head.x && snake[i].y===head.y){ die(); return; }
+    if(head.x<0||head.y<0||head.x>=N||head.y>=N){ die("wall"); return; }
+    for(var i=0;i<snake.length;i++) if(snake[i].x===head.x && snake[i].y===head.y){ die("self"); return; }
+    if(foe && head.x===foe.x && head.y===foe.y){ die("evil"); return; }
     snake.unshift(head);
     if(food && head.x===food.x && head.y===food.y){
       score+=1; food=emptyCell();
@@ -123,8 +157,10 @@
       ctx.fillStyle=((x+y)%2)? "#1d1206":"#241505";
       ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
     }
+    if(warn) drawWarn(warn.x, warn.y);
     if(food) sprite(tung, food.x, food.y);
     if(cursed) sprite(god, cursed.x, cursed.y);
+    if(foe) drawFoe(foe.x, foe.y);
     for(var i=snake.length-1;i>=0;i--){
       var s=snake[i];
       if(i===0) sprite(tung, s.x, s.y);
@@ -135,12 +171,88 @@
     ctx.fillStyle="#8a6a3a"; ctx.textAlign="right";
     ctx.fillText("best "+best, W-10, 22);
     if(state==="idle") overlay("Sahur Snake", "the hunger is already walking.");
-    else if(state==="dead") overlay("consumed", "the body found the body. such is lunch.");
+    else if(state==="dead") overlay("consumed", deathLine());
+  }
+  function deathLine(){
+    if(deathKind==="evil") return "evil tung tung tung sahur does not share the square.";
+    return "the body found the body. such is lunch.";
+  }
+  function drawWarn(x,y){
+    var pulse=0.45+0.55*Math.sin((clock||0)/110);
+    var px=x*CELL+1, py=y*CELL+1, s=CELL-2;
+    ctx.save();
+    ctx.globalAlpha=0.28+0.42*pulse;
+    ctx.fillStyle="#7a0c0c";
+    ctx.strokeStyle="#ff3b1f";
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(px,py,s,s,6); else ctx.rect(px,py,s,s);
+    ctx.fill(); ctx.stroke();
+    ctx.globalAlpha=0.55+0.45*pulse;
+    ctx.strokeStyle="#f2c063";
+    ctx.lineWidth=1.5;
+    ctx.strokeRect(x*CELL+5.5,y*CELL+5.5,CELL-11,CELL-11);
+    ctx.restore();
+  }
+  function drawFoe(x,y){
+    var px=x*CELL+2, py=y*CELL+2, s=CELL-4;
+    ctx.save();
+    ctx.shadowColor="#ff2a12";
+    ctx.shadowBlur=12;
+    if(evil.complete && evil.naturalWidth){
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(px,py,s,s,6); else ctx.rect(px,py,s,s);
+      ctx.clip();
+      ctx.drawImage(evil,px,py,s,s);
+    } else {
+      ctx.fillStyle="#8b1010";
+      ctx.fillRect(px,py,s,s);
+    }
+    ctx.restore();
+    ctx.strokeStyle="#ff3b1f";
+    ctx.lineWidth=2;
+    ctx.strokeRect(px+0.5,py+0.5,s-1,s-1);
+  }
+  function updateHazard(now){
+    if(state!=="play") return;
+    if(!nextFoeAt) scheduleFoe(now);
+    if(warn){
+      if(onSnake(warn.x, warn.y)){
+        warn=null;
+        scheduleFoe(now);
+        return;
+      }
+      if(now>=warn.until){
+        if(!onSnake(warn.x, warn.y) && !(food && food.x===warn.x && food.y===warn.y) && !(cursed && cursed.x===warn.x && cursed.y===warn.y)){
+          foe={x:warn.x, y:warn.y, until:now+STAY_MIN+Math.random()*STAY_SPAN};
+        }
+        warn=null;
+        if(!foe) scheduleFoe(now);
+      }
+      return;
+    }
+    if(foe){
+      if(now>=foe.until){
+        foe=null;
+        scheduleFoe(now);
+      }
+      return;
+    }
+    if(now>=nextFoeAt){
+      var cell=pickClearCell();
+      if(cell && !onSnake(cell.x, cell.y)){
+        warn={x:cell.x, y:cell.y, until:now+WARN_MS};
+      } else {
+        scheduleFoe(now);
+      }
+    }
   }
   function loop(now){
+    clock=now;
     if(!last) last=now;
     var dt=now-last; last=now;
     if(state==="play"){
+      updateHazard(now);
       tickAcc+=dt;
       while(tickAcc>=STEP){ tickAcc-=STEP; if(state==="play") step(); }
     }
@@ -163,6 +275,36 @@
   }, {passive:true});
   c.addEventListener("mousedown", function(){ if(state!=="play") start(); });
   reset();
+  if(/\btest\b/.test(location.search||"")){
+    window.__snake={
+      get:function(){
+        return {
+          state:state, score:score, best:best, deathKind:deathKind, N:N,
+          snake:snake.map(function(p){return {x:p.x,y:p.y};}),
+          warn:warn&&{x:warn.x,y:warn.y},
+          foe:foe&&{x:foe.x,y:foe.y},
+          food:food&&{x:food.x,y:food.y}
+        };
+      },
+      start:start,
+      setDir:setDir,
+      reset:reset,
+      step:step,
+      onSnake:onSnake,
+      reserved:reserved,
+      pickClearCell:pickClearCell,
+      placeWarn:function(x,y,until){
+        if(onSnake(x,y)) return false;
+        foe=null; warn={x:x,y:y,until:until||0};
+        return true;
+      },
+      placeFoe:function(x,y){
+        if(onSnake(x,y)) return false;
+        warn=null; foe={x:x,y:y,until:1e15};
+        return true;
+      }
+    };
+  }
   requestAnimationFrame(loop);
 })();
 </script>
