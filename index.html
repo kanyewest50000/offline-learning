@@ -1012,6 +1012,12 @@
     'var applyBtn=document.getElementById("applyBtn");' +
     'var warnEl=document.querySelector("#applyView .warn");' +
     'var recheckBtn=document.getElementById("recheckBtn");' +
+    'var myhash=document.getElementById("myhash");' +
+    'var copyHashBtn=document.getElementById("copyHash");' +
+    'var exportKeyBtn=document.getElementById("exportKey");' +
+    'var lu=document.getElementById("lu");' +
+    'var lk=document.getElementById("lk");' +
+    'var loginBtn=document.getElementById("loginBtn");' +
     'var log=document.getElementById("log");' +
     'var form=document.getElementById("f");' +
     'var input=document.getElementById("m");' +
@@ -1140,6 +1146,8 @@
     'function loadToken(){try{return localStorage.getItem(TKEY);}catch(e){return null;}}' +
     'function saveToken(t){try{localStorage.setItem(TKEY,t);}catch(e){}}' +
     'function clearToken(){try{localStorage.removeItem(TKEY);}catch(e){}}' +
+    'function paintKey(){if(myhash)myhash.textContent=TOKEN||"";if(exportKeyBtn)exportKeyBtn.style.display=TOKEN?"inline-block":"none";}' +
+    'function copyKey(btn){if(!TOKEN)return;var prev=btn?btn.textContent:"";function done(){if(btn){btn.textContent="copied";setTimeout(function(){btn.textContent=prev;},1400);}}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(TOKEN).then(done).catch(fb);}else fb();function fb(){var t=document.createElement("textarea");t.value=TOKEN;t.style.position="fixed";t.style.left="-9999px";document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}}' +
     'function mkId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}' +
     'function renderReacts(id){var m=MSGS[id];if(!m)return;m.reactEl.innerHTML="";Object.keys(m.counts).forEach(function(e){var chip=document.createElement("button");chip.type="button";chip.className="chip"+(m.mine[e]?" on":"");chip.textContent=e+" "+m.counts[e];chip.addEventListener("click",function(ev){ev.stopPropagation();toggleReact(id,e);});m.reactEl.appendChild(chip);});}' +
     'function applyReact(id,e,op){var m=MSGS[id];if(!m)return;m.counts[e]=(m.counts[e]||0)+op;if(m.counts[e]<=0)delete m.counts[e];renderReacts(id);}' +
@@ -1166,13 +1174,17 @@
     'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null});}}' +
     'function poll(){if(!polling)return;api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling)setTimeout(poll,1500);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
-    'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;show("chat");input.focus();startPoll();}' +
+    'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();}' +
     /* render tung<->applicant follow-up messages on the pending screen; show the
        reply box only once tung has actually asked something. */
     'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");b.textContent=(m.from==="admin"?"tung: ":"you: ")+m.text;appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
-    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");renderThread(s.thread);if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;show("apply");}}).catch(function(){show("apply");});}' +
+    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){paintKey();show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){show("apply");});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
+    'if(copyHashBtn)copyHashBtn.addEventListener("click",function(){copyKey(copyHashBtn);});' +
+    'if(exportKeyBtn)exportKeyBtn.addEventListener("click",function(){copyKey(exportKeyBtn);});' +
+    'if(loginBtn)loginBtn.addEventListener("click",function(){var u=lu.value.trim(),k=lk.value.trim();if(!u||!k){applyWarn("enter your username and key.");return;}loginBtn.disabled=true;applyWarn("logging in...");apiPost("/login",{username:u,token:k}).then(function(r){loginBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;applyWarn("");refreshGate();}else{applyWarn("username and key do not match.");}}).catch(function(){loginBtn.disabled=false;applyWarn("network error, try again.");});});' +
+    'if(lk)lk.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();if(loginBtn)loginBtn.click();}});' +
     'respBtn.addEventListener("click",function(){var t=respText.value.trim();if(!t)return;respText.value="";apiPost("/respond",{token:TOKEN,text:t}).then(function(r){if(r&&r.thread)renderThread(r.thread);});});' +
     'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:ME,text:text,mine:true,reply:rep});apiPost("/send",{token:TOKEN,id:id,text:text,reply:rep});cancelReply();});' +
     'pick.addEventListener("click",function(ev){ev.stopPropagation();picker.style.display=picker.style.display==="flex"?"none":"flex";rpal.style.display="none";});' +
@@ -2162,7 +2174,10 @@
       '.bicon{width:44%;height:auto}' +   /* the chat speech-bubble svg */
       '.bimg{width:58%;aspect-ratio:1;object-fit:cover;border-radius:10px}' +   /* the sahur png */
       '#shrine{flex:1;display:none;flex-direction:column;min-height:0}' +
-      '#shrinebar{display:flex;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}' +
+      '#shrinebar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}' +
+      '#exportKey{margin-left:auto;font-size:12px;display:none}' +
+      '#loginBox{margin-top:18px;display:flex;flex-direction:column;gap:8px;text-align:left}' +
+      '#loginBox .hint{margin:0 0 2px}' +
       '#games{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#gamesbar{display:flex;gap:8px;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}' +
       '#cloakbar{display:flex;gap:8px;padding:8px 12px;background:#241505;border-bottom:1px solid #3a2410}' +
@@ -2457,7 +2472,7 @@
       '</div>' +
       '</div>' +
       '<div id="shrine">' +
-      '<div id="shrinebar"><button id="sback" class="ghost" type="button">← back</button></div>' +
+      '<div id="shrinebar"><button id="sback" class="ghost" type="button">← back</button><button id="exportKey" class="ghost" type="button">copy login key</button></div>' +
       '<div id="gate">' +
       '<div id="applyView">' +
       '<h2 id="applyTitle">apply to enter</h2>' +
@@ -2466,14 +2481,20 @@
       '<input id="gu" autocomplete="off" placeholder="desired username">' +
       '<textarea id="ga" rows="4" placeholder="your application — why should tung bless you?"></textarea>' +
       '<button id="applyBtn" type="submit">apply</button>' +
-      '</form><p class="warn">heads up — your username is permanent. you cannot change it later.</p></div>' +
+      '</form><p class="warn">heads up — your username is permanent. you cannot change it later.</p>' +
+      '<div id="loginBox"><p class="hint">already a member? log in with your username and key.</p>' +
+      '<input id="lu" autocomplete="username" placeholder="username">' +
+      '<input id="lk" autocomplete="off" placeholder="login key">' +
+      '<button id="loginBtn" type="button">log in</button></div></div>' +
       '<div id="pendingView">' +
       '<h2>application pending</h2>' +
       '<p>tung is reviewing your submission.</p>' +
+      '<p class="hint">save this key — it is your login (username + key) for the embedded chat and other devices. keep it secret.</p>' +
+      '<code id="myhash"></code>' +
       '<p class="hint">once youre approved, reload the site and reopen the shrine.</p>' +
       '<div id="appThread"></div>' +
       '<div id="respBox"><textarea id="respText" rows="2" placeholder="reply to tung..."></textarea><button id="respBtn" type="button">send reply</button></div>' +
-      '<div class="row"><button id="recheckBtn" type="button">check access</button></div>' +
+      '<div class="row"><button id="copyHash" type="button">copy key</button><button id="recheckBtn" type="button">check access</button></div>' +
       '</div></div>' +
       '<div id="chat">' +
       '<div id="log"></div>' +

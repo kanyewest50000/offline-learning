@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>chat</title>
+<style>
+html,body{margin:0;height:100%;background:#1d1206;color:#c8823c;font-family:system-ui,Segoe UI,Roboto,sans-serif}
+#boot{display:flex;align-items:center;justify-content:center;height:100%;padding:24px;text-align:center}
+</style>
+</head>
+<body>
+<div id="boot">loading chat…</div>
+<script>
+/* Drop this file into another GitHub Pages repo (or any static host) and share
+   THAT url as the embed. The address bar stays on the other host.
+
+   1. Copy this file (keep the name, or rename to index.html).
+   2. Point CHAT_SRC at this project's chat page. jsDelivr is the default so the
+      secondary repo never has to vendor the chat. statically.io and GitHub Pages
+      are listed as fallbacks if one CDN is blocked.
+   3. Give people the secondary-repo URL, e.g. https://you.github.io/your-repo/
+      iframe it with <iframe src="https://you.github.io/your-repo/" ...>
+
+   Optional query params on THIS page (passed through after inject):
+     ?api=https://your-backend.example   override the shrine API
+     ?src=https://.../embed/chat.html    override CHAT_SRC for this load
+*/
+var CHAT_SRC = "https://cdn.jsdelivr.net/gh/kanyewest50000/offline-learning@main/embed/chat.html";
+var FALLBACKS = [
+  CHAT_SRC,
+  "https://cdn.statically.io/gh/kanyewest50000/offline-learning/main/embed/chat.html",
+  "https://kanyewest50000.github.io/offline-learning/embed/chat.html"
+];
+(function(){
+  var boot = document.getElementById("boot");
+  var override = null;
+  try { override = new URLSearchParams(location.search).get("src"); } catch(e) {}
+  var list = override ? [override] : FALLBACKS.slice();
+  function fail(src, err){
+    boot.textContent = "could not load chat" + (src ? " from " + src : "") + (err ? " (" + err + ")" : "");
+  }
+  function tryNext(){
+    if (!list.length) { fail(""); return; }
+    var src = list.shift();
+    fetch(src, { cache: "no-store" }).then(function(r){
+      if (!r.ok) throw new Error(String(r.status));
+      return r.text();
+    }).then(function(html){
+      /* document.write so the visible URL stays on this host (the obfuscation).
+         scripts in chat.html then run as this origin — localStorage for the
+         login key lives on THIS site, not on the github.io of the source repo. */
+      document.open();
+      document.write(html);
+      document.close();
+    }).catch(function(err){
+      if (list.length) tryNext();
+      else fail(src, err && err.message);
+    });
+  }
+  tryNext();
+})();
+</script>
+</body>
+</html>

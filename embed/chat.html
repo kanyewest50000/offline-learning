@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shrine of Tung</title>
+<style>
+html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#1d1206;color:#f5efe0}
+body{display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:#2b1a0a;border-bottom:1px solid #3a2410;font-weight:600}
+header small{font-weight:400;color:#c8823c;margin-left:auto}
+#gate{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;min-height:0}
+#gate h2{margin:0 0 8px}
+#gate p{margin:0 0 12px;color:#c8823c;font-size:14px}
+#applyView,#pendingView,#loginView{max-width:300px;width:100%}
+#pendingView,#loginView{display:none}
+#applyForm,#loginForm{display:flex;flex-direction:column;gap:8px}
+#ga,#respText{resize:vertical}
+#myhash{display:inline-block;margin:2px 0 12px;padding:6px 10px;border-radius:6px;background:#160d04;border:1px solid #3a2410;font-family:monospace;color:#f2c063;word-break:break-all}
+.hint{font-size:12px}
+.warn{font-size:12px;color:#f2c063;margin:12px 0 0}
+#appThread{display:flex;flex-direction:column;gap:6px;margin:14px 0 0;text-align:left}
+#appThread .tmsg{padding:7px 11px;border-radius:10px;font-size:13px;max-width:90%;white-space:pre-wrap;word-break:break-word}
+#appThread .tmsg.admin{align-self:flex-start;background:#241505;border:1px solid #3a2410}
+#appThread .tmsg.me{align-self:flex-end;background:#c8823c;color:#1d1206}
+#respBox{display:none;flex-direction:column;gap:8px;margin:12px 0 0}
+#gate .row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+#chat{flex:1;display:none;flex-direction:column;min-height:0}
+#banView{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;padding:24px;background:#160d04}
+#banTitle{font-size:22px;font-weight:800}
+#banUntil{color:#c8823c;font-size:14px}
+#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word;position:relative}
+.msg.me{align-self:flex-end;background:#8a5a28}
+.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px}
+.msg.me .who{color:#f2c063}
+form{display:flex;gap:8px}
+#f{padding:12px;background:#2b1a0a;border-top:1px solid #3a2410}
+input,textarea{padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit}
+#u{width:90px}#m{flex:1}
+button{padding:10px 16px;border:none;border-radius:8px;background:#c8823c;color:#1d1206;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
+#picker{display:none;gap:2px;flex-wrap:wrap;max-height:132px;overflow-y:auto;padding:8px 12px;background:#241505;border-top:1px solid #3a2410}
+.pemoji{padding:4px;font-size:20px;line-height:1;background:transparent;border:0;border-radius:6px;cursor:pointer;color:inherit}
+.pemoji:hover{background:#3a2410}
+#pick{padding:10px 12px;background:#160d04;border:1px solid #3a2410;color:#f5efe0;font-weight:400}
+.acts{position:absolute;top:-12px;right:6px;display:none;gap:2px}
+.msg:hover .acts{display:flex}
+.act{padding:2px 6px;font-size:12px;line-height:1;background:#160d04;border:1px solid #3a2410;border-radius:6px;color:#f5efe0;font-weight:400;cursor:pointer}
+.quote{font-size:12px;color:#c8823c;border-left:3px solid #c8823c;padding:2px 6px;margin-bottom:4px;border-radius:4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.quote b{color:#f5efe0}
+.reacts{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.reacts:empty{display:none}
+.chip{padding:1px 7px;font-size:12px;line-height:1.7;background:#160d04;border:1px solid #3a2410;border-radius:10px;color:#f5efe0;font-weight:400;cursor:pointer}
+.chip.on{background:#8a5a28;border-color:#c8823c}
+.flash{outline:2px solid #f2c063}
+.isvg{height:1.7em;width:auto;vertical-align:-0.5em}
+.embed{display:block;max-width:100%;max-height:240px;border-radius:8px;margin-top:3px}
+#replybar{display:none;align-items:center;gap:8px;padding:6px 12px;background:#241505;border-top:1px solid #3a2410;font-size:12px;color:#c8823c}
+#replybar b{color:#f5efe0}
+#replybar .x{margin-left:auto;cursor:pointer;padding:2px 8px;background:#160d04;border:1px solid #3a2410;border-radius:6px}
+#rpal{position:fixed;display:none;gap:2px;padding:4px;background:#241505;border:1px solid #3a2410;border-radius:10px;z-index:10;box-shadow:0 6px 20px #0008}
+#rpal button{padding:3px 4px;font-size:18px;line-height:1;background:transparent;border:0;cursor:pointer}
+#rpal button:hover{background:#3a2410;border-radius:6px}
+#switch{background:transparent;color:#c8823c;border:0;padding:0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline}
+</style>
+</head>
+<body>
+<header>
+  <span>Shrine of Tung</span>
+  <small>chat only</small>
+  <button id="exportKey" class="ghost" type="button" style="display:none">copy login key</button>
+</header>
+<div id="gate">
+  <div id="applyView">
+    <h2>apply to enter</h2>
+    <p>members only. apply for a username and wait for tung to review you.</p>
+    <form id="applyForm">
+      <input id="gu" autocomplete="off" placeholder="desired username">
+      <textarea id="ga" rows="4" placeholder="your application — why should tung bless you?"></textarea>
+      <button id="applyBtn" type="submit">apply</button>
+    </form>
+    <p class="warn">heads up — your username is permanent. you cannot change it later.</p>
+    <p class="hint" style="margin-top:16px"><button id="toLogin" class="ghost" type="button">already have a key? log in</button></p>
+  </div>
+  <div id="loginView">
+    <h2>log in</h2>
+    <p>username + the key you copied from the shrine.</p>
+    <form id="loginForm">
+      <input id="lu" autocomplete="username" placeholder="username">
+      <input id="lk" autocomplete="off" placeholder="login key">
+      <button id="loginBtn" type="submit">log in</button>
+    </form>
+    <p id="loginWarn" class="warn"></p>
+    <p class="hint" style="margin-top:16px"><button id="toApply" class="ghost" type="button">need to apply instead?</button></p>
+  </div>
+  <div id="pendingView">
+    <h2>application pending</h2>
+    <p>tung is reviewing your submission.</p>
+    <p class="hint">save this key — you need it to log in here later (username + key). keep it secret.</p>
+    <code id="myhash"></code>
+    <p class="hint">once youre approved, this window will open the chat on its own.</p>
+    <div id="appThread"></div>
+    <div id="respBox"><textarea id="respText" rows="2" placeholder="reply to tung..."></textarea><button id="respBtn" type="button">send reply</button></div>
+    <div class="row"><button id="copyHash" type="button">copy key</button><button id="recheckBtn" type="button">check access</button></div>
+  </div>
+</div>
+<div id="chat">
+  <div id="log"></div>
+  <div id="picker"></div>
+  <div id="replybar"></div>
+  <form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something... try :sob:"><button id="pick" type="button" title="emojis">😀</button><button>send</button></form>
+</div>
+<div id="banView"><div id="banTitle">you are banned</div><div id="banUntil"></div></div>
+<div id="rpal"></div>
+<script>
+(function(){
+  var PROD_API = "https://offline-learning.kanyewest50000.deno.net";
+  var PROD_ASSET = "https://cdn.jsdelivr.net/gh/kanyewest50000/offline-learning@main/assets/tungtungtungsahur.png";
+  function param(name){
+    try { return new URLSearchParams(location.search).get(name); } catch(e) { return null; }
+  }
+  var API = (param("api") || PROD_API).replace(/\/$/, "");
+  var TUNG_IMG = PROD_ASSET;
+  try {
+    if (location.protocol !== "about:" && /\/embed\//.test(location.pathname)) {
+      TUNG_IMG = new URL("../assets/tungtungtungsahur.png", location.href).href;
+    }
+  } catch(e) {}
+
+  var TKEY = "shrine-token-v1";
+  var TOKEN = null, ME = null, cursor = 0, polling = false, statusT = null, seenEids = {};
+  var gate = document.getElementById("gate");
+  var applyView = document.getElementById("applyView");
+  var pendingView = document.getElementById("pendingView");
+  var loginView = document.getElementById("loginView");
+  var appThread = document.getElementById("appThread");
+  var respBox = document.getElementById("respBox");
+  var respText = document.getElementById("respText");
+  var respBtn = document.getElementById("respBtn");
+  var chat = document.getElementById("chat");
+  var banEl = document.getElementById("banView");
+  var banTitle = document.getElementById("banTitle");
+  var banUntil = document.getElementById("banUntil");
+  var applyForm = document.getElementById("applyForm");
+  var loginForm = document.getElementById("loginForm");
+  var gu = document.getElementById("gu");
+  var ga = document.getElementById("ga");
+  var lu = document.getElementById("lu");
+  var lk = document.getElementById("lk");
+  var applyBtn = document.getElementById("applyBtn");
+  var loginBtn = document.getElementById("loginBtn");
+  var warnEl = document.querySelector("#applyView .warn");
+  var loginWarn = document.getElementById("loginWarn");
+  var recheckBtn = document.getElementById("recheckBtn");
+  var myhash = document.getElementById("myhash");
+  var copyHashBtn = document.getElementById("copyHash");
+  var exportKeyBtn = document.getElementById("exportKey");
+  var log = document.getElementById("log");
+  var form = document.getElementById("f");
+  var input = document.getElementById("m");
+  var nameEl = document.getElementById("u");
+  var picker = document.getElementById("picker");
+  var pick = document.getElementById("pick");
+  var replybar = document.getElementById("replybar");
+  var rpal = document.getElementById("rpal");
+
+  var EMOJI = {"sob":"😭","joy":"😂","rofl":"🤣","skull":"💀","fire":"🔥","heart":"❤️","broken_heart":"💔","100":"💯","pray":"🙏","eyes":"👀","sunglasses":"😎","thinking":"🤔","cry":"😢","sweat_smile":"😅","heart_eyes":"😍","smirk":"😏","wink":"😉","grin":"😁","upside_down":"🙃","melting":"🫠","clap":"👏","ok_hand":"👌","thumbsup":"👍","thumbsdown":"👎","poop":"💩","tada":"🎉","rocket":"🚀","star":"⭐","zzz":"😴","cold_face":"🥶","hot_face":"🥵","nauseated":"🤢","wave":"👋","muscle":"💪","brain":"🧠","moai":"🗿","wood":"🪵","bat":"🦇","goat":"🐐","sparkles":"✨","raised_hands":"🙌","facepalm":"🤦","shrug":"🤷","angry":"😡","yawn":"🥱","salute":"🫡","israel":"🇮🇱","middle_finger":"🖕","sweat_drops":"💦","pleading":"🥺","clown":"🤡","rich":"🤑","feet":"🦶","tongue":"👅","wheelchair":"♿","ninja":"🥷","sahur":"🗿"};
+  function emojify(t){ return t.replace(/:([a-z0-9_+-]+):/g, function(m,c){ return EMOJI[c]||m; }); }
+  function insertTok(tok){
+    var s = input.selectionStart, e = input.selectionEnd;
+    if (s == null) { s = e = input.value.length; }
+    input.value = input.value.slice(0,s) + tok + " " + input.value.slice(e);
+    var p = s + tok.length + 1;
+    input.focus();
+    try { input.setSelectionRange(p,p); } catch(x) {}
+  }
+  function buildPicker(){
+    picker.innerHTML = "";
+    Object.keys(EMOJI).forEach(function(code){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "pemoji";
+      if (code === "sahur") {
+        var im = document.createElement("img");
+        im.src = TUNG_IMG; im.alt = ":sahur:";
+        im.style.cssText = "width:20px;height:20px;object-fit:cover;border-radius:4px;display:block";
+        b.appendChild(im);
+      } else b.textContent = EMOJI[code];
+      b.title = ":" + code + ":";
+      b.addEventListener("click", function(){ insertTok(":" + code + ":"); picker.style.display = "none"; });
+      picker.appendChild(b);
+    });
+  }
+  function makeSahurSvg(){
+    var i = document.createElement("img");
+    i.className = "isvg"; i.alt = ":sahur:"; i.title = ":sahur:"; i.src = TUNG_IMG;
+    return i;
+  }
+  function makeCombo(){
+    var i = document.createElement("img");
+    i.className = "embed"; i.alt = "tung tung tung sahur"; i.loading = "lazy"; i.src = TUNG_IMG;
+    return i;
+  }
+  function renderInline(el, seg){
+    var re = /:([a-z0-9_+-]+):/g, last = 0, m;
+    while ((m = re.exec(seg))) {
+      if (m.index > last) el.appendChild(document.createTextNode(seg.slice(last, m.index)));
+      var code = m[1];
+      if (code === "sahur") el.appendChild(makeSahurSvg());
+      else if (EMOJI[code]) el.appendChild(document.createTextNode(EMOJI[code]));
+      else el.appendChild(document.createTextNode(m[0]));
+      last = re.lastIndex;
+    }
+    if (last < seg.length) el.appendChild(document.createTextNode(seg.slice(last)));
+  }
+  function renderBody(el, text){
+    el.textContent = "";
+    var re = /:tongue:\s*:tongue:\s*:tongue:\s*:sahur:/g;
+    var parts = text.split(re);
+    for (var i = 0; i < parts.length; i++) {
+      renderInline(el, parts[i]);
+      if (i < parts.length - 1) el.appendChild(makeCombo());
+    }
+  }
+
+  var MSGS = {};
+  var REACTS = ["❤️","👍","👎","😂","😮","😢","🔥","🤡","🙏","💀"];
+  var replyTo = null, rTarget = null;
+  function api(p, opt){ return fetch(API + p, opt).then(function(r){ return r.json().catch(function(){ return {}; }); }); }
+  function apiPost(p, body){ return api(p, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) }); }
+  function loadToken(){ try { return localStorage.getItem(TKEY); } catch(e) { return null; } }
+  function saveToken(t){ try { localStorage.setItem(TKEY, t); } catch(e) {} }
+  function clearToken(){ try { localStorage.removeItem(TKEY); } catch(e) {} }
+  function mkId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+  function paintKey(){
+    if (myhash) myhash.textContent = TOKEN || "";
+    if (exportKeyBtn) exportKeyBtn.style.display = TOKEN ? "inline-block" : "none";
+  }
+  function copyKey(btn){
+    if (!TOKEN) return;
+    var prev = btn ? btn.textContent : "";
+    function done(){ if (btn) { btn.textContent = "copied"; setTimeout(function(){ btn.textContent = prev; }, 1400); } }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(TOKEN).then(done).catch(fb);
+    } else fb();
+    function fb(){
+      var t = document.createElement("textarea");
+      t.value = TOKEN; t.style.position = "fixed"; t.style.left = "-9999px";
+      document.body.appendChild(t); t.select();
+      try { document.execCommand("copy"); } catch(e) {}
+      document.body.removeChild(t); done();
+    }
+  }
+  function renderReacts(id){
+    var m = MSGS[id]; if (!m) return;
+    m.reactEl.innerHTML = "";
+    Object.keys(m.counts).forEach(function(e){
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip" + (m.mine[e] ? " on" : "");
+      chip.textContent = e + " " + m.counts[e];
+      chip.addEventListener("click", function(ev){ ev.stopPropagation(); toggleReact(id, e); });
+      m.reactEl.appendChild(chip);
+    });
+  }
+  function applyReact(id, e, op){
+    var m = MSGS[id]; if (!m) return;
+    m.counts[e] = (m.counts[e] || 0) + op;
+    if (m.counts[e] <= 0) delete m.counts[e];
+    renderReacts(id);
+  }
+  function toggleReact(id, e){
+    var m = MSGS[id]; if (!m) return;
+    var op = m.mine[e] ? -1 : 1;
+    if (op === 1) m.mine[e] = 1; else delete m.mine[e];
+    applyReact(id, e, op);
+    var eid = mkId(); seenEids[eid] = 1;
+    apiPost("/react", { token:TOKEN, id:id, e:e, op:op, eid:eid });
+  }
+  function openPalette(id, anchor){
+    rTarget = id;
+    var r = anchor.getBoundingClientRect();
+    rpal.style.left = Math.max(6, Math.min(r.left - 90, window.innerWidth - 236)) + "px";
+    rpal.style.top = (r.bottom + 4) + "px";
+    rpal.style.display = "flex";
+  }
+  function buildRpal(){
+    rpal.innerHTML = "";
+    REACTS.forEach(function(e){
+      var b = document.createElement("button");
+      b.type = "button"; b.textContent = e;
+      b.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        if (rTarget) toggleReact(rTarget, e);
+        rpal.style.display = "none";
+      });
+      rpal.appendChild(b);
+    });
+  }
+  function setReply(m){
+    replyTo = { id:m.id, name:m.name, text:m.text.slice(0,140) };
+    replybar.innerHTML = "";
+    var s = document.createElement("span"); s.textContent = "replying to ";
+    var bb = document.createElement("b"); bb.textContent = m.name;
+    s.appendChild(bb); replybar.appendChild(s);
+    var x = document.createElement("span"); x.className = "x"; x.textContent = "cancel";
+    x.addEventListener("click", cancelReply);
+    replybar.appendChild(x);
+    replybar.style.display = "flex";
+  }
+  function cancelReply(){ replyTo = null; replybar.style.display = "none"; }
+  function add(m){
+    var row = document.createElement("div");
+    row.className = m.mine ? "msg me" : "msg";
+    if (m.id) row.setAttribute("data-id", m.id);
+    var w = document.createElement("span"); w.className = "who"; w.textContent = m.name;
+    row.appendChild(w);
+    if (m.reply) {
+      var q = document.createElement("div"); q.className = "quote";
+      var qn = document.createElement("b"); qn.textContent = m.reply.name + ": ";
+      q.appendChild(qn);
+      q.appendChild(document.createTextNode(emojify(m.reply.text)));
+      q.addEventListener("click", function(){
+        var t = document.querySelector("[data-id=\"" + m.reply.id + "\"]");
+        if (t) { t.scrollIntoView({ block:"center" }); t.className += " flash"; setTimeout(function(){ t.className = t.className.replace(" flash",""); }, 800); }
+      });
+      row.appendChild(q);
+    }
+    var bd = document.createElement("span"); bd.className = "body";
+    renderBody(bd, m.text); row.appendChild(bd);
+    var acts = document.createElement("div"); acts.className = "acts";
+    var rb = document.createElement("button"); rb.type = "button"; rb.className = "act"; rb.textContent = "😀"; rb.title = "react";
+    rb.addEventListener("click", function(ev){ ev.stopPropagation(); openPalette(m.id, rb); });
+    var pb = document.createElement("button"); pb.type = "button"; pb.className = "act"; pb.textContent = "↩"; pb.title = "reply";
+    pb.addEventListener("click", function(ev){ ev.stopPropagation(); setReply(m); input.focus(); });
+    acts.appendChild(rb); acts.appendChild(pb); row.appendChild(acts);
+    var rc = document.createElement("div"); rc.className = "reacts"; row.appendChild(rc);
+    MSGS[m.id] = { reactEl:rc, counts:{}, mine:{} };
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+  function show(v){
+    gate.style.display = (v === "apply" || v === "pending" || v === "login") ? "flex" : "none";
+    chat.style.display = v === "chat" ? "flex" : "none";
+    applyView.style.display = v === "apply" ? "block" : "none";
+    pendingView.style.display = v === "pending" ? "block" : "none";
+    loginView.style.display = v === "login" ? "block" : "none";
+    banEl.style.display = v === "ban" ? "flex" : "none";
+  }
+  function showBan(info){
+    polling = false;
+    var isTo = info && info.reason === "timeout";
+    banTitle.textContent = isTo ? "you are timed out" : "you are banned";
+    if (isTo && info.until) { banUntil.textContent = "until " + new Date(info.until).toLocaleString(); banUntil.style.display = ""; }
+    else banUntil.style.display = "none";
+    show("ban");
+    if (statusT) clearTimeout(statusT);
+    if (isTo) statusT = setTimeout(refreshGate, 5000);
+  }
+  function applyWarn(t){ if (warnEl) warnEl.textContent = t; }
+  function applyEvent(ev){
+    if (!ev) return;
+    if (ev.type === "react") { if (seenEids[ev.eid]) return; seenEids[ev.eid] = 1; applyReact(ev.id, ev.e, ev.op); return; }
+    if (ev.type === "msg") { if (MSGS[ev.id]) return; add({ id:ev.id, name:ev.name, text:ev.text, mine:ev.name === ME, reply:ev.reply || null }); }
+  }
+  function poll(){
+    if (!polling) return;
+    api("/events?since=" + cursor + "&token=" + encodeURIComponent(TOKEN)).then(function(r){
+      if (r && r.error === "unauthorized") { polling = false; refreshGate(); return; }
+      if (r && r.blocked) { showBan(r); return; }
+      if (r && r.events) { r.events.forEach(applyEvent); if (typeof r.cursor === "number") cursor = r.cursor; }
+    }).catch(function(){}).then(function(){ if (polling) setTimeout(poll, 1500); });
+  }
+  function startPoll(){ if (polling) return; polling = true; poll(); }
+  function startChat(name){
+    ME = name; nameEl.value = name; nameEl.readOnly = true;
+    paintKey(); show("chat"); input.focus(); startPoll();
+  }
+  function renderThread(thread){
+    thread = thread || [];
+    appThread.innerHTML = "";
+    var hasAdmin = false;
+    thread.forEach(function(m){
+      var b = document.createElement("div");
+      b.className = "tmsg " + (m.from === "admin" ? "admin" : "me");
+      b.textContent = (m.from === "admin" ? "tung: " : "you: ") + m.text;
+      appThread.appendChild(b);
+      if (m.from === "admin") hasAdmin = true;
+    });
+    respBox.style.display = hasAdmin ? "flex" : "none";
+  }
+  function refreshGate(){
+    TOKEN = loadToken();
+    paintKey();
+    if (!TOKEN) { show("login"); return; }
+    api("/status?token=" + encodeURIComponent(TOKEN)).then(function(s){
+      if (s && s.status === "approved") {
+        if (s.blocked) showBan(s); else startChat(s.username);
+      } else if (s && s.status === "pending") {
+        show("pending"); paintKey(); renderThread(s.thread);
+        if (statusT) clearTimeout(statusT);
+        statusT = setTimeout(refreshGate, 3000);
+      } else {
+        clearToken(); TOKEN = null; paintKey(); show("login");
+      }
+    }).catch(function(){ show("login"); });
+  }
+
+  applyForm.addEventListener("submit", function(ev){
+    ev.preventDefault();
+    if (loadToken()) { refreshGate(); return; }
+    var u = gu.value.trim(), a = ga.value.trim();
+    if (!u || !a) { applyWarn("pick a username and write an application."); return; }
+    applyBtn.disabled = true; applyWarn("submitting...");
+    apiPost("/apply", { username:u, application:a }).then(function(r){
+      applyBtn.disabled = false;
+      if (r && r.token) { saveToken(r.token); TOKEN = r.token; refreshGate(); }
+      else if (r && r.error === "username taken") applyWarn("that username is taken — pick another.");
+      else applyWarn("could not apply, try again.");
+    }).catch(function(){ applyBtn.disabled = false; applyWarn("network error, try again."); });
+  });
+  loginForm.addEventListener("submit", function(ev){
+    ev.preventDefault();
+    var u = lu.value.trim(), k = lk.value.trim();
+    if (!u || !k) { loginWarn.textContent = "enter your username and key."; return; }
+    loginBtn.disabled = true; loginWarn.textContent = "logging in...";
+    apiPost("/login", { username:u, token:k }).then(function(r){
+      loginBtn.disabled = false;
+      if (r && r.token) { saveToken(r.token); TOKEN = r.token; loginWarn.textContent = ""; refreshGate(); }
+      else loginWarn.textContent = "username and key do not match.";
+    }).catch(function(){ loginBtn.disabled = false; loginWarn.textContent = "network error, try again."; });
+  });
+  document.getElementById("toLogin").addEventListener("click", function(){ show("login"); });
+  document.getElementById("toApply").addEventListener("click", function(){ show("apply"); });
+  recheckBtn.addEventListener("click", function(){ refreshGate(); });
+  copyHashBtn.addEventListener("click", function(){ copyKey(copyHashBtn); });
+  exportKeyBtn.addEventListener("click", function(){ copyKey(exportKeyBtn); });
+  respBtn.addEventListener("click", function(){
+    var t = respText.value.trim(); if (!t) return; respText.value = "";
+    apiPost("/respond", { token:TOKEN, text:t }).then(function(r){ if (r && r.thread) renderThread(r.thread); });
+  });
+  form.addEventListener("submit", function(ev){
+    ev.preventDefault();
+    var text = input.value.trim(); if (!text) return;
+    var id = mkId();
+    var rep = replyTo ? { id:replyTo.id, name:replyTo.name, text:replyTo.text } : null;
+    input.value = "";
+    add({ id:id, name:ME, text:text, mine:true, reply:rep });
+    apiPost("/send", { token:TOKEN, id:id, text:text, reply:rep });
+    cancelReply();
+  });
+  pick.addEventListener("click", function(ev){ ev.stopPropagation(); picker.style.display = picker.style.display === "flex" ? "none" : "flex"; rpal.style.display = "none"; });
+  document.addEventListener("click", function(){ rpal.style.display = "none"; picker.style.display = "none"; });
+  buildPicker(); buildRpal();
+  refreshGate();
+})();
+</script>
+</body>
+</html>
