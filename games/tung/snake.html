@@ -30,8 +30,8 @@
   try{best=parseInt(localStorage.getItem("sahur-snake-best")||"0",10)||0;}catch(e){best=0;}
   var STEP=120;
   var DEMO=/\bdemo\b/.test(location.search||"");
-  var WARN_MS=DEMO?1000:2600;
-  var FOE_MIN=DEMO?250:3500, FOE_SPAN=DEMO?0:3500;
+  var WARN_MS=DEMO?900:2600;
+  var FOE_MIN=DEMO?200:3500, FOE_SPAN=DEMO?0:3500;
   var STAY_MIN=6500, STAY_SPAN=3500;
 
   function onSnake(x,y){
@@ -73,7 +73,7 @@
   }
   function clearHazard(){ warn=null; foe=null; nextFoeAt=0; }
   function reset(){
-    snake=DEMO?[{x:3,y:9},{x:2,y:9},{x:1,y:9}]:[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
+    snake=DEMO?[{x:2,y:9},{x:1,y:9},{x:0,y:9}]:[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
     dir={x:1,y:0}; next={x:1,y:0};
     food=null; cursed=null; score=0; state="idle"; tickAcc=0; deathKind="self";
     clearHazard();

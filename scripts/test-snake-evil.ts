@@ -91,17 +91,21 @@ if (died !== "evil") throw new Error("head-on foe did not kill");
 if (snake[0].x !== 8) throw new Error("death still moved the snake");
 
 {
-  const startX = 3;
+  const startX = 2;
   const target = { x: 14, y: 9 };
   const stepMs = 120;
-  const warnAt = 250;
-  const spawnAt = warnAt + 1000;
+  const warnAt = 200;
+  const spawnAt = warnAt + 900;
   const headAt = (t: number) => startX + Math.floor(t / stepMs);
+  const hitAt = (target.x - startX) * stepMs;
   if (headAt(spawnAt) >= target.x) {
     throw new Error("demo spawn is too late; snake would already occupy the cell");
   }
-  if (headAt(spawnAt + stepMs) < target.x) {
+  if (hitAt <= spawnAt) {
     throw new Error("demo path never reaches the foe after spawn");
+  }
+  if (hitAt - spawnAt < stepMs) {
+    throw new Error("demo foe is not visible for a full step");
   }
 }
 
