@@ -30,8 +30,8 @@
   try{best=parseInt(localStorage.getItem("sahur-snake-best")||"0",10)||0;}catch(e){best=0;}
   var STEP=120;
   var DEMO=/\bdemo\b/.test(location.search||"");
-  var WARN_MS=DEMO?2000:2600;
-  var FOE_MIN=DEMO?700:3500, FOE_SPAN=DEMO?0:3500;
+  var WARN_MS=DEMO?1000:2600;
+  var FOE_MIN=DEMO?250:3500, FOE_SPAN=DEMO?0:3500;
   var STAY_MIN=6500, STAY_SPAN=3500;
 
   function onSnake(x,y){
@@ -59,7 +59,7 @@
   }
   function pickClearCell(){
     if(DEMO){
-      var prefer=[{x:12,y:9},{x:13,y:9},{x:11,y:9},{x:12,y:8},{x:12,y:10}];
+      var prefer=[{x:14,y:9},{x:15,y:9},{x:13,y:9}];
       for(var i=0;i<prefer.length;i++) if(!reserved(prefer[i].x, prefer[i].y)) return prefer[i];
     }
     var tries=0, x, y;
@@ -73,11 +73,12 @@
   }
   function clearHazard(){ warn=null; foe=null; nextFoeAt=0; }
   function reset(){
-    snake=[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
+    snake=DEMO?[{x:3,y:9},{x:2,y:9},{x:1,y:9}]:[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
     dir={x:1,y:0}; next={x:1,y:0};
     food=null; cursed=null; score=0; state="idle"; tickAcc=0; deathKind="self";
     clearHazard();
     food=emptyCell();
+    if(DEMO && food && food.x===14 && food.y===9) food={x:8,y:3};
   }
   function die(kind){
     state="dead";
@@ -222,11 +223,6 @@
     if(state!=="play") return;
     if(!nextFoeAt) scheduleFoe(now);
     if(warn){
-      if(onSnake(warn.x, warn.y)){
-        warn=null;
-        scheduleFoe(now);
-        return;
-      }
       if(now>=warn.until){
         if(!onSnake(warn.x, warn.y) && !(food && food.x===warn.x && food.y===warn.y) && !(cursed && cursed.x===warn.x && cursed.y===warn.y)){
           foe={x:warn.x, y:warn.y, until:now+STAY_MIN+Math.random()*STAY_SPAN};
@@ -280,6 +276,9 @@
   }, {passive:true});
   c.addEventListener("mousedown", function(){ if(state!=="play") start(); });
   reset();
+  if(DEMO || /\bauto\b/.test(location.search||"")){
+    setTimeout(function(){ if(state==="idle") start(); }, 900);
+  }
   if(/\btest\b/.test(location.search||"")){
     window.__snake={
       get:function(){

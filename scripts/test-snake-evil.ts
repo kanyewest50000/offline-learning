@@ -90,4 +90,19 @@ step({ x: 1, y: 0 }, { x: 9, y: 9 });
 if (died !== "evil") throw new Error("head-on foe did not kill");
 if (snake[0].x !== 8) throw new Error("death still moved the snake");
 
+{
+  const startX = 3;
+  const target = { x: 14, y: 9 };
+  const stepMs = 120;
+  const warnAt = 250;
+  const spawnAt = warnAt + 1000;
+  const headAt = (t: number) => startX + Math.floor(t / stepMs);
+  if (headAt(spawnAt) >= target.x) {
+    throw new Error("demo spawn is too late; snake would already occupy the cell");
+  }
+  if (headAt(spawnAt + stepMs) < target.x) {
+    throw new Error("demo path never reaches the foe after spawn");
+  }
+}
+
 console.log("snake evil tung: ok");
