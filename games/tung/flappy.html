@@ -10,48 +10,72 @@
   <div class="hud">
     <div>
       <h1>Flappy Tung</h1>
-      <p class="line">gravity is a suggestion. tung disagrees.</p>
-    </div>
-    <div class="btns">
-      <button id="pause" class="ghost" type="button">pause</button>
-      <button id="restart" type="button">restart</button>
+      <p class="line">gravity is inevitable. tung disagrees.</p>
     </div>
   </div>
-  <div class="stage"><canvas id="c" width="420" height="640"></canvas></div>
-  <p class="hint">click / tap / space to flap · p pause · r restart</p>
+  <div class="stage" style="--gw:420;--gh:640">
+    <div class="frame"><canvas id="c" width="420" height="640"></canvas></div>
+  </div>
+  <p class="hint">click / tap / space to flap · after falling, tap to try again</p>
+<script src="tung-fit.js"></script>
 <script>
 (function(){
   var W=420, H=640, GROUND=56;
   var c=document.getElementById("c"), ctx=c.getContext("2d");
   var tungImg=new Image(); tungImg.src="../../assets/tungtungtungsahur.png";
-  var bird={x:92,y:280,vy:0,r:22};
-  var pipes=[], frame=0, score=0, best=0, state="idle", paused=false;
+  /* oval body radii — flappy-bird capsule, not a circle */
+  var bird={x:92,y:280,vy:0,bw:24,bh:16};
+  var pipes=[], frame=0, score=0, best=0, state="idle";
   var GRAV=0.42, FLAP=-7.2, GAP=148, PW=54, SPEED=2.15;
   try{best=parseInt(localStorage.getItem("flappy-tung-best")||"0",10)||0;}catch(e){}
 
   function reset(){
-    bird.y=280; bird.vy=0; pipes=[]; frame=0; score=0; state="idle"; paused=false;
-    document.getElementById("pause").textContent="pause";
+    bird.y=280; bird.vy=0; pipes=[]; frame=0; score=0; state="idle";
   }
   function spawn(){
     var top=70+Math.random()*(H-GROUND-GAP-140);
     pipes.push({x:W+10, top:top, gap:GAP, passed:false});
   }
   function flap(){
-    if(state==="dead"){reset(); return;}
-    if(paused) return;
+    if(state==="dead") reset();
     if(state==="idle") state="play";
     bird.vy=FLAP;
   }
-  function togglePause(){
-    if(state!=="play") return;
-    paused=!paused;
-    document.getElementById("pause").textContent=paused?"resume":"pause";
+  function birdAngle(){
+    return Math.max(-0.6, Math.min(0.9, bird.vy*0.06));
+  }
+  function toLocal(px, py){
+    var a=birdAngle(), dx=px-bird.x, dy=py-bird.y;
+    var cos=Math.cos(-a), sin=Math.sin(-a);
+    return {x:dx*cos-dy*sin, y:dx*sin+dy*cos};
+  }
+  function inEllipse(lx, ly, cx, cy, rx, ry, rot){
+    var dx=lx-cx, dy=ly-cy;
+    if(rot){
+      var cos=Math.cos(-rot), sin=Math.sin(-rot);
+      var nx=dx*cos-dy*sin; dy=dx*sin+dy*cos; dx=nx;
+    }
+    return (dx*dx)/(rx*rx)+(dy*dy)/(ry*ry) <= 1;
+  }
+  function inBird(px, py){
+    var p=toLocal(px, py);
+    if(inEllipse(p.x, p.y, 0, 0, bird.bw, bird.bh, 0)) return true;
+    return inEllipse(p.x, p.y, -bird.bw*0.32, bird.bh*0.38, bird.bw*0.52, bird.bh*0.4, -0.5);
+  }
+  function hitRect(x,y,w,h){
+    if(bird.x>=x && bird.x<=x+w && bird.y>=y && bird.y<=y+h) return true;
+    var samples=[
+      [Math.max(x, Math.min(bird.x, x+w)), Math.max(y, Math.min(bird.y, y+h))],
+      [Math.max(x, Math.min(bird.x, x+w)), y],
+      [Math.max(x, Math.min(bird.x, x+w)), y+h],
+      [x, Math.max(y, Math.min(bird.y, y+h))],
+      [x+w, Math.max(y, Math.min(bird.y, y+h))]
+    ];
+    for(var i=0;i<samples.length;i++) if(inBird(samples[i][0], samples[i][1])) return true;
+    return false;
   }
   function hitPipe(p){
-    var by=bird.y, bx=bird.x, r=bird.r-4;
-    if(bx+r<p.x || bx-r>p.x+PW) return false;
-    return by-r<p.top || by+r>p.top+p.gap;
+    return hitRect(p.x, 0, PW, p.top) || hitRect(p.x, p.top+p.gap, PW, H-GROUND-(p.top+p.gap));
   }
   function wood(x,y,w,h){
     ctx.fillStyle="#c8823c";
@@ -63,19 +87,54 @@
     ctx.fillStyle="#f2c06333";
     ctx.fillRect(x+6,y+4,6,Math.max(0,h-8));
   }
+  function silPath(){
+    ctx.beginPath();
+    ctx.ellipse(0, 0, bird.bw, bird.bh, 0, 0, Math.PI*2);
+    ctx.ellipse(-bird.bw*0.32, bird.bh*0.38, bird.bw*0.52, bird.bh*0.4, -0.5, 0, Math.PI*2);
+  }
   function drawBird(){
     ctx.save();
     ctx.translate(bird.x, bird.y);
-    ctx.rotate(Math.max(-0.6, Math.min(0.9, bird.vy*0.06)));
+    ctx.rotate(birdAngle());
+    var wing=state==="play" ? Math.max(-0.85, Math.min(0.55, -bird.vy*0.09)) : Math.sin(Date.now()/220)*0.12;
+    ctx.save();
+    ctx.translate(-bird.bw*0.15, bird.bh*0.15);
+    ctx.rotate(wing);
+    ctx.fillStyle="#6a3a12";
+    ctx.beginPath();
+    ctx.ellipse(-6, 6, 13, 7, -0.35, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    silPath();
+    ctx.clip();
     if(tungImg.complete && tungImg.naturalWidth){
-      ctx.beginPath(); ctx.arc(0,0,bird.r,0,Math.PI*2); ctx.clip();
-      ctx.drawImage(tungImg,-bird.r,-bird.r,bird.r*2,bird.r*2);
+      /* face/upper drum of the sahur sprite, fitted into the capsule */
+      var sw=tungImg.naturalWidth, sh=tungImg.naturalHeight;
+      ctx.drawImage(tungImg, sw*0.22, sh*0.02, sw*0.48, sh*0.46, -bird.bw-2, -bird.bh-2, bird.bw*2+8, bird.bh*2+10);
     } else {
       ctx.fillStyle="#c8823c";
-      ctx.beginPath(); ctx.arc(0,0,bird.r,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#f5efe0"; ctx.beginPath(); ctx.arc(6,-4,6,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle="#1d1206"; ctx.beginPath(); ctx.arc(8,-4,3,0,Math.PI*2); ctx.fill();
+      silPath(); ctx.fill();
     }
+    ctx.restore();
+    ctx.strokeStyle="#7a5a1a";
+    ctx.lineWidth=2;
+    silPath();
+    ctx.stroke();
+    ctx.fillStyle="#e8a03a";
+    ctx.beginPath();
+    ctx.moveTo(bird.bw-3, -5);
+    ctx.lineTo(bird.bw+12, 0);
+    ctx.lineTo(bird.bw-3, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle="#c47a28";
+    ctx.beginPath();
+    ctx.moveTo(bird.bw-3, 0);
+    ctx.lineTo(bird.bw+12, 0);
+    ctx.lineTo(bird.bw-3, 4);
+    ctx.closePath();
+    ctx.fill();
     ctx.restore();
   }
   function overlay(title, sub){
@@ -99,7 +158,7 @@
     if(line) ctx.fillText(line,x,yy);
   }
   function tick(){
-    if(state==="play" && !paused){
+    if(state==="play"){
       frame++;
       bird.vy+=GRAV; bird.y+=bird.vy;
       if(frame%90===0) spawn();
@@ -112,7 +171,7 @@
         if(hitPipe(pipes[i])) state="dead";
         if(pipes[i].x<-PW-10) pipes.splice(i,1);
       }
-      if(bird.y+bird.r>H-GROUND || bird.y-bird.r<0) state="dead";
+      if(bird.y+bird.bh>H-GROUND || bird.y-bird.bh<0) state="dead";
     }
     ctx.fillStyle="#1d1206"; ctx.fillRect(0,0,W,H);
     var g=ctx.createRadialGradient(W/2,80,20,W/2,80,340);
@@ -126,15 +185,14 @@
     ctx.fillStyle="#241505"; ctx.fillRect(0,H-GROUND,W,GROUND);
     ctx.fillStyle="#7a5a1a"; ctx.fillRect(0,H-GROUND,W,3);
     ctx.fillStyle="#c8823c"; ctx.font="bold 11px system-ui"; ctx.textAlign="left";
-    ctx.fillText("the floor waits", 12, H-22);
+    ctx.fillText("the floor does not wait. it collects.", 12, H-22);
     drawBird();
     ctx.fillStyle="#f2c063"; ctx.font="bold 28px system-ui"; ctx.textAlign="center";
     ctx.fillText(String(score), W/2, 42);
     ctx.fillStyle="#8a6a3a"; ctx.font="11px system-ui";
     ctx.fillText("best "+best, W/2, 60);
     if(state==="idle") overlay("Flappy Tung", "the air does not hold him. he holds the air.");
-    else if(paused) overlay("paused", "even the fall can wait.");
-    else if(state==="dead") overlay("fallen", "the ground received you. it always does.");
+    else if(state==="dead") overlay("fallen", "he stopped disagreeing. the ground finished the sentence.");
     requestAnimationFrame(tick);
   }
   function onDown(ev){ ev.preventDefault(); flap(); }
@@ -142,11 +200,7 @@
   c.addEventListener("touchstart", onDown, {passive:false});
   window.addEventListener("keydown", function(ev){
     if(ev.code==="Space" || ev.key===" "){ ev.preventDefault(); flap(); }
-    if(ev.key==="p" || ev.key==="P") togglePause();
-    if(ev.key==="r" || ev.key==="R") reset();
   });
-  document.getElementById("pause").onclick=togglePause;
-  document.getElementById("restart").onclick=reset;
   tick();
 })();
 </script>
