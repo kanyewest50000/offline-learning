@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sahur Pong</title>
+<link rel="stylesheet" href="tung.css">
+</head>
+<body>
+  <div class="hud">
+    <div>
+      <h1>Sahur Pong</h1>
+      <p class="line">he returns every serve. he always has.</p>
+    </div>
+    <div class="btns">
+      <button id="pause" class="ghost" type="button">pause</button>
+      <button id="restart" type="button">restart</button>
+    </div>
+  </div>
+  <div class="stage"><canvas id="c" width="720" height="420"></canvas></div>
+  <p class="hint">move with mouse / touch / up-down · p pause · r restart · first to 7</p>
+<script>
+(function(){
+  var W=720, H=420;
+  var c=document.getElementById("c"), ctx=c.getContext("2d");
+  var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
+  var you, him, ball, youScore, himScore, state, paused, spin;
+  var PW=12, PH=78, BR=12, WIN=7;
+
+  function resetBall(toHim){
+    ball={x:W/2, y:H/2, vx:(toHim?3.2:-3.2), vy:(Math.random()*2-1)*2.4};
+    spin=0;
+  }
+  function reset(){
+    you={x:28, y:H/2-PH/2, vy:0};
+    him={x:W-28-PW, y:H/2-PH/2};
+    youScore=0; himScore=0; state="idle"; paused=false;
+    resetBall(true);
+    document.getElementById("pause").textContent="pause";
+  }
+  function start(){
+    if(state==="idle") state="play";
+    if(state==="win" || state==="lose") reset();
+  }
+  function togglePause(){
+    if(state!=="play") return;
+    paused=!paused;
+    document.getElementById("pause").textContent=paused?"resume":"pause";
+  }
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  function bounce(p, dir){
+    var rel=((ball.y)-(p.y+PH/2))/(PH/2);
+    ball.vx=dir*Math.min(8.5, Math.abs(ball.vx)+0.35);
+    ball.vy=rel*5.2;
+    spin+=dir*0.4;
+  }
+  function tick(){
+    if(state==="play" && !paused){
+      you.y=clamp(you.y+you.vy, 8, H-PH-8);
+      var target=ball.y-PH/2;
+      /* tung is faithful, not perfect */
+      var aim=him.y+(target-him.y)*0.09;
+      if(ball.vx>0) him.y=clamp(aim + Math.sin(Date.now()/240)*6, 8, H-PH-8);
+      else him.y=clamp(him.y+(H/2-PH/2-him.y)*0.03, 8, H-PH-8);
+      ball.x+=ball.vx; ball.y+=ball.vy; spin+=ball.vx*0.01;
+      if(ball.y<BR || ball.y>H-BR){ ball.vy*=-1; ball.y=clamp(ball.y, BR, H-BR); }
+      if(ball.vx<0 && ball.x-BR<you.x+PW && ball.x>you.x && ball.y>you.y && ball.y<you.y+PH) bounce(you, 1);
+      if(ball.vx>0 && ball.x+BR>him.x && ball.x<him.x+PW && ball.y>him.y && ball.y<him.y+PH) bounce(him, -1);
+      if(ball.x<-20){ himScore++; if(himScore>=WIN) state="lose"; else { state="idle"; resetBall(true); } }
+      if(ball.x>W+20){ youScore++; if(youScore>=WIN) state="win"; else { state="idle"; resetBall(false); } }
+    }
+    ctx.fillStyle="#160d04"; ctx.fillRect(0,0,W,H);
+    var g=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,340);
+    g.addColorStop(0,"#241505"); g.addColorStop(1,"#1d1206");
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle="#7a5a1a"; ctx.setLineDash([7,8]);
+    ctx.beginPath(); ctx.moveTo(W/2, 12); ctx.lineTo(W/2, H-12); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle="#c8823c"; roundPad(you.x,you.y,PW,PH);
+    ctx.fillStyle="#f2c063"; roundPad(him.x,him.y,PW,PH);
+    ctx.save();
+    ctx.translate(ball.x, ball.y); ctx.rotate(spin);
+    if(tung.complete && tung.naturalWidth){
+      ctx.beginPath(); ctx.arc(0,0,BR+2,0,Math.PI*2); ctx.clip();
+      ctx.drawImage(tung,-BR-2,-BR-2,(BR+2)*2,(BR+2)*2);
+    } else {
+      ctx.fillStyle="#c8823c"; ctx.beginPath(); ctx.arc(0,0,BR,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+    ctx.fillStyle="#f2c063"; ctx.font="bold 36px system-ui"; ctx.textAlign="center";
+    ctx.fillText(String(youScore), W/2-48, 46);
+    ctx.fillText(String(himScore), W/2+48, 46);
+    ctx.fillStyle="#8a6a3a"; ctx.font="11px system-ui";
+    ctx.fillText("you", W/2-48, 64);
+    ctx.fillText("tung", W/2+48, 64);
+    if(state==="idle") overlay("Sahur Pong", youScore+himScore===0?"the rally begins when you do.":"again. he is already waiting.");
+    else if(paused) overlay("paused", "the ball hangs. he does not blink.");
+    else if(state==="lose") overlay("returned", "he does not miss. you do.");
+    else if(state==="win") overlay("a rare bounce", "a point he allowed. cherish it.");
+    requestAnimationFrame(tick);
+  }
+  function roundPad(x,y,w,h){
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(x,y,w,h,6); else ctx.rect(x,y,w,h);
+    ctx.fill();
+  }
+  function overlay(title, sub){
+    ctx.fillStyle="#1d1206cc";
+    ctx.fillRect(W/2-180, H/2-80, 360, 160);
+    ctx.strokeStyle="#7a5a1a"; ctx.strokeRect(W/2-180, H/2-80, 360, 160);
+    ctx.fillStyle="#f2c063"; ctx.font="bold 22px system-ui"; ctx.textAlign="center";
+    ctx.fillText(title, W/2, H/2-24);
+    ctx.fillStyle="#c8823c"; ctx.font="italic 13px system-ui";
+    ctx.fillText(sub, W/2, H/2+8);
+    ctx.fillStyle="#8a6a3a"; ctx.font="12px system-ui";
+    ctx.fillText("tap or move to continue", W/2, H/2+48);
+  }
+  function moveTo(clientY){
+    var r=c.getBoundingClientRect();
+    var y=(clientY-r.top)*(H/r.height)-PH/2;
+    you.y=clamp(y, 8, H-PH-8);
+    start();
+  }
+  c.addEventListener("mousemove", function(ev){ moveTo(ev.clientY); });
+  c.addEventListener("mousedown", function(ev){ moveTo(ev.clientY); start(); });
+  c.addEventListener("touchmove", function(ev){ ev.preventDefault(); moveTo(ev.touches[0].clientY); }, {passive:false});
+  c.addEventListener("touchstart", function(ev){ ev.preventDefault(); moveTo(ev.touches[0].clientY); start(); }, {passive:false});
+  window.addEventListener("keydown", function(ev){
+    if(ev.key==="ArrowUp"||ev.key==="w"||ev.key==="W"){ you.vy=-6; start(); }
+    if(ev.key==="ArrowDown"||ev.key==="s"||ev.key==="S"){ you.vy=6; start(); }
+    if(ev.key==="p"||ev.key==="P") togglePause();
+    if(ev.key==="r"||ev.key==="R") reset();
+  });
+  window.addEventListener("keyup", function(ev){
+    if(ev.key==="ArrowUp"||ev.key==="w"||ev.key==="W"||ev.key==="ArrowDown"||ev.key==="s"||ev.key==="S") you.vy=0;
+  });
+  document.getElementById("pause").onclick=togglePause;
+  document.getElementById("restart").onclick=reset;
+  reset();
+  tick();
+})();
+</script>
+</body>
+</html>

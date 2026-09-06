@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sahur Snake</title>
+<link rel="stylesheet" href="tung.css">
+</head>
+<body>
+  <div class="hud">
+    <div>
+      <h1>Sahur Snake</h1>
+      <p class="line">eat. lengthen. forget why.</p>
+    </div>
+    <div class="btns">
+      <button id="pause" class="ghost" type="button">pause</button>
+      <button id="restart" type="button">restart</button>
+    </div>
+  </div>
+  <div class="stage"><canvas id="c" width="480" height="480"></canvas></div>
+  <p class="hint">arrows / wasd / swipe to slither · p pause · r restart · cursed relics turn you around</p>
+<script>
+(function(){
+  var N=18, CELL=24, W=N*CELL, H=N*CELL;
+  var c=document.getElementById("c"), ctx=c.getContext("2d");
+  var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
+  var god=new Image(); god.src="../../assets/tungtunggod.png";
+  var snake, dir, next, food, cursed, score, best, state, tickAcc, paused, last;
+  try{best=parseInt(localStorage.getItem("sahur-snake-best")||"0",10)||0;}catch(e){best=0;}
+  var STEP=120;
+
+  function keyOf(x,y){return x+","+y;}
+  function occupied(){
+    var m={};
+    for(var i=0;i<snake.length;i++) m[keyOf(snake[i].x,snake[i].y)]=1;
+    return m;
+  }
+  function emptyCell(){
+    var m=occupied(), tries=0, x, y;
+    do { x=(Math.random()*N)|0; y=(Math.random()*N)|0; tries++; }
+    while((m[keyOf(x,y)] || (food && food.x===x && food.y===y) || (cursed && cursed.x===x && cursed.y===y)) && tries<80);
+    return {x:x,y:y};
+  }
+  function reset(){
+    snake=[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
+    dir={x:1,y:0}; next={x:1,y:0};
+    food=emptyCell(); cursed=null; score=0; state="idle"; paused=false; tickAcc=0;
+    document.getElementById("pause").textContent="pause";
+  }
+  function die(){ state="dead"; if(score>best){best=score; try{localStorage.setItem("sahur-snake-best",String(best));}catch(e){}} }
+  function start(){ if(state==="idle") state="play"; if(state==="dead") reset(); }
+  function setDir(x,y){
+    start();
+    if(paused || state!=="play") return;
+    if(dir.x===-x && dir.y===-y) return;
+    next={x:x,y:y};
+  }
+  function togglePause(){
+    if(state!=="play") return;
+    paused=!paused;
+    document.getElementById("pause").textContent=paused?"resume":"pause";
+  }
+  function step(){
+    dir=next;
+    var head={x:snake[0].x+dir.x, y:snake[0].y+dir.y};
+    if(head.x<0||head.y<0||head.x>=N||head.y>=N){ die(); return; }
+    for(var i=0;i<snake.length;i++) if(snake[i].x===head.x && snake[i].y===head.y){ die(); return; }
+    snake.unshift(head);
+    if(food && head.x===food.x && head.y===food.y){
+      score+=1; food=emptyCell();
+      if(score%3===0) cursed=emptyCell();
+    } else if(cursed && head.x===cursed.x && head.y===cursed.y){
+      score+=5; cursed=null;
+      snake.reverse();
+      if(snake.length>1){
+        dir={x:snake[0].x-snake[1].x, y:snake[0].y-snake[1].y};
+        if(!dir.x && !dir.y) dir={x:-next.x,y:-next.y};
+      } else dir={x:-dir.x,y:-dir.y};
+      next=dir;
+    } else {
+      snake.pop();
+    }
+  }
+  function cell(x,y, fill, stroke){
+    ctx.fillStyle=fill;
+    ctx.strokeStyle=stroke||"#7a5a1a";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(x*CELL+2,y*CELL+2,CELL-4,CELL-4,6); else ctx.rect(x*CELL+2,y*CELL+2,CELL-4,CELL-4);
+    ctx.fill(); ctx.stroke();
+  }
+  function sprite(img, x, y){
+    var px=x*CELL+2, py=y*CELL+2, s=CELL-4;
+    if(img.complete && img.naturalWidth){
+      ctx.save();
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(px,py,s,s,6); else ctx.rect(px,py,s,s);
+      ctx.clip();
+      ctx.drawImage(img,px,py,s,s);
+      ctx.restore();
+      ctx.strokeStyle="#7a5a1a"; ctx.strokeRect(px+0.5,py+0.5,s-1,s-1);
+    } else cell(x,y,"#c8823c");
+  }
+  function overlay(title, sub){
+    ctx.fillStyle="#1d1206cc";
+    ctx.fillRect(36, 150, W-72, 180);
+    ctx.strokeStyle="#7a5a1a"; ctx.strokeRect(36, 150, W-72, 180);
+    ctx.fillStyle="#f2c063"; ctx.font="bold 22px system-ui"; ctx.textAlign="center";
+    ctx.fillText(title, W/2, 208);
+    ctx.fillStyle="#c8823c"; ctx.font="italic 13px system-ui";
+    wrap(sub, W/2, 238, W-110, 18);
+    ctx.fillStyle="#8a6a3a"; ctx.font="12px system-ui";
+    ctx.fillText("tap or press a direction", W/2, 298);
+  }
+  function wrap(t,x,y,max,lh){
+    var words=t.split(" "), line="", yy=y;
+    for(var i=0;i<words.length;i++){
+      var test=line?line+" "+words[i]:words[i];
+      if(ctx.measureText(test).width>max){ ctx.fillText(line,x,yy); line=words[i]; yy+=lh; }
+      else line=test;
+    }
+    if(line) ctx.fillText(line,x,yy);
+  }
+  function draw(){
+    ctx.fillStyle="#160d04"; ctx.fillRect(0,0,W,H);
+    for(var y=0;y<N;y++) for(var x=0;x<N;x++){
+      ctx.fillStyle=((x+y)%2)? "#1d1206":"#241505";
+      ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+    }
+    if(food) sprite(tung, food.x, food.y);
+    if(cursed) sprite(god, cursed.x, cursed.y);
+    for(var i=snake.length-1;i>=0;i--){
+      var s=snake[i];
+      if(i===0) sprite(tung, s.x, s.y);
+      else cell(s.x,s.y, i%2?"#c8823c":"#a9743c");
+    }
+    ctx.fillStyle="#f2c063"; ctx.font="bold 16px system-ui"; ctx.textAlign="left";
+    ctx.fillText("sahurs "+score, 10, 22);
+    ctx.fillStyle="#8a6a3a"; ctx.textAlign="right";
+    ctx.fillText("best "+best, W-10, 22);
+    if(state==="idle") overlay("Sahur Snake", "the hunger is already walking.");
+    else if(paused) overlay("paused", "the body waits. the appetite does not.");
+    else if(state==="dead") overlay("consumed", "the body found the body. such is lunch.");
+  }
+  function loop(now){
+    if(!last) last=now;
+    var dt=now-last; last=now;
+    if(state==="play" && !paused){
+      tickAcc+=dt;
+      while(tickAcc>=STEP){ tickAcc-=STEP; if(state==="play") step(); }
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+  window.addEventListener("keydown", function(ev){
+    var k=ev.key;
+    if(k==="ArrowUp"||k==="w"||k==="W"){ ev.preventDefault(); setDir(0,-1); }
+    if(k==="ArrowDown"||k==="s"||k==="S"){ ev.preventDefault(); setDir(0,1); }
+    if(k==="ArrowLeft"||k==="a"||k==="A"){ ev.preventDefault(); setDir(-1,0); }
+    if(k==="ArrowRight"||k==="d"||k==="D"){ ev.preventDefault(); setDir(1,0); }
+    if(k==="p"||k==="P") togglePause();
+    if(k==="r"||k==="R") reset();
+  });
+  var sx=0, sy=0;
+  c.addEventListener("touchstart", function(ev){ var t=ev.changedTouches[0]; sx=t.clientX; sy=t.clientY; }, {passive:true});
+  c.addEventListener("touchend", function(ev){
+    var t=ev.changedTouches[0], dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Math.abs(dx)<12 && Math.abs(dy)<12){ start(); return; }
+    if(Math.abs(dx)>Math.abs(dy)) setDir(dx>0?1:-1, 0); else setDir(0, dy>0?1:-1);
+  }, {passive:true});
+  c.addEventListener("mousedown", function(){ if(state!=="play") start(); });
+  document.getElementById("pause").onclick=togglePause;
+  document.getElementById("restart").onclick=reset;
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flappy Tung</title>
+<link rel="stylesheet" href="tung.css">
+</head>
+<body>
+  <div class="hud">
+    <div>
+      <h1>Flappy Tung</h1>
+      <p class="line">gravity is a suggestion. tung disagrees.</p>
+    </div>
+    <div class="btns">
+      <button id="pause" class="ghost" type="button">pause</button>
+      <button id="restart" type="button">restart</button>
+    </div>
+  </div>
+  <div class="stage"><canvas id="c" width="420" height="640"></canvas></div>
+  <p class="hint">click / tap / space to flap · p pause · r restart</p>
+<script>
+(function(){
+  var W=420, H=640, GROUND=56;
+  var c=document.getElementById("c"), ctx=c.getContext("2d");
+  var tungImg=new Image(); tungImg.src="../../assets/tungtungtungsahur.png";
+  var bird={x:92,y:280,vy:0,r:22};
+  var pipes=[], frame=0, score=0, best=0, state="idle", paused=false;
+  var GRAV=0.42, FLAP=-7.2, GAP=148, PW=54, SPEED=2.15;
+  try{best=parseInt(localStorage.getItem("flappy-tung-best")||"0",10)||0;}catch(e){}
+
+  function reset(){
+    bird.y=280; bird.vy=0; pipes=[]; frame=0; score=0; state="idle"; paused=false;
+    document.getElementById("pause").textContent="pause";
+  }
+  function spawn(){
+    var top=70+Math.random()*(H-GROUND-GAP-140);
+    pipes.push({x:W+10, top:top, gap:GAP, passed:false});
+  }
+  function flap(){
+    if(state==="dead"){reset(); return;}
+    if(paused) return;
+    if(state==="idle") state="play";
+    bird.vy=FLAP;
+  }
+  function togglePause(){
+    if(state!=="play") return;
+    paused=!paused;
+    document.getElementById("pause").textContent=paused?"resume":"pause";
+  }
+  function hitPipe(p){
+    var by=bird.y, bx=bird.x, r=bird.r-4;
+    if(bx+r<p.x || bx-r>p.x+PW) return false;
+    return by-r<p.top || by+r>p.top+p.gap;
+  }
+  function wood(x,y,w,h){
+    ctx.fillStyle="#c8823c";
+    ctx.strokeStyle="#7a5a1a";
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    if(ctx.roundRect) ctx.roundRect(x,y,w,h,8); else ctx.rect(x,y,w,h);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle="#f2c06333";
+    ctx.fillRect(x+6,y+4,6,Math.max(0,h-8));
+  }
+  function drawBird(){
+    ctx.save();
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(Math.max(-0.6, Math.min(0.9, bird.vy*0.06)));
+    if(tungImg.complete && tungImg.naturalWidth){
+      ctx.beginPath(); ctx.arc(0,0,bird.r,0,Math.PI*2); ctx.clip();
+      ctx.drawImage(tungImg,-bird.r,-bird.r,bird.r*2,bird.r*2);
+    } else {
+      ctx.fillStyle="#c8823c";
+      ctx.beginPath(); ctx.arc(0,0,bird.r,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle="#f5efe0"; ctx.beginPath(); ctx.arc(6,-4,6,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle="#1d1206"; ctx.beginPath(); ctx.arc(8,-4,3,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function overlay(title, sub){
+    ctx.fillStyle="#1d1206cc";
+    ctx.fillRect(24, H/2-90, W-48, 180);
+    ctx.strokeStyle="#7a5a1a"; ctx.strokeRect(24, H/2-90, W-48, 180);
+    ctx.fillStyle="#f2c063"; ctx.font="bold 22px system-ui"; ctx.textAlign="center";
+    ctx.fillText(title, W/2, H/2-24);
+    ctx.fillStyle="#c8823c"; ctx.font="italic 13px system-ui";
+    wrap(sub, W/2, H/2+8, W-80, 18);
+    ctx.fillStyle="#8a6a3a"; ctx.font="12px system-ui";
+    ctx.fillText("tap to continue", W/2, H/2+62);
+  }
+  function wrap(t,x,y,max,lh){
+    var words=t.split(" "), line="", yy=y;
+    for(var i=0;i<words.length;i++){
+      var test=line?line+" "+words[i]:words[i];
+      if(ctx.measureText(test).width>max){ ctx.fillText(line,x,yy); line=words[i]; yy+=lh; }
+      else line=test;
+    }
+    if(line) ctx.fillText(line,x,yy);
+  }
+  function tick(){
+    if(state==="play" && !paused){
+      frame++;
+      bird.vy+=GRAV; bird.y+=bird.vy;
+      if(frame%90===0) spawn();
+      for(var i=pipes.length-1;i>=0;i--){
+        pipes[i].x-=SPEED;
+        if(!pipes[i].passed && pipes[i].x+PW<bird.x){
+          pipes[i].passed=true; score++;
+          if(score>best){best=score; try{localStorage.setItem("flappy-tung-best",String(best));}catch(e){}}
+        }
+        if(hitPipe(pipes[i])) state="dead";
+        if(pipes[i].x<-PW-10) pipes.splice(i,1);
+      }
+      if(bird.y+bird.r>H-GROUND || bird.y-bird.r<0) state="dead";
+    }
+    ctx.fillStyle="#1d1206"; ctx.fillRect(0,0,W,H);
+    var g=ctx.createRadialGradient(W/2,80,20,W/2,80,340);
+    g.addColorStop(0,"#3a2410"); g.addColorStop(1,"#1d1206");
+    ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle="#f2c06322"; ctx.beginPath(); ctx.arc(W-70,70,28,0,Math.PI*2); ctx.fill();
+    for(var p=0;p<pipes.length;p++){
+      wood(pipes[p].x, 0, PW, pipes[p].top);
+      wood(pipes[p].x, pipes[p].top+pipes[p].gap, PW, H-GROUND-(pipes[p].top+pipes[p].gap));
+    }
+    ctx.fillStyle="#241505"; ctx.fillRect(0,H-GROUND,W,GROUND);
+    ctx.fillStyle="#7a5a1a"; ctx.fillRect(0,H-GROUND,W,3);
+    ctx.fillStyle="#c8823c"; ctx.font="bold 11px system-ui"; ctx.textAlign="left";
+    ctx.fillText("the floor waits", 12, H-22);
+    drawBird();
+    ctx.fillStyle="#f2c063"; ctx.font="bold 28px system-ui"; ctx.textAlign="center";
+    ctx.fillText(String(score), W/2, 42);
+    ctx.fillStyle="#8a6a3a"; ctx.font="11px system-ui";
+    ctx.fillText("best "+best, W/2, 60);
+    if(state==="idle") overlay("Flappy Tung", "the air does not hold him. he holds the air.");
+    else if(paused) overlay("paused", "even the fall can wait.");
+    else if(state==="dead") overlay("fallen", "the ground received you. it always does.");
+    requestAnimationFrame(tick);
+  }
+  function onDown(ev){ ev.preventDefault(); flap(); }
+  c.addEventListener("mousedown", onDown);
+  c.addEventListener("touchstart", onDown, {passive:false});
+  window.addEventListener("keydown", function(ev){
+    if(ev.code==="Space" || ev.key===" "){ ev.preventDefault(); flap(); }
+    if(ev.key==="p" || ev.key==="P") togglePause();
+    if(ev.key==="r" || ev.key==="R") reset();
+  });
+  document.getElementById("pause").onclick=togglePause;
+  document.getElementById("restart").onclick=reset;
+  tick();
+})();
+</script>
+</body>
+</html>
