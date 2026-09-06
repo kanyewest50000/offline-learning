@@ -226,11 +226,19 @@ async function main() {
     if (deadLogin) fail("unreachable API showed username+key to a token holder");
     console.log("dead API left token intact");
 
-    // Embed without token: username+key required.
-    const embed = await browser.newPage();
+    // Embed without token: username+key required. Use a fresh origin-like
+    // profile so the landing-page shrine-token-v1 is not inherited.
+    const embedCtx = browser.createBrowserContext
+      ? await browser.createBrowserContext()
+      : await browser.createIncognitoBrowserContext();
+    const embed = await embedCtx.newPage();
     await embed.goto(SITE + "/embed/chat.html?api=" + encodeURIComponent(API), {
       waitUntil: "domcontentloaded",
     });
+    await embed.evaluate(() => {
+      try { localStorage.removeItem("shrine-token-v1"); } catch (e) {}
+    });
+    await embed.reload({ waitUntil: "domcontentloaded" });
     await embed.waitForSelector("#lu, #loginView", { timeout: 10000 });
     const embedGate = await embed.evaluate(() => {
       const login = document.getElementById("loginView");
