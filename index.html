@@ -1595,15 +1595,19 @@
     });
     svg.appendChild(g);
     svg.appendChild(sv("circle",{cx:C,cy:C,r:R2-6,fill:"#2b1a0a",stroke:"#7a5a1a","stroke-width":"2"}));
-    // the ball rides just inside the rim in its own group, spun the other way
+    // the ball rides just inside the rim in its own group, spun the other way.
+    // an inner group hops radially + wobbles a few pockets as it drops in.
     var ballG=sv("g",{});ballG.setAttribute("class","ball");
-    ballG.appendChild(sv("circle",{cx:C,cy:C-(R1-11),r:5.5,fill:"#fff",stroke:"#1d1206","stroke-width":"1"}));
-    ballG.appendChild(sv("circle",{cx:C-1.6,cy:C-(R1-12.6),r:1.8,fill:"#ffffffee"}));
+    var hop=sv("g",{});hop.setAttribute("class","ballhop");
+    hop.appendChild(sv("circle",{cx:C,cy:C-(R1-11),r:5.5,fill:"#fff",stroke:"#1d1206","stroke-width":"1"}));
+    hop.appendChild(sv("circle",{cx:C-1.6,cy:C-(R1-12.6),r:1.8,fill:"#ffffffee"}));
+    ballG.appendChild(hop);
     svg.appendChild(ballG);
-    svg.appendChild(sv("path",{d:"M"+C+" 6 L"+(C-9)+" 26 L"+(C+9)+" 26 Z",fill:"#f2c063",stroke:"#1d1206","stroke-width":"1"}));
     wrap.appendChild(svg);v.appendChild(wrap);
     g.style.transformOrigin=C+"px "+C+"px";
     ballG.style.transformOrigin=C+"px "+C+"px";
+    hop.style.transformOrigin=C+"px "+C+"px";
+    hop.style.transformBox="view-box";
 
     var SEL={kind:"red",value:0};
     var board=el("div","rboard");
@@ -1642,11 +1646,14 @@
       jpost("/cas/roulette",{bet:Number(bet.value),kind:SEL.kind,value:SEL.value}).then(function(d){
         if(d.error){go.disabled=false;bad(r,d.error);return;}
         var idx=WHEEL.indexOf(d.spin);
-        // wheel forward so the winning pocket ends under the pointer...
+        // wheel forward so the winning pocket ends at the top, under the ball
         rot += 360*5 + (((-idx*step - rot) % 360) + 360) % 360;
         g.style.transform="rotate("+rot+"deg)";
-        // ...and the ball orbits the other way, settling at the top (same spot)
+        // ball orbits the other way, then hops between pockets as it drops in
         brot -= 360*7;
+        ballG.classList.remove("dropping");
+        void ballG.getBoundingClientRect();
+        ballG.classList.add("dropping");
         ballG.style.transform="rotate("+brot+"deg)";
         setTimeout(function(){
           go.disabled=false;setBal(d.balance);
@@ -2188,8 +2195,19 @@
       /* roulette */
       '.wheelwrap{display:flex;justify-content:center;padding:4px 0}' +
       '.wheel{transition:transform 4s cubic-bezier(.15,.85,.2,1)}' +
-      /* the ball orbits the other way and settles a touch before the wheel stops */
+      /* the ball orbits the other way and settles a touch before the wheel stops.
+         .ballhop (nested) drops into the pocket with a few bounces in the last
+         second-and-a-half, wobbling a pocket or two as it finds its rest. */
       '.ball{transition:transform 3.7s cubic-bezier(.12,.78,.18,1)}' +
+      '.ballhop{transform-box:view-box}' +
+      '.ball.dropping .ballhop{animation:ballDrop 3.7s both}' +
+      '@keyframes ballDrop{' +
+      '0%,58%{transform:rotate(0deg) translateY(0)}' +
+      '68%{transform:rotate(-22deg) translateY(22px)}' +
+      '76%{transform:rotate(14deg) translateY(5px)}' +
+      '84%{transform:rotate(-10deg) translateY(18px)}' +
+      '91%{transform:rotate(5deg) translateY(8px)}' +
+      '100%{transform:rotate(0deg) translateY(16px)}}' +
       '.rboard{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-top:8px}' +
       '.rnum{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;color:#fff;border:1px solid transparent}' +
       '.rnum.red{background:#a32020}.rnum.black{background:#23232b}.rnum.green{background:#1f6b32}' +
