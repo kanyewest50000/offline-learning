@@ -129,7 +129,8 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   } catch(e) {}
 
   var TKEY = "shrine-token-v1";
-  var TOKEN = null, ME = null, cursor = 0, polling = false, statusT = null, seenEids = {};
+  var TOKEN = null, ME = null, cursor = 0, polling = false, statusT = null, pollT = null, seenEids = {};
+  var POLL_MS = 8000;
   var gate = document.getElementById("gate");
   var applyView = document.getElementById("applyView");
   var pendingView = document.getElementById("pendingView");
@@ -347,6 +348,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     loginView.style.display = v === "login" ? "block" : "none";
     banEl.style.display = v === "ban" ? "flex" : "none";
   }
+  function pageHidden(){ return !!document.hidden; }
   function showBan(info){
     polling = false;
     var isTo = info && info.reason === "timeout";
@@ -355,7 +357,8 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     else banUntil.style.display = "none";
     show("ban");
     if (statusT) clearTimeout(statusT);
-    if (isTo) statusT = setTimeout(refreshGate, 5000);
+    if (pollT) { clearTimeout(pollT); pollT = null; }
+    if (isTo && !pageHidden()) statusT = setTimeout(refreshGate, 5000);
   }
   function applyWarn(t){ if (warnEl) warnEl.textContent = t; }
   function applyEvent(ev){
@@ -364,12 +367,15 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     if (ev.type === "msg") { if (MSGS[ev.id]) return; add({ id:ev.id, name:ev.name, text:ev.text, mine:ev.name === ME, reply:ev.reply || null }); }
   }
   function poll(){
-    if (!polling) return;
+    if (!polling || pageHidden()) return;
+    if (pollT) { clearTimeout(pollT); pollT = null; }
     api("/events?since=" + cursor + "&token=" + encodeURIComponent(TOKEN)).then(function(r){
       if (r && r.error === "unauthorized") { polling = false; refreshGate(); return; }
       if (r && r.blocked) { showBan(r); return; }
       if (r && r.events) { r.events.forEach(applyEvent); if (typeof r.cursor === "number") cursor = r.cursor; }
-    }).catch(function(){}).then(function(){ if (polling) setTimeout(poll, 1500); });
+    }).catch(function(){}).then(function(){
+      if (polling && !pageHidden()) pollT = setTimeout(poll, POLL_MS);
+    });
   }
   function startPoll(){ if (polling) return; polling = true; poll(); }
   function startChat(name){
@@ -393,13 +399,14 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     TOKEN = loadToken();
     paintKey();
     if (!TOKEN) { show("login"); return; }
+    if (pageHidden()) return;
     api("/status?token=" + encodeURIComponent(TOKEN)).then(function(s){
       if (s && s.status === "approved") {
         if (s.blocked) showBan(s); else startChat(s.username);
       } else if (s && s.status === "pending") {
         show("pending"); paintKey(); renderThread(s.thread);
         if (statusT) clearTimeout(statusT);
-        statusT = setTimeout(refreshGate, 3000);
+        if (!pageHidden()) statusT = setTimeout(refreshGate, 3000);
       } else {
         clearToken(); TOKEN = null; paintKey(); show("login");
       }
@@ -451,6 +458,15 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   });
   pick.addEventListener("click", function(ev){ ev.stopPropagation(); picker.style.display = picker.style.display === "flex" ? "none" : "flex"; rpal.style.display = "none"; });
   document.addEventListener("click", function(){ rpal.style.display = "none"; picker.style.display = "none"; });
+  document.addEventListener("visibilitychange", function(){
+    if (pageHidden()) {
+      if (pollT) { clearTimeout(pollT); pollT = null; }
+      if (statusT) { clearTimeout(statusT); statusT = null; }
+      return;
+    }
+    if (polling) poll();
+    if (pendingView.style.display !== "none" || banEl.style.display === "flex") refreshGate();
+  });
   buildPicker(); buildRpal();
   refreshGate();
 })();

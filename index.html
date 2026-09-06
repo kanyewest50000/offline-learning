@@ -958,8 +958,10 @@
      clicking Sahur opens an about:blank window running the chat client, which
      talks to the Deno backend (server.ts) over plain HTTP: apply -> poll
      /status -> poll /events for history + live messages, POST /send + /react.
-     auth, usernames, approvals and message history all live server-side in
-     Deno KV. the discord webhook + admin key live in the server's env vars. */
+     a hidden tab does not fire /events or /status; on visible, one catch-up
+     /events?since= then 8s. auth, usernames, approvals and message history
+     all live server-side in Deno KV. the discord webhook + admin key live
+     in the server's env vars. */
   var SHRINE_API = "https://offline-learning.kanyewest50000.deno.net";
 
   /* Tung artwork now ships with the repo instead of hotlinking someone else's CDN.
@@ -997,7 +999,7 @@
   var SAHUR_CHAT_JS =
     '(function(){' +
     'var API=SHRINE_API,TKEY="shrine-token-v1";' +
-    'var TOKEN=null,ME=null,cursor=0,polling=false,statusT=null,seenEids={};' +
+    'var TOKEN=null,ME=null,cursor=0,polling=false,statusT=null,pollT=null,seenEids={};' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
     'var pendingView=document.getElementById("pendingView");' +
@@ -1184,16 +1186,18 @@
     /* banned/timed-out users get a blank screen instead of the chat. a permanent
        ban shows no "until"; a timeout shows the deadline and re-checks /status so
        access lifts on its own once the clock passes it. */
-    'function showBan(info){polling=false;var isTo=info&&info.reason==="timeout";banTitle.textContent=isTo?"you are timed out":"you are banned";if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}else{banUntil.style.display="none";}show("ban");if(statusT)clearTimeout(statusT);if(isTo)statusT=setTimeout(refreshGate,5000);}' +
+    'function pageHidden(){return !!document.hidden;}' +
+    'function showBan(info){polling=false;var isTo=info&&info.reason==="timeout";banTitle.textContent=isTo?"you are timed out":"you are banned";if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}else{banUntil.style.display="none";}show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}if(isTo&&!pageHidden())statusT=setTimeout(refreshGate,5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
     'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null});}}' +
-    'function poll(){if(!polling)return;api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling)setTimeout(poll,1500);});}' +
+    /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 8s. */
+    'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,8000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
     'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();}' +
     /* render tung<->applicant follow-up messages on the pending screen; show the
        reply box only once tung has actually asked something. */
     'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");b.textContent=(m.from==="admin"?"tung: ":"you: ")+m.text;appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
-    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){paintKey();show("apply");return;}api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){show("apply");});}' +
+    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){paintKey();show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){show("apply");});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'if(copyHashBtn)copyHashBtn.addEventListener("click",function(){copyKey(copyHashBtn);});' +
@@ -1221,6 +1225,7 @@
     'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}var fl=document.getElementById("cloakfav");if(fl)fl.href=cloakFav();});' +
     'document.title=cloakTitle();' +
     'topShow("choose");' +
+    'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();if(pendingView.style.display!=="none"||banEl.style.display==="flex")refreshGate();});' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
     'document.body.appendChild(iframe);' +
