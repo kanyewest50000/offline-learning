@@ -24,7 +24,7 @@
   var c=document.getElementById("c"), ctx=c.getContext("2d");
   var tungImg=new Image(); tungImg.src="../../assets/tungtungtungsahur.png";
   /* oval body radii — flappy-bird capsule, not a circle */
-  var bird={x:92,y:280,vy:0,bw:24,bh:16};
+  var bird={x:92,y:280,vy:0,bw:26,bh:18};
   var pipes=[], frame=0, score=0, best=0, state="idle";
   var GRAV=0.42, FLAP=-7.2, GAP=148, PW=54, SPEED=2.15;
   try{best=parseInt(localStorage.getItem("flappy-tung-best")||"0",10)||0;}catch(e){}
@@ -60,7 +60,7 @@
   function inBird(px, py){
     var p=toLocal(px, py);
     if(inEllipse(p.x, p.y, 0, 0, bird.bw, bird.bh, 0)) return true;
-    return inEllipse(p.x, p.y, -bird.bw*0.32, bird.bh*0.38, bird.bw*0.52, bird.bh*0.4, -0.5);
+    return inEllipse(p.x, p.y, -16, 6, 15, 8, -0.35);
   }
   function hitRect(x,y,w,h){
     if(bird.x>=x && bird.x<=x+w && bird.y>=y && bird.y<=y+h) return true;
@@ -87,53 +87,58 @@
     ctx.fillStyle="#f2c06333";
     ctx.fillRect(x+6,y+4,6,Math.max(0,h-8));
   }
-  function silPath(){
-    ctx.beginPath();
-    ctx.ellipse(0, 0, bird.bw, bird.bh, 0, 0, Math.PI*2);
-    ctx.ellipse(-bird.bw*0.32, bird.bh*0.38, bird.bw*0.52, bird.bh*0.4, -0.5, 0, Math.PI*2);
-  }
   function drawBird(){
     ctx.save();
     ctx.translate(bird.x, bird.y);
     ctx.rotate(birdAngle());
-    var wing=state==="play" ? Math.max(-0.85, Math.min(0.55, -bird.vy*0.09)) : Math.sin(Date.now()/220)*0.12;
+    var flap=state==="play" ? Math.max(-1.15, Math.min(0.85, -bird.vy*0.14)) : Math.sin(Date.now()/160)*0.22;
     ctx.save();
-    ctx.translate(-bird.bw*0.15, bird.bh*0.15);
-    ctx.rotate(wing);
-    ctx.fillStyle="#6a3a12";
+    ctx.translate(-2, 2);
+    ctx.rotate(-0.35+flap);
+    ctx.fillStyle="#a56a2c";
+    ctx.strokeStyle="#5c3a14";
+    ctx.lineWidth=1.75;
     ctx.beginPath();
-    ctx.ellipse(-6, 6, 13, 7, -0.35, 0, Math.PI*2);
+    ctx.ellipse(-16, 6, 15, 7.5, 0, 0, Math.PI*2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle="#d4a15a";
+    ctx.beginPath();
+    ctx.ellipse(-15, 5, 9, 4.2, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.restore();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, bird.bw, bird.bh, 0, 0, Math.PI*2);
     ctx.save();
-    silPath();
     ctx.clip();
     if(tungImg.complete && tungImg.naturalWidth){
-      /* face/upper drum of the sahur sprite, fitted into the capsule */
       var sw=tungImg.naturalWidth, sh=tungImg.naturalHeight;
-      ctx.drawImage(tungImg, sw*0.22, sh*0.02, sw*0.48, sh*0.46, -bird.bw-2, -bird.bh-2, bird.bw*2+8, bird.bh*2+10);
+      var destW=bird.bw*2, destH=bird.bh*2;
+      var srcH=sh*0.36, srcW=srcH*(destW/destH);
+      var srcX=sw*0.26, srcY=sh*0.03;
+      ctx.drawImage(tungImg, srcX, srcY, srcW, srcH, -bird.bw, -bird.bh, destW, destH);
     } else {
       ctx.fillStyle="#c8823c";
-      silPath(); ctx.fill();
+      ctx.fill();
     }
     ctx.restore();
-    ctx.strokeStyle="#7a5a1a";
+    ctx.strokeStyle="#6a4418";
     ctx.lineWidth=2;
-    silPath();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, bird.bw, bird.bh, 0, 0, Math.PI*2);
     ctx.stroke();
-    ctx.fillStyle="#e8a03a";
     ctx.beginPath();
-    ctx.moveTo(bird.bw-3, -5);
-    ctx.lineTo(bird.bw+12, 0);
-    ctx.lineTo(bird.bw-3, 4);
+    ctx.moveTo(bird.bw-4, -6);
+    ctx.lineTo(bird.bw+14, -1);
+    ctx.lineTo(bird.bw-4, 2);
     ctx.closePath();
+    ctx.fillStyle="#f0b44a";
     ctx.fill();
-    ctx.fillStyle="#c47a28";
     ctx.beginPath();
-    ctx.moveTo(bird.bw-3, 0);
-    ctx.lineTo(bird.bw+12, 0);
-    ctx.lineTo(bird.bw-3, 4);
+    ctx.moveTo(bird.bw-4, 1);
+    ctx.lineTo(bird.bw+14, -1);
+    ctx.lineTo(bird.bw-4, 7);
     ctx.closePath();
+    ctx.fillStyle="#d4842a";
     ctx.fill();
     ctx.restore();
   }
@@ -186,13 +191,13 @@
     ctx.fillStyle="#7a5a1a"; ctx.fillRect(0,H-GROUND,W,3);
     ctx.fillStyle="#c8823c"; ctx.font="bold 11px system-ui"; ctx.textAlign="left";
     ctx.fillText("the floor does not wait. it collects.", 12, H-22);
-    drawBird();
     ctx.fillStyle="#f2c063"; ctx.font="bold 28px system-ui"; ctx.textAlign="center";
     ctx.fillText(String(score), W/2, 42);
     ctx.fillStyle="#8a6a3a"; ctx.font="11px system-ui";
     ctx.fillText("best "+best, W/2, 60);
     if(state==="idle") overlay("Flappy Tung", "the air does not hold him. he holds the air.");
     else if(state==="dead") overlay("fallen", "he stopped disagreeing. the ground finished the sentence.");
+    drawBird();
     requestAnimationFrame(tick);
   }
   function onDown(ev){ ev.preventDefault(); flap(); }

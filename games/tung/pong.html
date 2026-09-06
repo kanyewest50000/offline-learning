@@ -76,9 +76,9 @@
   function tick(){
     if(state==="play"){
       you.y=clamp(you.y+you.vy, 8, H-PS-8);
-      aiMove();
       ball.x+=ball.vx; ball.y+=ball.vy; spin+=ball.vx*0.01;
       if(ball.y<BR || ball.y>H-BR){ ball.vy*=-1; ball.y=clamp(ball.y, BR, H-BR); }
+      aiMove();
       if(ball.vx<0 && hitsPad(you)) bounce(you, 1);
       if(ball.vx>0 && hitsPad(him)) bounce(him, -1);
       if(ball.x<-20){ himScore++; if(himScore>=WIN) state="lose"; else { state="idle"; resetBall(true); } }
