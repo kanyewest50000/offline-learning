@@ -334,18 +334,15 @@ function blockState(u: any): { blocked: boolean; reason?: string; until?: number
   return { blocked: false };
 }
 
-// Best-effort per-isolate rate limits. Isolates do not share this map, so a
-// botnet can still spread — but one scraper cannot hammer /admin HTML,
-// /apply, or /events?since=0 (full history) into 100 GiB. This process never
-// serveDir()s the repo and never fetch()es game files for a client.
+// Token-keyed rate limits only — a school NAT / shared Wi‑Fi must not
+// lock out every shrine tab at once. Isolates do not share this map.
+// Cheap unauthenticated bodies (/g/ 410, /admin gate) are already tiny;
+// this only brakes one token from refetching full /events history as
+// fast as TCP allows. This process never serveDir()s the repo and never
+// fetch()es game files for a client.
 type Bucket = { n: number; reset: number };
 const buckets = new Map<string, Bucket>();
 let sweepN = 0;
-function clientIp(req: Request): string {
-  const xf = req.headers.get("x-forwarded-for");
-  if (xf) return xf.split(",")[0].trim().slice(0, 80) || "unknown";
-  return (req.headers.get("x-real-ip") || "unknown").slice(0, 80);
-}
 function allow(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
   if (++sweepN > 2000) {
@@ -380,19 +377,16 @@ Deno.serve({ port: listenPort }, async (req) => {
   const path = url.pathname;
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
-  const ip = clientIp(req);
-  if (!allow("ip:" + ip, 90, 60_000)) return tooMany(60);
-  if (path.startsWith("/g/") && !allow("g:" + ip, 20, 60_000)) return tooMany(60);
-  if (path === "/apply" && req.method === "POST" && !allow("apply:" + ip, 8, 60 * 60_000)) return tooMany(3600);
-  if (path === "/login" && req.method === "POST" && !allow("login:" + ip, 20, 60_000)) return tooMany(60);
-  if (path === "/admin" && !allow("admin:" + ip, 12, 60_000)) return tooMany(60);
-  if (path === "/status" && !allow("st:" + ip, 40, 60_000)) return tooMany(30);
+  // Authenticated chat only: one token cannot dump HISTORY every few ms.
+  // Shared-IP classrooms each have their own token, so they do not share a bucket.
   if (path === "/events") {
     const since = Number(url.searchParams.get("since") || "0") || 0;
     const tok = clip(url.searchParams.get("token"), 64);
-    if (since <= 0) {
-      if (!allow("hist:" + (tok || ip), 4, 60_000)) return tooMany(60);
-    } else if (!allow("ev:" + (tok || ip), 20, 60_000)) return tooMany(30);
+    if (tok) {
+      if (since <= 0) {
+        if (!allow("hist:" + tok, 6, 60_000)) return tooMany(60);
+      } else if (!allow("ev:" + tok, 20, 60_000)) return tooMany(30);
+    }
   }
 
   // ---------- apply ----------
