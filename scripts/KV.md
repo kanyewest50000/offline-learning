@@ -58,7 +58,7 @@ export DENO_KV_URL='https://api.deno.com/databases/<DATABASE_ID>/connect'
 From a checkout of this repo, on your laptop (not inside the failing isolate):
 
 ```bash
-deno run --allow-env --allow-net --allow-read --allow-write \
+deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write \
   scripts/export-kv.ts shrine-kv.json
 ```
 
@@ -68,7 +68,7 @@ Keep `shrine-kv.json` offline. Do not commit it. Do not paste it into chat.
 Inspect without leaking tokens:
 
 ```bash
-deno run --allow-env --allow-net --allow-read --allow-write \
+deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write \
   scripts/export-kv.ts shrine-kv.redacted.json --redact
 ```
 
@@ -103,7 +103,7 @@ almost certainly fail while the isolate is over quota — that is why this is CL
 ```bash
 export DENO_KV_ACCESS_TOKEN='ddp_…'
 export DENO_KV_URL='https://api.deno.com/databases/<NEW_DATABASE_ID>/connect'
-deno run --allow-env --allow-net --allow-read --allow-write \
+deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write \
   scripts/import-kv.ts shrine-kv.json
 ```
 
@@ -116,7 +116,7 @@ Import into an explicit sqlite file:
 
 ```bash
 export DENO_KV_URL=/var/lib/shrine/kv.sqlite
-deno run --allow-env --allow-read --allow-write \
+deno run --unstable-kv --allow-env --allow-read --allow-write \
   scripts/import-kv.ts shrine-kv.json
 ```
 

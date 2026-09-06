@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-env --allow-net --allow-read --allow-write
+#!/usr/bin/env -S deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write
 //
 // Restore a shrine-kv-snapshot JSON (from export-kv.ts) into a Deno KV store.
 //
@@ -28,7 +28,7 @@ import {
 const USAGE = `import-kv.ts — restore shrine Deno KV from JSON
 
 Usage:
-  deno run --allow-env --allow-net --allow-read --allow-write \\
+  deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write \\
     scripts/import-kv.ts snapshot.json [--dry-run]
 
 Env:

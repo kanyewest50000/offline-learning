@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-env --allow-net --allow-read --allow-write
+#!/usr/bin/env -S deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write
 //
 // Export the Shrine of Tung Deno KV (users, tokens, chat, casino, shop, bans).
 //
@@ -11,7 +11,7 @@
 //   2. Open the project -> KV tab -> copy the Database ID
 //   3. export DENO_KV_ACCESS_TOKEN='ddp_…'
 //      export DENO_KV_URL='https://api.deno.com/databases/<DATABASE_ID>/connect'
-//   4. deno run --allow-env --allow-net --allow-read --allow-write \
+//   4. deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write \
 //        scripts/export-kv.ts shrine-kv.json
 //
 // USAGE_EXCEEDED on the *website* often still leaves this path working: the
@@ -39,7 +39,7 @@ import {
 const USAGE = `export-kv.ts — dump shrine Deno KV to JSON
 
 Usage:
-  deno run --allow-env --allow-net --allow-read --allow-write \\
+  deno run --unstable-kv --allow-env --allow-net --allow-read --allow-write \\
     scripts/export-kv.ts [outfile.json] [--redact]
 
 Env:
