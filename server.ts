@@ -405,6 +405,9 @@ Deno.serve({ port: listenPort }, async (req) => {
   }
 
   // ---------- status ----------
+  // Token-only. Returning shrine clients store shrine-token-v1 from /apply and
+  // never send a username. Do not start requiring username here — /login is the
+  // username+key path for embed / a new browser.
   if (req.method === "GET" && path === "/status") {
     const token = url.searchParams.get("token");
     if (!token) return json({ status: "none" });
@@ -439,6 +442,7 @@ Deno.serve({ port: listenPort }, async (req) => {
   }
 
   // ---------- events (poll) ----------
+  // Token-only, same as /status /send /react. Username is not part of the query.
   if (req.method === "GET" && path === "/events") {
     const user = await authUser(url.searchParams.get("token"));
     if (!user) return json({ error: "unauthorized" }, 401);

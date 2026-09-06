@@ -963,6 +963,10 @@
      all live server-side in Deno KV. the discord webhook + admin key live
      in the server's env vars. */
   var SHRINE_API = "https://offline-learning.kanyewest50000.deno.net";
+  try {
+    var _apiQ = new URLSearchParams(location.search).get("api");
+    if (_apiQ) SHRINE_API = String(_apiQ).replace(/\/$/, "");
+  } catch (e) {}
 
   /* Tung artwork now ships with the repo instead of hotlinking someone else's CDN.
      Resolved to absolute URLs here because the shrine/casino windows are written
@@ -1000,6 +1004,7 @@
     '(function(){' +
     'var API=SHRINE_API,TKEY="shrine-token-v1";' +
     'var TOKEN=null,ME=null,cursor=0,polling=false,statusT=null,pollT=null,seenEids={};' +
+    'if(typeof SHRINE_BOOT_TOKEN==="string"&&SHRINE_BOOT_TOKEN){try{if(!localStorage.getItem(TKEY))localStorage.setItem(TKEY,SHRINE_BOOT_TOKEN);}catch(e){}}' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
     'var pendingView=document.getElementById("pendingView");' +
@@ -1143,9 +1148,9 @@
     'var replyTo=null,rTarget=null;' +
     'function api(p,opt){return fetch(API+p,opt).then(function(r){return r.json().catch(function(){return {};});});}' +
     'function apiPost(p,body){return api(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});}' +
-    'function loadToken(){try{return localStorage.getItem(TKEY);}catch(e){return null;}}' +
-    'function saveToken(t){try{localStorage.setItem(TKEY,t);}catch(e){}}' +
-    'function clearToken(){try{localStorage.removeItem(TKEY);}catch(e){}}' +
+    'function loadToken(){try{var t=localStorage.getItem(TKEY);if(t){t=String(t).trim();if(t)return t;}}catch(e){}if(typeof SHRINE_BOOT_TOKEN==="string"&&SHRINE_BOOT_TOKEN){var b=String(SHRINE_BOOT_TOKEN).trim();if(b)return b;}return null;}' +
+    'function saveToken(t){try{localStorage.setItem(TKEY,t);}catch(e){}if(typeof SHRINE_BOOT_TOKEN!=="undefined")SHRINE_BOOT_TOKEN=t;}' +
+    'function clearToken(){try{localStorage.removeItem(TKEY);}catch(e){}if(typeof SHRINE_BOOT_TOKEN!=="undefined")SHRINE_BOOT_TOKEN="";}' +
     'function paintKey(){if(myhash)myhash.textContent=TOKEN||"";if(exportKeyBtn)exportKeyBtn.style.display=TOKEN?"inline-block":"none";}' +
     'function copyKey(btn){if(!TOKEN)return;var prev=btn?btn.textContent:"";function done(){if(btn){btn.textContent="copied";setTimeout(function(){btn.textContent=prev;},1400);}}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(TOKEN).then(done).catch(fb);}else fb();function fb(){var t=document.createElement("textarea");t.value=TOKEN;t.style.position="fixed";t.style.left="-9999px";document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}}' +
     'function mkId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}' +
@@ -1165,7 +1170,7 @@
     'MSGS[m.id]={reactEl:rc,counts:{},mine:{}};' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- view switching + application/token auth against the backend ---- */
-    'function show(v){gate.style.display=(v==="apply"||v==="pending")?"flex":"none";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";banEl.style.display=v==="ban"?"flex":"none";}' +
+    'function show(v){gate.style.display=(v==="apply"||v==="pending")?"flex":"none";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";banEl.style.display=v==="ban"?"flex":"none";var lb=document.getElementById("loginBox");if(lb)lb.style.display=(v==="apply"&&!TOKEN)?"flex":"none";}' +
     /* banned/timed-out users get a blank screen instead of the chat. a permanent
        ban shows no "until"; a timeout shows the deadline and re-checks /status so
        access lifts on its own once the clock passes it. */
@@ -1180,7 +1185,7 @@
     /* render tung<->applicant follow-up messages on the pending screen; show the
        reply box only once tung has actually asked something. */
     'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");b.textContent=(m.from==="admin"?"tung: ":"you: ")+m.text;appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
-    'function refreshGate(){TOKEN=loadToken();if(!TOKEN){paintKey();show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(s&&s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username);}}else if(s&&s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else{clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){show("apply");});}' +
+    'function refreshGate(){TOKEN=loadToken();paintKey();if(!TOKEN){show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(!s||typeof s.status!=="string")return;if(s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username||"");}}else if(s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else if(s.status==="none"||s.status==="rejected"){clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'if(copyHashBtn)copyHashBtn.addEventListener("click",function(){copyKey(copyHashBtn);});' +
@@ -2094,7 +2099,7 @@
 })();
 `;
 
-  function sahurChatDoc() {
+  function sahurChatDoc(bootToken) {
     /* the shrine window wears the same disguise as the game tabs: title defaults
        to "Assignments" and the favicon to CUHSD Canvas, both read from the shared
        localStorage the games-menu inputs write to (only place they can be set). */
@@ -2117,7 +2122,7 @@
       '#hdrCasino .chtitle{display:flex;align-items:center;gap:6px;color:#f2c063;font-weight:800;white-space:nowrap}' +
       '.hbtn{padding:7px 12px;border-radius:9px;background:#241505;border:1px solid #7a5a1a;color:#f2c063;font-weight:700;cursor:pointer;white-space:nowrap;flex:0 0 auto;font-size:13px}' +
       '.hbtn:hover{background:#3a2410;border-color:#c8823c}' +
-      '#gate{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;min-height:0}' +
+      '#gate{flex:1;display:none;align-items:center;justify-content:center;padding:24px;text-align:center;min-height:0}' +
       '#gate h2{margin:0 0 8px}' +
       '#gate p{margin:0 0 12px;color:#c8823c;font-size:14px}' +
       '#applyView,#pendingView{max-width:300px;width:100%}' +
@@ -2541,15 +2546,17 @@
       /* ---- Tung’s Casino: top-level view; its chrome lives in the main header ---- */
       '<div id="casino"><div id="casscreen"></div></div>' +
       '<div id="rpal"></div>' +
-      '<script>var SHRINE_API=' + JSON.stringify(SHRINE_API) + ';var TUNG_IMG=' + JSON.stringify(TUNG_IMG) + ';var TUNGGOD_IMG=' + JSON.stringify(TUNGGOD_IMG) + ';var GAMES=' + JSON.stringify(GAMES) + ';var ORIGINALS=' + JSON.stringify(ORIGINALS) + ';' + SAHUR_CHAT_JS + CASINO_JS + '<\/script>' +
+      '<script>var SHRINE_API=' + JSON.stringify(SHRINE_API) + ';var SHRINE_BOOT_TOKEN=' + JSON.stringify(bootToken || "") + ';var TUNG_IMG=' + JSON.stringify(TUNG_IMG) + ';var TUNGGOD_IMG=' + JSON.stringify(TUNGGOD_IMG) + ';var GAMES=' + JSON.stringify(GAMES) + ';var ORIGINALS=' + JSON.stringify(ORIGINALS) + ';' + SAHUR_CHAT_JS + CASINO_JS + '<\/script>' +
       '</body></html>';
   }
 
   function openSahurChat() {
+    var bootToken = null;
+    try { bootToken = localStorage.getItem("shrine-token-v1"); } catch (e) {}
     var w = window.open("about:blank", "_blank");
     if (!w) return; /* popup blocked */
     w.document.open();
-    w.document.write(sahurChatDoc());
+    w.document.write(sahurChatDoc(bootToken));
     w.document.close();
   }
 

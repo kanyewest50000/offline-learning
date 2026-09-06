@@ -229,7 +229,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   var replyTo = null, rTarget = null;
   function api(p, opt){ return fetch(API + p, opt).then(function(r){ return r.json().catch(function(){ return {}; }); }); }
   function apiPost(p, body){ return api(p, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) }); }
-  function loadToken(){ try { return localStorage.getItem(TKEY); } catch(e) { return null; } }
+  function loadToken(){ try { var t = localStorage.getItem(TKEY); if (t) { t = String(t).trim(); if (t) return t; } } catch(e) {} return null; }
   function saveToken(t){ try { localStorage.setItem(TKEY, t); } catch(e) {} }
   function clearToken(){ try { localStorage.removeItem(TKEY); } catch(e) {} }
   function mkId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -401,16 +401,17 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     if (!TOKEN) { show("login"); return; }
     if (pageHidden()) return;
     api("/status?token=" + encodeURIComponent(TOKEN)).then(function(s){
-      if (s && s.status === "approved") {
-        if (s.blocked) showBan(s); else startChat(s.username);
-      } else if (s && s.status === "pending") {
+      if (!s || typeof s.status !== "string") return;
+      if (s.status === "approved") {
+        if (s.blocked) showBan(s); else startChat(s.username || "");
+      } else if (s.status === "pending") {
         show("pending"); paintKey(); renderThread(s.thread);
         if (statusT) clearTimeout(statusT);
         if (!pageHidden()) statusT = setTimeout(refreshGate, 3000);
-      } else {
+      } else if (s.status === "none" || s.status === "rejected") {
         clearToken(); TOKEN = null; paintKey(); show("login");
       }
-    }).catch(function(){ show("login"); });
+    }).catch(function(){});
   }
 
   applyForm.addEventListener("submit", function(ev){
