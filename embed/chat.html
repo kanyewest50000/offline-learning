@@ -466,7 +466,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
       return;
     }
     if (polling) poll();
-    if (pendingView.style.display !== "none" || banEl.style.display === "flex") refreshGate();
+    if (pendingView.style.display === "block" || banEl.style.display === "flex") refreshGate();
   });
   buildPicker(); buildRpal();
   refreshGate();

@@ -1213,7 +1213,7 @@
     'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}var fl=document.getElementById("cloakfav");if(fl)fl.href=cloakFav();});' +
     'document.title=cloakTitle();' +
     'topShow("choose");' +
-    'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();if(pendingView.style.display!=="none"||banEl.style.display==="flex")refreshGate();});' +
+    'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();if(pendingView.style.display==="block"||banEl.style.display==="flex")refreshGate();});' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
     'document.body.appendChild(iframe);' +
