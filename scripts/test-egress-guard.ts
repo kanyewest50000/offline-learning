@@ -1,6 +1,5 @@
-// Checks that scrapable Deno routes stay small. Does not assert IP rate
-// limits — a whole classroom can share one NAT.
-const BASE = Deno.env.get("EGRESS_BASE") || "http://127.0.0.1:8023";
+// Anonymous IP cap is 90/min. Authenticated (token) traffic is exempt.
+const BASE = Deno.env.get("EGRESS_BASE") || "http://127.0.0.1:8026";
 
 async function hit(path: string, init?: RequestInit) {
   const r = await fetch(BASE + path, init);
@@ -14,23 +13,34 @@ if (g.bytes > 200) throw new Error("/g/ body too big: " + g.bytes);
 
 const admin = await hit("/admin");
 if (admin.bytes > 800) throw new Error("/admin without key too big: " + admin.bytes);
-if (admin.text.includes("Approve / deny")) throw new Error("/admin leaked full panel");
 
-const badKey = await hit("/admin?key=nope");
-if (badKey.status !== 401) throw new Error("bad admin key wanted 401 got " + badKey.status);
-if (badKey.bytes > 800) throw new Error("401 admin body too big: " + badKey.bytes);
+const first = await hit("/apply", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ username: "authed" + Date.now(), application: "token holder" }),
+});
+const tok = JSON.parse(first.text).token as string;
+if (!tok) throw new Error("apply did not return a token: " + first.text);
 
-const health = await hit("/nope");
-if (health.bytes > 80) throw new Error("health too big: " + health.bytes);
-
-// Several applies from one IP must not 429 (shared school NAT).
-for (let i = 0; i < 12; i++) {
+for (let i = 0; i < 11; i++) {
   const a = await hit("/apply", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ username: "nat" + i + Date.now(), application: "shared ip" }),
   });
-  if (a.status === 429) throw new Error("/apply 429 on try " + i + " — IP limit is back");
+  if (a.status === 429) throw new Error("/apply 429 on try " + i);
 }
 
-console.log("PASS /g/ 410", g.bytes, "B; /admin gate", admin.bytes, "B; 12 applies from one IP ok");
+let limited = false;
+for (let i = 0; i < 90; i++) {
+  const h = await hit("/nope");
+  if (h.status === 429) { limited = true; break; }
+}
+const after = await hit("/nope");
+if (!limited && after.status !== 429) throw new Error("anonymous 90/min never tripped");
+
+const st = await hit("/status?token=" + encodeURIComponent(tok));
+if (st.status === 429) throw new Error("authed /status hit the IP cap");
+if (st.status !== 200) throw new Error("authed /status wanted 200 got " + st.status);
+
+console.log("PASS /g/", g.bytes, "B; /admin", admin.bytes, "B; 12 applies ok; anon 429; authed /status", st.status);

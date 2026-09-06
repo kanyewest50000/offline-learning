@@ -334,15 +334,40 @@ function blockState(u: any): { blocked: boolean; reason?: string; until?: number
   return { blocked: false };
 }
 
-// Token-keyed rate limits only — a school NAT / shared Wi‑Fi must not
-// lock out every shrine tab at once. Isolates do not share this map.
-// Cheap unauthenticated bodies (/g/ 410, /admin gate) are already tiny;
-// this only brakes one token from refetching full /events history as
-// fast as TCP allows. This process never serveDir()s the repo and never
-// fetch()es game files for a client.
+// Rate limits: 90 req/min per IP for *anonymous* traffic, plus per-token
+// caps on /events. A school NAT is fine because approved shrine/casino
+// tabs send a token and skip the IP bucket. Scrapers with no token hit
+// the 90/min wall. Isolates do not share this map. This process never
+// serveDir()s the repo and never fetch()es game files for a client.
 type Bucket = { n: number; reset: number };
 const buckets = new Map<string, Bucket>();
 let sweepN = 0;
+function clientIp(req: Request): string {
+  const xf = req.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0].trim().slice(0, 80) || "unknown";
+  return (req.headers.get("x-real-ip") || "unknown").slice(0, 80);
+}
+// Any issued token (pending or approved) skips the anonymous IP cap.
+async function hasSessionToken(token: string): Promise<boolean> {
+  if (!token) return false;
+  const t = await kv.get<string>(["tok", token]);
+  return !!t.value;
+}
+async function requestIsAuthed(req: Request, url: URL): Promise<boolean> {
+  const qTok = clip(url.searchParams.get("token"), 64);
+  if (qTok && await hasSessionToken(qTok)) return true;
+  const qKey = url.searchParams.get("key") || "";
+  if (ADMIN_KEY && qKey === ADMIN_KEY) return true;
+  if (req.method === "POST") {
+    const peek = await req.clone().json().catch(() => null) as Record<string, unknown> | null;
+    if (peek && typeof peek === "object") {
+      const t = clip(peek.token, 64);
+      if (t && await hasSessionToken(t)) return true;
+      if (ADMIN_KEY && String(peek.key ?? "") === ADMIN_KEY) return true;
+    }
+  }
+  return false;
+}
 function allow(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
   if (++sweepN > 2000) {
@@ -377,8 +402,11 @@ Deno.serve({ port: listenPort }, async (req) => {
   const path = url.pathname;
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
-  // Authenticated chat only: one token cannot dump HISTORY every few ms.
-  // Shared-IP classrooms each have their own token, so they do not share a bucket.
+  const ip = clientIp(req);
+  if (!(await requestIsAuthed(req, url)) && !allow("ip:" + ip, 90, 60_000)) return tooMany(60);
+
+  // One token cannot dump HISTORY every few ms. Shared-IP classrooms each
+  // have their own token, so they do not share this bucket.
   if (path === "/events") {
     const since = Number(url.searchParams.get("since") || "0") || 0;
     const tok = clip(url.searchParams.get("token"), 64);
