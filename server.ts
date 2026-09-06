@@ -334,11 +334,66 @@ function blockState(u: any): { blocked: boolean; reason?: string; until?: number
   return { blocked: false };
 }
 
+// Best-effort per-isolate rate limits. Isolates do not share this map, so a
+// botnet can still spread — but one scraper cannot hammer /admin HTML,
+// /apply, or /events?since=0 (full history) into 100 GiB. This process never
+// serveDir()s the repo and never fetch()es game files for a client.
+type Bucket = { n: number; reset: number };
+const buckets = new Map<string, Bucket>();
+let sweepN = 0;
+function clientIp(req: Request): string {
+  const xf = req.headers.get("x-forwarded-for");
+  if (xf) return xf.split(",")[0].trim().slice(0, 80) || "unknown";
+  return (req.headers.get("x-real-ip") || "unknown").slice(0, 80);
+}
+function allow(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  if (++sweepN > 2000) {
+    sweepN = 0;
+    for (const [k, b] of buckets) if (now >= b.reset) buckets.delete(k);
+  }
+  const b = buckets.get(key);
+  if (!b || now >= b.reset) {
+    buckets.set(key, { n: 1, reset: now + windowMs });
+    return true;
+  }
+  if (b.n >= limit) return false;
+  b.n++;
+  return true;
+}
+function tooMany(retrySec = 30): Response {
+  return new Response(JSON.stringify({ error: "slow down" }), {
+    status: 429,
+    headers: { "content-type": "application/json", "retry-after": String(retrySec), ...CORS },
+  });
+}
+
+const ADMIN_GATE = `<!doctype html><html lang="en"><meta charset="utf-8"><title>admin</title>
+<body style="font-family:system-ui;background:#1d1206;color:#f5efe0;padding:24px">
+<form><input name="key" type="password" placeholder="admin key" style="padding:8px">
+<button>open</button></form>
+<script>document.querySelector("form").onsubmit=function(e){e.preventDefault();location="/admin?key="+encodeURIComponent(this.key.value)}</script>`;
+
 const listenPort = Number(Deno.env.get("PORT") || "8000") || 8000;
 Deno.serve({ port: listenPort }, async (req) => {
   const url = new URL(req.url);
   const path = url.pathname;
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+
+  const ip = clientIp(req);
+  if (!allow("ip:" + ip, 90, 60_000)) return tooMany(60);
+  if (path.startsWith("/g/") && !allow("g:" + ip, 20, 60_000)) return tooMany(60);
+  if (path === "/apply" && req.method === "POST" && !allow("apply:" + ip, 8, 60 * 60_000)) return tooMany(3600);
+  if (path === "/login" && req.method === "POST" && !allow("login:" + ip, 20, 60_000)) return tooMany(60);
+  if (path === "/admin" && !allow("admin:" + ip, 12, 60_000)) return tooMany(60);
+  if (path === "/status" && !allow("st:" + ip, 40, 60_000)) return tooMany(30);
+  if (path === "/events") {
+    const since = Number(url.searchParams.get("since") || "0") || 0;
+    const tok = clip(url.searchParams.get("token"), 64);
+    if (since <= 0) {
+      if (!allow("hist:" + (tok || ip), 4, 60_000)) return tooMany(60);
+    } else if (!allow("ev:" + (tok || ip), 20, 60_000)) return tooMany(30);
+  }
 
   // ---------- apply ----------
   if (req.method === "POST" && path === "/apply") {
@@ -495,7 +550,18 @@ Deno.serve({ port: listenPort }, async (req) => {
 
   // ---------- admin ----------
   if (req.method === "GET" && path === "/admin") {
-    return new Response(ADMIN_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+    // Full admin HTML is ~20KB. Serving it to every scanner was free egress.
+    // Without a matching key, return a tiny gate instead.
+    const key = url.searchParams.get("key") || "";
+    if (!ADMIN_KEY || key !== ADMIN_KEY) {
+      return new Response(ADMIN_GATE, {
+        status: key ? 401 : 200,
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+    return new Response(ADMIN_HTML, {
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
   }
   if (req.method === "GET" && path === "/admin/pending") {
     if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
@@ -1130,7 +1196,11 @@ Deno.serve({ port: listenPort }, async (req) => {
   if (req.method === "GET" && path.startsWith("/g/")) {
     return new Response("gone: game loaders are on GitHub Pages at games/g/", {
       status: 410,
-      headers: { "content-type": "text/plain; charset=utf-8", ...CORS },
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "public, max-age=86400",
+        ...CORS,
+      },
     });
   }
 
@@ -1227,7 +1297,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 var keyEl=document.getElementById("key"),list=document.getElementById("list"),users=document.getElementById("users");
 var balances=document.getElementById("balances"),shop=document.getElementById("shop");
 var pendingCache=null,usersCache=null,balancesCache=null,pendingErr=null,usersErr=null,balancesErr=null;
-try{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}catch(e){}
+try{var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}catch(e){}
 function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();}
 document.getElementById("load").onclick=loadAll;
 document.getElementById("clear").onclick=function(){
