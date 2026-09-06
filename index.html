@@ -1030,7 +1030,7 @@
     'var shrineEl=document.getElementById("shrine");' +
     'var gamesEl=document.getElementById("games");' +
     'var casinoEl=document.getElementById("casino");' +
-    'var casinoBtn=document.getElementById("casinoBtn");' +
+    'var chooseCasino=document.getElementById("chooseCasino");' +
     'var cback=document.getElementById("cback");' +
     'var shopBtn=document.getElementById("shopBtn");' +
     'var shrineBtn=document.getElementById("shrineBtn");' +
@@ -1057,8 +1057,8 @@
     /* the main header swaps identity with the view: shrine title everywhere, a
        full casino header (back / title / balance / shop) once inside the casino. */
     'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";gamesEl.style.display=v==="games"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";' +
-    /* the casino button only belongs on the games view — not the chooser or chat */
-    'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";casinoBtn.style.display=(v==="games")?"flex":"none";}' +
+    /* casino is a chooser destination; the header swaps identity once you are in it */
+    'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";}' +
     /* clicking a game opens it in its OWN about:blank tab. we write a tiny self-
        contained document into that tab: a header bar (styled to match the shrine
        chrome) holding an X that closes the tab and a fullscreen button, plus an
@@ -1192,9 +1192,9 @@
     'buildPicker();buildRpal();buildGames();' +
     'chooseShrine.addEventListener("click",function(){topShow("shrine");refreshGate();});' +
     'chooseGames.addEventListener("click",function(){topShow("games");});' +
+    'chooseCasino.addEventListener("click",function(){topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the games grid to the chooser screen */
-    'casinoBtn.addEventListener("click",function(){topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* enter the casino (same window) */
-    'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("games");});' +   /* casino "← games" back button */
+    'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("choose");});' +   /* casino "← back" returns to the chooser */
     'shopBtn.addEventListener("click",function(){if(window.__casinoShop)window.__casinoShop();});' +   /* shop lives on the casino header */
     'shrineBtn.addEventListener("click",function(){if(window.__casinoShrine)window.__casinoShrine();});' +   /* so does the shrine (the faucet) */
     'sback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the shrine/chat to the chooser screen */
@@ -2169,7 +2169,7 @@
       '#rpal button:hover{background:#3a2410;border-radius:6px}' +
       '#choose{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px}' +
       '#choose h2{margin:0 0 6px;text-align:center}' +
-      '#choicerow{display:flex;gap:14px;width:100%;max-width:360px}' +
+      '#choicerow{display:flex;gap:14px;width:100%;max-width:540px;flex-wrap:wrap;justify-content:center}' +
       '.bigbtn{flex:1;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:12px;font-size:15px;border-radius:14px;line-height:1.25}' +
       '.bicon{width:44%;height:auto}' +   /* the chat speech-bubble svg */
       '.bimg{width:58%;aspect-ratio:1;object-fit:cover;border-radius:10px}' +   /* the sahur png */
@@ -2450,13 +2450,12 @@
       '<header id="mainhdr">' +
       '<div id="hdrShrine"><span>Shrine of Tung</span><small>hi</small></div>' +
       '<div id="hdrCasino">' +
-      '<button id="cback" class="hbtn" type="button">← games</button>' +
+      '<button id="cback" class="hbtn" type="button">← back</button>' +
       '<div class="chtitle">' + SPADE(18) + '<span>Tung&#8217;s Casino</span></div>' +
       '<div id="casbalwrap" title="your sahur balance"><span id="casbal">0.00</span> <b>sahurs</b></div>' +
       '<button id="shrineBtn" class="hbtn" type="button">⛲ Shrine</button>' +
       '<button id="shopBtn" class="hbtn" type="button">🛒 Shop</button>' +
       '</div>' +
-      '<button id="casinoBtn" class="casbtn" type="button" title="Tung&#8217;s Casino">' + SPADE(18) + '<span>Casino</span></button>' +
       '</header>' +
       '<div id="choose">' +
       '<h2>enter the shrine</h2>' +
@@ -2469,6 +2468,10 @@
       '<button id="chooseGames" class="bigbtn ghost" type="button">' +
       '<img class="bimg" src="' + esc(TUNG_IMG) + '" alt="">' +
       '<span>Tung’s curated games</span></button>' +
+      /* casino button: same bigbtn as curated games; unique id so a parallel original-games button can merge */
+      '<button id="chooseCasino" class="bigbtn ghost" type="button">' +
+      SPADE(18).replace('<svg viewBox', '<svg class="bicon" viewBox') +
+      '<span>Tung’s Casino</span></button>' +
       '</div>' +
       '</div>' +
       '<div id="shrine">' +
