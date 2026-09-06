@@ -11,5 +11,8 @@
       "command": "export PATH=\"$HOME/.deno/bin:$PATH\"; deno run --allow-net --allow-read --allow-sys jsr:@std/http/file-server -p 8080 ."
     }
   ],
-  "ports": [8000, 8080]
+  "ports": [
+    { "name": "backend", "port": 8000 },
+    { "name": "static-site", "port": 8080 }
+  ]
 }
