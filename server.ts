@@ -339,7 +339,8 @@ function blockState(u: any): { blocked: boolean; reason?: string; until?: number
   return { blocked: false };
 }
 
-Deno.serve(async (req) => {
+const listenPort = Number(Deno.env.get("PORT") || "8000") || 8000;
+Deno.serve({ port: listenPort }, async (req) => {
   const url = new URL(req.url);
   const path = url.pathname;
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
