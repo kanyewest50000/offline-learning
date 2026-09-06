@@ -7,6 +7,7 @@
 //
 // Endpoints (JSON, CORS-open):
 //   POST /apply         {username, application}          -> {token, status}
+//   POST /login         {username, token}                -> {token, status, username}
 //   GET  /status?token=                                   -> {status, username}
 //   GET  /events?since=&token=                            -> {events, cursor}
 //   POST /send          {token, id, text, reply}          -> {ok}
@@ -371,6 +372,40 @@ Deno.serve(async (req) => {
       }).catch(() => {});
     }
     return json({ token, status: "pending", username });
+  }
+
+  // ---------- login (username + exported token / hash / key) ----------
+  // The identity secret is the same rid(24) token issued by /apply and stored
+  // client-side as shrine-token-v1. This endpoint exists so an embed (or a
+  // second browser) can restore that session with username + key instead of
+  // pasting a token-only URL. Username MUST match the token's user: a guessed
+  // name cannot ride someone else's token, and a guessed token cannot be used
+  // under any username. Same CORS as the rest of the API. Does not mint a new
+  // token and does not bypass approval / ban checks (those still happen on
+  // /status, /events, /send).
+  if (req.method === "POST" && path === "/login") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const username = clip(b.username, 24);
+    const token = clip(b.token, 64);
+    if (!username || !token) return json({ error: "unauthorized" }, 401);
+    const t = await kv.get<string>(["tok", token]);
+    if (!t.value) return json({ error: "unauthorized" }, 401);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", t.value]);
+    if (!app.value) return json({ error: "unauthorized" }, 401);
+    if (String(app.value.username).toLowerCase() !== username.toLowerCase()) {
+      return json({ error: "unauthorized" }, 401);
+    }
+    const bs = blockState(app.value);
+    return json({
+      token,
+      status: app.value.status,
+      username: app.value.username,
+      blocked: bs.blocked,
+      reason: bs.reason,
+      until: bs.until,
+    });
   }
 
   // ---------- status ----------
