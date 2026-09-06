@@ -51,6 +51,24 @@ async function seed(status) {
   return { token, user, status: "approved" };
 }
 
+async function prepLanding(page, token) {
+  await page.goto(SITE + "/index.html?api=" + encodeURIComponent(API), {
+    waitUntil: "domcontentloaded",
+    timeout: 30000,
+  });
+  await page.evaluate((tok) => {
+    localStorage.setItem("tung-egg-unlocked", "1");
+    if (tok) localStorage.setItem("shrine-token-v1", tok);
+    else localStorage.removeItem("shrine-token-v1");
+  }, token || "");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.evaluate((tok) => {
+    localStorage.setItem("tung-egg-unlocked", "1");
+    if (tok) localStorage.setItem("shrine-token-v1", tok);
+    else localStorage.removeItem("shrine-token-v1");
+  }, token || "");
+}
+
 async function openShrine(browser, page) {
   const popupP = new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("shrine popup did not open")), 15000);
@@ -68,13 +86,20 @@ async function openShrine(browser, page) {
     browser.on("targetcreated", onTarget);
   });
   const opened = await page.evaluate(() => {
-    if (typeof openSahurChat === "function") {
-      openSahurChat();
-      return "openSahurChat";
+    const people = [...document.querySelectorAll(".person")];
+    for (const p of people) {
+      const h3 = p.querySelector("h3");
+      if (h3 && /Sahur/i.test(h3.textContent || "")) {
+        const slot = p.querySelector(".img-slot") || p;
+        slot.click();
+        return h3.textContent;
+      }
     }
+    const staff = document.querySelector('[aria-label="staff portrait"]');
+    if (staff) { staff.click(); return "aria-staff"; }
     return null;
   });
-  if (!opened) fail("openSahurChat is not on the landing page");
+  if (!opened) fail("could not find Sahur portrait to open shrine (unlock tung-egg-unlocked first)");
   const shrine = await popupP;
   await shrine.waitForSelector("#chooseShrine", { timeout: 15000 });
   return shrine;
@@ -120,13 +145,7 @@ async function main() {
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1100, height: 800 });
-    await page.goto(SITE + "/index.html?api=" + encodeURIComponent(API), {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-    await page.evaluate((tok) => {
-      localStorage.setItem("shrine-token-v1", tok);
-    }, approved.token);
+    await prepLanding(page, approved.token);
 
     const shrine = await openShrine(browser, page);
     await shrine.click("#chooseShrine");
@@ -150,10 +169,7 @@ async function main() {
 
     // Fresh browser profile / no token: apply + optional exported-key login, not a broken wall.
     const fresh = await browser.newPage();
-    await fresh.goto(SITE + "/index.html?api=" + encodeURIComponent(API), {
-      waitUntil: "domcontentloaded",
-    });
-    await fresh.evaluate(() => localStorage.removeItem("shrine-token-v1"));
+    await prepLanding(fresh, null);
     const freshShrine = await openShrine(browser, fresh);
     await freshShrine.click("#chooseShrine");
     await freshShrine.waitForFunction(() => {
@@ -169,10 +185,7 @@ async function main() {
 
     // Pending token: pending view, never username+key.
     const pendPage = await browser.newPage();
-    await pendPage.goto(SITE + "/index.html?api=" + encodeURIComponent(API), {
-      waitUntil: "domcontentloaded",
-    });
-    await pendPage.evaluate((tok) => localStorage.setItem("shrine-token-v1", tok), pending.token);
+    await prepLanding(pendPage, pending.token);
     const pendShrine = await openShrine(browser, pendPage);
     await pendShrine.click("#chooseShrine");
     await pendShrine.waitForFunction(() => {
@@ -190,10 +203,17 @@ async function main() {
 
     // Dead /status must not wipe shrine-token-v1 (the post-/login logout bug).
     const dead = await browser.newPage();
-    await dead.goto(SITE + "/index.html?api=" + encodeURIComponent("http://127.0.0.1:9"), {
-      waitUntil: "domcontentloaded",
-    });
-    await dead.evaluate((tok) => localStorage.setItem("shrine-token-v1", tok), approved.token);
+    const deadSite = SITE + "/index.html?api=" + encodeURIComponent("http://127.0.0.1:9");
+    await dead.goto(deadSite, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await dead.evaluate((tok) => {
+      localStorage.setItem("tung-egg-unlocked", "1");
+      localStorage.setItem("shrine-token-v1", tok);
+    }, approved.token);
+    await dead.reload({ waitUntil: "domcontentloaded" });
+    await dead.evaluate((tok) => {
+      localStorage.setItem("tung-egg-unlocked", "1");
+      localStorage.setItem("shrine-token-v1", tok);
+    }, approved.token);
     const deadShrine = await openShrine(browser, dead);
     await deadShrine.click("#chooseShrine");
     await new Promise((r) => setTimeout(r, 1500));
