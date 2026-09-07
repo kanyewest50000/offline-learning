@@ -22,6 +22,7 @@ const kv = await Deno.openKv();
 const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
+const OPEN_MSGS = 30; // a fresh /events?since=0 only ships this many chat lines
 
 // gn-math HTML loaders live on GitHub Pages at games/g/, pinned to
 // 9b343737669dd2067dd6cd731859a99008772388 (see scripts/refresh-games.sh).
@@ -596,9 +597,35 @@ Deno.serve({ port: listenPort }, async (req) => {
     const events: unknown[] = [];
     let cursor = since;
     // deno-lint-ignore no-explicit-any
-    for await (const e of kv.list<any>({ prefix: ["ev"], start: ["ev", since + 1] }, { limit: 500 })) {
-      events.push(e.value);
-      cursor = e.value.seq;
+    if (since <= 0) {
+      // Reopening chat used to dump the whole retained log (up to HISTORY).
+      // That is the bulk of shrine egress. A fresh cursor only gets the last
+      // OPEN_MSGS chat lines plus reacts that landed in that same window.
+      // deno-lint-ignore no-explicit-any
+      const recent: any[] = [];
+      // deno-lint-ignore no-explicit-any
+      for await (const e of kv.list<any>({ prefix: ["ev"] }, { reverse: true, limit: HISTORY })) {
+        recent.push(e.value);
+      }
+      recent.reverse();
+      let msgs = 0;
+      let start = 0;
+      for (let i = recent.length - 1; i >= 0; i--) {
+        if (recent[i]?.type === "msg") {
+          msgs++;
+          if (msgs >= OPEN_MSGS) { start = i; break; }
+        }
+      }
+      for (let i = start; i < recent.length; i++) {
+        events.push(recent[i]);
+        if (typeof recent[i]?.seq === "number") cursor = recent[i].seq;
+      }
+    } else {
+      // deno-lint-ignore no-explicit-any
+      for await (const e of kv.list<any>({ prefix: ["ev"], start: ["ev", since + 1] }, { limit: 200 })) {
+        events.push(e.value);
+        cursor = e.value.seq;
+      }
     }
     return json({ events, cursor });
   }
