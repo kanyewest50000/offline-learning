@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat tip UI demo</title>
+<style>
+html,body{margin:0;height:100%;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#1d1206;color:#f5efe0}
+body{display:flex;flex-direction:column}
+#bar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#2b1a0a;border-bottom:1px solid #3a2410}
+#exportKey{margin-left:auto;font-size:12px}
+button{padding:10px 16px;border:none;border-radius:8px;background:#c8823c;color:#1d1206;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
+#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word;position:relative}
+.msg.me{align-self:flex-end;background:#8a5a28}
+.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px;background:transparent;border:0;padding:0;cursor:pointer;font-family:inherit;font-weight:600;text-align:left;line-height:1.2}
+.who:hover{color:#f2c063;text-decoration:underline}
+.msg.me .who{color:#f2c063}
+.body{display:block}
+.ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#000a;z-index:50;padding:16px}
+.ovcard{width:100%;max-width:320px;background:linear-gradient(160deg,#2e1c08,#1d1206);border:1px solid #7a5a1a;border-radius:14px;padding:16px;box-shadow:0 12px 40px #000a}
+.ovcard h3{margin:0 0 6px;color:#f2c063;font-size:16px}
+.ovcard .ovsub{margin:0 0 12px;font-size:12px;color:#c8823c;font-style:italic;line-height:1.45}
+.ovrow{display:flex;justify-content:space-between;gap:8px;align-items:baseline;font-size:13px;padding:7px 0;border-top:1px solid #3a2410}
+.ovrow b{color:#8a6a3a;font-weight:600;font-size:11px;letter-spacing:.04em;text-transform:uppercase}
+.ovrow span{color:#f5efe0;text-align:right}
+.ovacts{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.ovacts button{flex:1;min-width:110px}
+.overr{min-height:16px;margin:8px 0 0;font-size:12px;color:#e0908a}
+#tipAmt{width:100%;margin-top:4px;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit}
+.tiptoast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1f4023;border:1px solid #6ee787;color:#bdf5c8;padding:10px 14px;border-radius:10px;font-size:13px;z-index:60;box-shadow:0 8px 24px #0008;max-width:90%}
+#note{padding:8px 12px;font-size:12px;color:#8a6a3a;border-bottom:1px solid #3a2410}
+</style></head><body>
+<div id="bar"><span>Shrine of Tung — tip UI demo</span><button id="exportKey" class="ghost" type="button">copy login key</button></div>
+<div id="note">mock API mirroring GET /tip/profile and POST /tip. click a username, offer sahurs, or copy login key.</div>
+<div id="log"></div>
+<div id="profOverlay" class="ov" role="dialog" aria-modal="true"><div class="ovcard">
+<h3 id="profName">member</h3><p class="ovsub">a pilgrim of the shrine.</p>
+<div class="ovrow"><b>joined</b><span id="profJoined">-</span></div>
+<div class="ovrow"><b>sahurs</b><span id="profBal">-</span></div>
+<p id="profErr" class="overr"></p>
+<div class="ovacts"><button id="profTip" type="button">offer sahurs</button><button id="profClose" class="ghost" type="button">close</button></div>
+</div></div>
+<div id="tipOverlay" class="ov" role="dialog" aria-modal="true"><div class="ovcard">
+<h3>offer sahurs</h3>
+<p class="ovsub">your generosity is appealing in the eyes of tung tung god. continue.</p>
+<p class="ovsub" style="font-style:normal;color:#8a6a3a;margin:0">to <b id="tipWho" style="color:#f2c063"></b></p>
+<input id="tipAmt" type="number" min="0.1" step="0.1" inputmode="decimal" placeholder="amount">
+<p id="tipErr" class="overr"></p>
+<div class="ovacts"><button id="tipSend" type="button">continue</button><button id="tipCancel" class="ghost" type="button">never mind</button></div>
+</div></div>
+<div id="keyOverlay" class="ov" role="dialog" aria-modal="true"><div class="ovcard">
+<h3>copy login key</h3>
+<p class="ovsub">this key spends sahurs and opens every gate. anyone who holds it is you.</p>
+<div class="ovacts"><button id="keyConfirm" type="button">copy anyway</button><button id="keyCancel" class="ghost" type="button">cancel</button></div>
+</div></div>
+<script>
+var TOKEN="demo-login-key-abc123", ME="pilgrim", tipTo=null, pendingCopyBtn=null;
+var USERS={
+  pilgrim:{username:"pilgrim",createdAt:Date.UTC(2026,0,12),balance:42.5},
+  tunglet:{username:"tunglet",createdAt:Date.UTC(2025,8,7),balance:13},
+  woodbat:{username:"woodbat",createdAt:Date.UTC(2026,2,1),balance:0.2}
+};
+function api(p){
+  var u=new URL(p, location.origin);
+  if(u.pathname.indexOf("/tip/profile") >= 0){
+    var name=u.searchParams.get("user");
+    var tok=u.searchParams.get("token");
+    if(!tok) return Promise.resolve({error:"unauthorized"});
+    var row=USERS[String(name||"").toLowerCase()];
+    if(!row) return Promise.resolve({error:"not_found"});
+    return Promise.resolve(Object.assign({}, row));
+  }
+  return Promise.resolve({});
+}
+function apiPost(p,body){
+  if(p === "/tip"){
+    if(!body||!body.token) return Promise.resolve({error:"unauthorized"});
+    var to=String(body.to||"").toLowerCase();
+    var amt=Number(body.amount);
+    if(!to||!isFinite(amt)||amt<=0) return Promise.resolve({error:"invalid"});
+    if(to===ME.toLowerCase()) return Promise.resolve({error:"self"});
+    var row=USERS[to];
+    if(!row) return Promise.resolve({error:"not_found"});
+    if(USERS[ME].balance+1e-9<amt) return Promise.resolve({error:"insufficient"});
+    USERS[ME].balance=Math.round((USERS[ME].balance-amt)*100)/100;
+    row.balance=Math.round((row.balance+amt)*100)/100;
+    return Promise.resolve({ok:true,amount:amt,to:row.username,fromBalance:USERS[ME].balance,toBalance:row.balance});
+  }
+  return Promise.resolve({});
+}
+var profEl=document.getElementById("profOverlay");
+var tipEl=document.getElementById("tipOverlay");
+var keyEl=document.getElementById("keyOverlay");
+var exportKeyBtn=document.getElementById("exportKey");
+function money2(n){n=Number(n);if(!isFinite(n))return "-";return(Math.round(n*100)/100).toFixed(2);}
+function fmtDate(ts){ts=Number(ts);if(!ts)return"unknown";try{return new Date(ts).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});}catch(e){return"unknown";}}
+function doCopyKey(btn){if(!TOKEN)return;var prev=btn?btn.textContent:"";function done(){if(btn){btn.textContent="copied";setTimeout(function(){btn.textContent=prev;},1400);}}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(TOKEN).then(done).catch(fb);}else fb();function fb(){var t=document.createElement("textarea");t.value=TOKEN;t.style.position="fixed";t.style.left="-9999px";document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(e){}document.body.removeChild(t);done();}}
+function copyKey(btn){if(!TOKEN)return;if(!keyEl){doCopyKey(btn);return;}pendingCopyBtn=btn;keyEl.style.display="flex";}
+function confirmCopyKey(){if(keyEl)keyEl.style.display="none";doCopyKey(pendingCopyBtn);pendingCopyBtn=null;}
+function tipErrMsg(e){return e==="insufficient"?"the shrine rejects empty hands.":e==="self"?"tung does not tip himself. neither should you.":e==="not_found"?"that name is not known to the shrine.":e==="invalid"?"that offering is not accepted.":e==="unauthorized"?"the shrine does not recognize you.":"the offering failed. try again.";}
+function openProfile(name){if(!name||!TOKEN||!profEl)return;tipTo=name;document.getElementById("profName").textContent=name;document.getElementById("profJoined").textContent="...";document.getElementById("profBal").textContent="...";document.getElementById("profErr").textContent="";var tipBtn=document.getElementById("profTip");if(tipBtn)tipBtn.style.display=(String(name).toLowerCase()===String(ME||"").toLowerCase())?"none":"";profEl.style.display="flex";api("/tip/profile?token="+encodeURIComponent(TOKEN)+"&user="+encodeURIComponent(name)).then(function(r){if(!r||r.error){var e=r&&r.error;document.getElementById("profErr").textContent=e==="not_found"?"that name is not known to the shrine.":e==="unauthorized"?"the shrine does not recognize you.":"the shrine is silent. try again.";document.getElementById("profJoined").textContent="-";document.getElementById("profBal").textContent="-";return;}var joined=r.createdAt!=null?r.createdAt:(r.registeredAt!=null?r.registeredAt:r.ts);document.getElementById("profName").textContent=r.username||name;document.getElementById("profJoined").textContent=fmtDate(joined);document.getElementById("profBal").textContent=money2(r.balance)+" sahurs";}).catch(function(){document.getElementById("profErr").textContent="the shrine is silent. try again.";});}
+function openTip(name){if(!name||!TOKEN)return;if(String(name).toLowerCase()===String(ME||"").toLowerCase())return;tipTo=name;if(profEl)profEl.style.display="none";document.getElementById("tipWho").textContent=name;document.getElementById("tipAmt").value="1";document.getElementById("tipErr").textContent="";if(tipEl){tipEl.style.display="flex";try{document.getElementById("tipAmt").focus();document.getElementById("tipAmt").select();}catch(e){}}}
+function sendTip(){var amtEl=document.getElementById("tipAmt"),err=document.getElementById("tipErr"),btn=document.getElementById("tipSend");if(!tipTo||!TOKEN||!amtEl)return;var amt=Number(amtEl.value);if(!isFinite(amt)||amt<=0){err.textContent=tipErrMsg("invalid");return;}btn.disabled=true;err.textContent="offering...";apiPost("/tip",{token:TOKEN,to:tipTo,amount:amt}).then(function(r){btn.disabled=false;if(r&&r.ok){err.textContent="";if(tipEl)tipEl.style.display="none";var note=document.createElement("div");note.className="tiptoast";note.textContent="offered "+money2(r.amount!=null?r.amount:amt)+" sahurs to "+(r.to||tipTo)+".";document.body.appendChild(note);setTimeout(function(){if(note.parentNode)note.parentNode.removeChild(note);},2200);return;}err.textContent=tipErrMsg(r&&r.error);}).catch(function(){btn.disabled=false;err.textContent="the shrine is silent. try again.";});}
+function add(m){var row=document.createElement("div");row.className=m.mine?"msg me":"msg";var w=document.createElement("button");w.type="button";w.className="who";w.textContent=m.name;w.title="view profile";w.addEventListener("click",function(ev){ev.stopPropagation();openProfile(m.name);});row.appendChild(w);var bd=document.createElement("span");bd.className="body";bd.textContent=m.text;row.appendChild(bd);document.getElementById("log").appendChild(row);}
+exportKeyBtn.addEventListener("click",function(){copyKey(exportKeyBtn);});
+document.getElementById("profClose").addEventListener("click",function(){profEl.style.display="none";});
+document.getElementById("profTip").addEventListener("click",function(){openTip(tipTo);});
+document.getElementById("tipCancel").addEventListener("click",function(){tipEl.style.display="none";});
+document.getElementById("tipSend").addEventListener("click",sendTip);
+document.getElementById("keyConfirm").addEventListener("click",confirmCopyKey);
+document.getElementById("keyCancel").addEventListener("click",function(){keyEl.style.display="none";pendingCopyBtn=null;});
+profEl.addEventListener("click",function(ev){if(ev.target===profEl)profEl.style.display="none";});
+tipEl.addEventListener("click",function(ev){if(ev.target===tipEl)tipEl.style.display="none";});
+keyEl.addEventListener("click",function(ev){if(ev.target===keyEl){keyEl.style.display="none";pendingCopyBtn=null;}});
+add({name:"tunglet",text:"the wood answers when spoken to.",mine:false});
+add({name:"pilgrim",text:"i brought sahurs. they are already his.",mine:true});
+add({name:"woodbat",text:"continue.",mine:false});
+</script></body></html>
