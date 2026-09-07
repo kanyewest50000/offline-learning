@@ -84,22 +84,33 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
 
 /* ---------- Masthead / nav ---------- */
 .masthead { background: rgba(250,247,240,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 40; }
-.masthead .wrap { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 12px; padding-bottom: 12px; }
-.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+/* nowrap until the mobile breakpoint — "Methodology" is the longest label and
+   used to tip the CTA onto a second row near the shared 1120px content width. */
+.masthead .wrap {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding-top: 12px; padding-bottom: 12px; flex-wrap: nowrap;
+}
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; flex: 0 1 auto; min-width: 0; }
 .brand-mark {
   width: 38px; height: 38px; flex: 0 0 38px;
   border-radius: 9px; display: grid; place-items: center;
   font-family: var(--ui); font-size: 1.15rem; font-weight: 800; color: #fff; background: var(--accent);
 }
-.brand-text { display: flex; flex-direction: column; line-height: 1.16; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.16; min-width: 0; }
 .brand-name { font-family: var(--ui); font-size: 1.05rem; color: var(--ink-900); font-weight: 800; letter-spacing: -.01em; }
 .brand-sub { font-family: var(--ui); font-size: .64rem; letter-spacing: .13em; text-transform: uppercase; color: var(--ink-300); white-space: nowrap; }
 
-.nav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.nav {
+  display: flex; align-items: center; gap: 2px;
+  flex-wrap: nowrap; flex: 1 1 auto; justify-content: flex-end;
+  min-width: 0; overflow-x: auto; scrollbar-width: none;
+}
+.nav::-webkit-scrollbar { display: none; }
 .nav a {
   font-family: var(--ui);
-  padding: 8px 11px; border-radius: var(--radius);
-  font-size: .87rem; font-weight: 500; color: var(--ink-500); text-decoration: none;
+  padding: 8px 9px; border-radius: var(--radius);
+  font-size: .84rem; font-weight: 500; color: var(--ink-500); text-decoration: none;
+  white-space: nowrap; flex: 0 0 auto;
 }
 .nav a:hover { background: var(--paper-2); color: var(--ink-900); }
 .nav a.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
@@ -124,7 +135,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
 .btn-primary:hover { background: var(--accent-2); color: #fff !important; transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .btn-ghost { border: 1.5px solid var(--line); color: var(--ink-700) !important; background: transparent; }
 .btn-ghost:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.btn-sm { padding: 7px 14px; font-size: .8rem; }
+.btn-sm { padding: 7px 12px; font-size: .78rem; }
 
 /* ---------- Hero ---------- */
 .hero {
@@ -300,7 +311,10 @@ details.faq .faq-body { padding: 0 20px 18px; font-size: .93rem; color: var(--in
   .kv dd { margin-bottom: 10px; }
 }
 /* header wraps at the SAME breakpoint as index.html so the nav is identical site-wide */
-@media (max-width: 900px) { .masthead .wrap { flex-wrap: wrap; } }
+@media (max-width: 900px) {
+  .masthead .wrap { flex-wrap: wrap; }
+  .nav { flex-wrap: wrap; overflow-x: visible; justify-content: flex-start; }
+}
 @media (max-width: 620px) {
   .footer-grid { grid-template-columns: 1fr; }
   .tutor { grid-template-columns: 1fr; }
