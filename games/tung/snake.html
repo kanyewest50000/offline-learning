@@ -13,8 +13,8 @@
       <p class="line">eat. lengthen. the red square is already taken.</p>
     </div>
   </div>
-  <div class="stage" style="--gw:480;--gh:480">
-    <div class="frame"><canvas id="c" width="480" height="480"></canvas></div>
+  <div class="stage" style="--gw:432;--gh:432">
+    <div class="frame"><canvas id="c" width="432" height="432"></canvas></div>
   </div>
   <p class="hint">arrows / wasd / swipe · cursed relics reverse you · a glowing square is a warning</p>
 <script src="tung-fit.js"></script>
@@ -22,13 +22,14 @@
 (function(){
   var N=18, CELL=24, W=N*CELL, H=N*CELL;
   var c=document.getElementById("c"), ctx=c.getContext("2d");
+  if(window.__tungHiDPI) window.__tungHiDPI(c, ctx, W, H);
   var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
   var god=new Image(); god.src="../../assets/tungtunggod.png";
   var evil=new Image(); evil.src="../../assets/eviltungtungtungsahur.jpg";
   var snake, dir, next, food, cursed, score, best, state, tickAcc, last, clock;
   var warn, foe, nextFoeAt, deathKind;
   try{best=parseInt(localStorage.getItem("sahur-snake-best")||"0",10)||0;}catch(e){best=0;}
-  var STEP=120;
+  var STEP=180;
   var DEMO=/\bdemo\b/.test(location.search||"");
   var WARN_MS=DEMO?900:2600;
   var FOE_MIN=DEMO?200:3500, FOE_SPAN=DEMO?0:3500;

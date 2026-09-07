@@ -22,11 +22,14 @@
 (function(){
   var W=420, H=640, GROUND=56;
   var c=document.getElementById("c"), ctx=c.getContext("2d");
+  if(window.__tungHiDPI) window.__tungHiDPI(c, ctx, W, H);
+  else if(window.__tungFit) window.__tungFit();
+  var birdImg=new Image(); birdImg.src="../../assets/flappy-tung-bird.png";
   var tungImg=new Image(); tungImg.src="../../assets/tungtungtungsahur.png";
-  /* oval body radii — flappy-bird capsule, not a circle */
-  var bird={x:92,y:280,vy:0,bw:26,bh:18};
+  /* OG flappy silhouette — half-extents of the composed sprite */
+  var bird={x:96,y:280,vy:0,hw:40,hh:29};
   var pipes=[], frame=0, score=0, best=0, state="idle";
-  var GRAV=0.42, FLAP=-7.2, GAP=148, PW=54, SPEED=2.15;
+  var GRAV=0.26, FLAP=-5.05, GAP=168, PW=54, SPEED=1.28, SPAWN=132;
   try{best=parseInt(localStorage.getItem("flappy-tung-best")||"0",10)||0;}catch(e){}
 
   function reset(){
@@ -42,25 +45,20 @@
     bird.vy=FLAP;
   }
   function birdAngle(){
-    return Math.max(-0.6, Math.min(0.9, bird.vy*0.06));
+    return Math.max(-0.55, Math.min(0.85, bird.vy*0.055));
   }
   function toLocal(px, py){
     var a=birdAngle(), dx=px-bird.x, dy=py-bird.y;
     var cos=Math.cos(-a), sin=Math.sin(-a);
     return {x:dx*cos-dy*sin, y:dx*sin+dy*cos};
   }
-  function inEllipse(lx, ly, cx, cy, rx, ry, rot){
+  function inEllipse(lx, ly, cx, cy, rx, ry){
     var dx=lx-cx, dy=ly-cy;
-    if(rot){
-      var cos=Math.cos(-rot), sin=Math.sin(-rot);
-      var nx=dx*cos-dy*sin; dy=dx*sin+dy*cos; dx=nx;
-    }
     return (dx*dx)/(rx*rx)+(dy*dy)/(ry*ry) <= 1;
   }
   function inBird(px, py){
     var p=toLocal(px, py);
-    if(inEllipse(p.x, p.y, 0, 0, bird.bw, bird.bh, 0)) return true;
-    return inEllipse(p.x, p.y, -16, 6, 15, 8, -0.35);
+    return inEllipse(p.x, p.y, 0, 0, bird.hw-7, bird.hh-7);
   }
   function hitRect(x,y,w,h){
     if(bird.x>=x && bird.x<=x+w && bird.y>=y && bird.y<=y+h) return true;
@@ -87,35 +85,13 @@
     ctx.fillStyle="#f2c06333";
     ctx.fillRect(x+6,y+4,6,Math.max(0,h-8));
   }
-  function drawBird(){
-    ctx.save();
-    ctx.translate(bird.x, bird.y);
-    ctx.rotate(birdAngle());
-    var flap=state==="play" ? Math.max(-1.15, Math.min(0.85, -bird.vy*0.14)) : Math.sin(Date.now()/160)*0.22;
-    ctx.save();
-    ctx.translate(-2, 2);
-    ctx.rotate(-0.35+flap);
-    ctx.fillStyle="#a56a2c";
-    ctx.strokeStyle="#5c3a14";
-    ctx.lineWidth=1.75;
+  function drawBirdFallback(){
     ctx.beginPath();
-    ctx.ellipse(-16, 6, 15, 7.5, 0, 0, Math.PI*2);
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle="#d4a15a";
-    ctx.beginPath();
-    ctx.ellipse(-15, 5, 9, 4.2, 0, 0, Math.PI*2);
-    ctx.fill();
-    ctx.restore();
-    ctx.beginPath();
-    ctx.ellipse(0, 0, bird.bw, bird.bh, 0, 0, Math.PI*2);
+    ctx.ellipse(0, 0, bird.hw, bird.hh, 0, 0, Math.PI*2);
     ctx.save();
     ctx.clip();
     if(tungImg.complete && tungImg.naturalWidth){
-      var sw=tungImg.naturalWidth, sh=tungImg.naturalHeight;
-      var destW=bird.bw*2, destH=bird.bh*2;
-      var srcH=sh*0.36, srcW=srcH*(destW/destH);
-      var srcX=sw*0.26, srcY=sh*0.03;
-      ctx.drawImage(tungImg, srcX, srcY, srcW, srcH, -bird.bw, -bird.bh, destW, destH);
+      ctx.drawImage(tungImg, -bird.hw, -bird.hh, bird.hw*2, bird.hh*2);
     } else {
       ctx.fillStyle="#c8823c";
       ctx.fill();
@@ -124,22 +100,20 @@
     ctx.strokeStyle="#6a4418";
     ctx.lineWidth=2;
     ctx.beginPath();
-    ctx.ellipse(0, 0, bird.bw, bird.bh, 0, 0, Math.PI*2);
+    ctx.ellipse(0, 0, bird.hw, bird.hh, 0, 0, Math.PI*2);
     ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(bird.bw-4, -6);
-    ctx.lineTo(bird.bw+14, -1);
-    ctx.lineTo(bird.bw-4, 2);
-    ctx.closePath();
-    ctx.fillStyle="#f0b44a";
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(bird.bw-4, 1);
-    ctx.lineTo(bird.bw+14, -1);
-    ctx.lineTo(bird.bw-4, 7);
-    ctx.closePath();
-    ctx.fillStyle="#d4842a";
-    ctx.fill();
+  }
+  function drawBird(){
+    ctx.save();
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(birdAngle());
+    ctx.imageSmoothingEnabled=true;
+    if(ctx.imageSmoothingQuality) ctx.imageSmoothingQuality="high";
+    if(birdImg.complete && birdImg.naturalWidth){
+      ctx.drawImage(birdImg, -bird.hw, -bird.hh, bird.hw*2, bird.hh*2);
+    } else {
+      drawBirdFallback();
+    }
     ctx.restore();
   }
   function overlay(title, sub){
@@ -166,7 +140,7 @@
     if(state==="play"){
       frame++;
       bird.vy+=GRAV; bird.y+=bird.vy;
-      if(frame%90===0) spawn();
+      if(frame%SPAWN===0) spawn();
       for(var i=pipes.length-1;i>=0;i--){
         pipes[i].x-=SPEED;
         if(!pipes[i].passed && pipes[i].x+PW<bird.x){
@@ -176,7 +150,7 @@
         if(hitPipe(pipes[i])) state="dead";
         if(pipes[i].x<-PW-10) pipes.splice(i,1);
       }
-      if(bird.y+bird.bh>H-GROUND || bird.y-bird.bh<0) state="dead";
+      if(bird.y+bird.hh>H-GROUND || bird.y-bird.hh<0) state="dead";
     }
     ctx.fillStyle="#1d1206"; ctx.fillRect(0,0,W,H);
     var g=ctx.createRadialGradient(W/2,80,20,W/2,80,340);
@@ -206,6 +180,16 @@
   window.addEventListener("keydown", function(ev){
     if(ev.code==="Space" || ev.key===" "){ ev.preventDefault(); flap(); }
   });
+  window.__tungFlappy={
+    get:function(){
+      return {
+        score:score, best:best, state:state, speed:SPEED, grav:GRAV, flap:FLAP,
+        spawn:SPAWN, hw:bird.hw, hh:bird.hh, src:birdImg.src
+      };
+    },
+    reset:reset,
+    flap:flap
+  };
   tick();
 })();
 </script>

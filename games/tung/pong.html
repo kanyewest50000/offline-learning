@@ -22,17 +22,18 @@
 (function(){
   var W=720, H=420;
   var c=document.getElementById("c"), ctx=c.getContext("2d");
+  if(window.__tungHiDPI) window.__tungHiDPI(c, ctx, W, H);
   var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
   var you, him, ball, youScore, himScore, state, spin;
-  var PS=36, BR=12, WIN=7;
+  var PW=28, PH=100, BR=12, WIN=7;
 
   function resetBall(toHim){
-    ball={x:W/2, y:H/2, vx:(toHim?3.2:-3.2), vy:(Math.random()*2-1)*2.4};
+    ball={x:W/2, y:H/2, vx:(toHim?2.1:-2.1), vy:(Math.random()*2-1)*1.6};
     spin=0;
   }
   function reset(){
-    you={x:28, y:H/2-PS/2, vy:0};
-    him={x:W-28-PS, y:H/2-PS/2};
+    you={x:24, y:H/2-PH/2, vy:0};
+    him={x:W-24-PW, y:H/2-PH/2};
     youScore=0; himScore=0; state="idle";
     resetBall(true);
   }
@@ -42,25 +43,25 @@
   }
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
   function bounce(p, dir){
-    var rel=((ball.y)-(p.y+PS/2))/(PS/2);
-    ball.vx=dir*Math.min(8.5, Math.abs(ball.vx)+0.35);
-    ball.vy=rel*5.2;
+    var rel=((ball.y)-(p.y+PH/2))/(PH/2);
+    ball.vx=dir*Math.min(5.6, Math.abs(ball.vx)+0.22);
+    ball.vy=rel*4.0;
     spin+=dir*0.4;
   }
   function hitsPad(p){
-    return ball.x+BR>p.x && ball.x-BR<p.x+PS && ball.y+BR>p.y && ball.y-BR<p.y+PS;
+    return ball.x+BR>p.x && ball.x-BR<p.x+PW && ball.y+BR>p.y && ball.y-BR<p.y+PH;
   }
   function aiMove(){
-    var minY=8, maxY=H-PS-8;
-    var target=ball.y-PS/2;
+    var minY=8, maxY=H-PH-8;
+    var target=ball.y-PH/2;
     /* player one point from winning: Tung is about to lose, so he does not miss */
     if(youScore>=WIN-1){
       him.y=clamp(target, minY, maxY);
       return;
     }
     var heat=youScore/Math.max(1, WIN-1);
-    var follow=0.08+heat*0.2;
-    var maxStep=3+heat*5;
+    var follow=0.06+heat*0.16;
+    var maxStep=2.2+heat*3.6;
     var wobble=(1-heat)*9;
     var desired;
     if(ball.vx>0){
@@ -70,12 +71,12 @@
       if(delta<-maxStep) delta=-maxStep;
       him.y=clamp(him.y+delta, minY, maxY);
     } else {
-      him.y=clamp(him.y+(H/2-PS/2-him.y)*0.03, minY, maxY);
+      him.y=clamp(him.y+(H/2-PH/2-him.y)*0.03, minY, maxY);
     }
   }
   function tick(){
     if(state==="play"){
-      you.y=clamp(you.y+you.vy, 8, H-PS-8);
+      you.y=clamp(you.y+you.vy, 8, H-PH-8);
       ball.x+=ball.vx; ball.y+=ball.vy; spin+=ball.vx*0.01;
       if(ball.y<BR || ball.y>H-BR){ ball.vy*=-1; ball.y=clamp(ball.y, BR, H-BR); }
       aiMove();
@@ -91,8 +92,8 @@
     ctx.strokeStyle="#7a5a1a"; ctx.setLineDash([7,8]);
     ctx.beginPath(); ctx.moveTo(W/2, 12); ctx.lineTo(W/2, H-12); ctx.stroke();
     ctx.setLineDash([]);
-    squarePad(you.x,you.y,"#c8823c");
-    squarePad(him.x,him.y,"#f2c063");
+    drawPad(you.x,you.y,"#c8823c");
+    drawPad(him.x,him.y,"#f2c063");
     ctx.save();
     ctx.translate(ball.x, ball.y); ctx.rotate(spin);
     if(tung.complete && tung.naturalWidth){
@@ -113,12 +114,12 @@
     else if(state==="win") overlay("a rare bounce", "a point he allowed. cherish it.");
     requestAnimationFrame(tick);
   }
-  function squarePad(x,y,fill){
+  function drawPad(x,y,fill){
     ctx.fillStyle=fill;
-    ctx.fillRect(x,y,PS,PS);
+    ctx.fillRect(x,y,PW,PH);
     ctx.strokeStyle="#7a5a1a";
     ctx.lineWidth=2;
-    ctx.strokeRect(x+0.5,y+0.5,PS-1,PS-1);
+    ctx.strokeRect(x+0.5,y+0.5,PW-1,PH-1);
   }
   function overlay(title, sub){
     ctx.fillStyle="#1d1206f2";
@@ -133,8 +134,8 @@
   }
   function moveTo(clientY){
     var r=c.getBoundingClientRect();
-    var y=(clientY-r.top)*(H/r.height)-PS/2;
-    you.y=clamp(y, 8, H-PS-8);
+    var y=(clientY-r.top)*(H/r.height)-PH/2;
+    you.y=clamp(y, 8, H-PH-8);
     start();
   }
   c.addEventListener("mousemove", function(ev){ moveTo(ev.clientY); });
@@ -142,16 +143,16 @@
   c.addEventListener("touchmove", function(ev){ ev.preventDefault(); moveTo(ev.touches[0].clientY); }, {passive:false});
   c.addEventListener("touchstart", function(ev){ ev.preventDefault(); moveTo(ev.touches[0].clientY); start(); }, {passive:false});
   window.addEventListener("keydown", function(ev){
-    if(ev.key==="ArrowUp"||ev.key==="w"||ev.key==="W"){ you.vy=-6; start(); }
-    if(ev.key==="ArrowDown"||ev.key==="s"||ev.key==="S"){ you.vy=6; start(); }
+    if(ev.key==="ArrowUp"||ev.key==="w"||ev.key==="W"){ you.vy=-5; start(); }
+    if(ev.key==="ArrowDown"||ev.key==="s"||ev.key==="S"){ you.vy=5; start(); }
   });
   window.addEventListener("keyup", function(ev){
     if(ev.key==="ArrowUp"||ev.key==="w"||ev.key==="W"||ev.key==="ArrowDown"||ev.key==="s"||ev.key==="S") you.vy=0;
   });
   window.__tungPong = {
-    scores: function(){ return {you:youScore, him:himScore, win:WIN, ps:PS}; },
+    scores: function(){ return {you:youScore, him:himScore, win:WIN, ps:PH, pw:PW, ph:PH}; },
     setScores: function(y,h){ youScore=y; himScore=h; },
-    snapshot: function(){ return {youY:you.y, himY:him.y, ballY:ball.y, ballX:ball.x, ps:PS, state:state}; }
+    snapshot: function(){ return {youY:you.y, himY:him.y, ballY:ball.y, ballX:ball.x, ps:PH, pw:PW, ph:PH, state:state}; }
   };
   reset();
   tick();
