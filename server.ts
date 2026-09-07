@@ -136,15 +136,28 @@ async function findApprovedByUsername(username: string): Promise<any | null> {
 
 // Atomic tip/donation: debit `fromId` and credit `toId` in ONE Deno KV transaction
 // so a concurrent double-spend cannot invent sahurs, and a crash mid-transfer cannot
-// debit without credit. Returns new balances, "insufficient", or null for bad amount.
+// debit without credit. Optional tipId adds an idempotency lock so retries cannot
+// double-pay. Returns new balances, "insufficient", or null for bad amount.
 async function transferBalance(
   fromId: string,
   toId: string,
   amount: number,
-): Promise<{ from: number; to: number } | "insufficient" | null> {
+  tipId?: string,
+): Promise<{ from: number; to: number; replay?: boolean } | "insufficient" | null> {
   if (!Number.isFinite(amount) || amount <= 0) return null;
   if (fromId === toId) return null;
+  const TIP_LOCK_TTL = 7 * 24 * 60 * 60 * 1000;
   for (;;) {
+    if (tipId) {
+      const lock = await kv.get<{ from: string; to: string; amount: number }>(["tiplock", tipId]);
+      if (lock.value) {
+        return {
+          from: round2((await getCas(fromId)).bal),
+          to: round2((await getCas(toId)).bal),
+          replay: true,
+        };
+      }
+    }
     const fromCur = await kv.get<{ bal: number; lastClaim: number }>(["cas", fromId]);
     const toCur = await kv.get<{ bal: number; lastClaim: number }>(["cas", toId]);
     const fromRec = fromCur.value ?? { bal: 0, lastClaim: 0 };
@@ -155,12 +168,18 @@ async function transferBalance(
     const toNb = round2(toBase + amount);
     if (!Number.isFinite(fromNb) || fromNb < -1e-9) return "insufficient";
     if (!Number.isFinite(toNb) || toNb < 0) return null;
-    const res = await kv.atomic()
+    let op = kv.atomic()
       .check(fromCur)
       .check(toCur)
       .set(["cas", fromId], { ...fromRec, bal: Math.max(0, fromNb) }, { expireIn: CAS_TTL })
-      .set(["cas", toId], { ...toRec, bal: Math.max(0, toNb) }, { expireIn: CAS_TTL })
-      .commit();
+      .set(["cas", toId], { ...toRec, bal: Math.max(0, toNb) }, { expireIn: CAS_TTL });
+    if (tipId) {
+      const lock = await kv.get(["tiplock", tipId]);
+      op = op.check(lock).set(["tiplock", tipId], {
+        from: fromId, to: toId, amount, ts: Date.now(),
+      }, { expireIn: TIP_LOCK_TTL });
+    }
+    const res = await op.commit();
     if (res.ok) return { from: Math.max(0, fromNb), to: Math.max(0, toNb) };
   }
 }
@@ -866,7 +885,9 @@ Deno.serve({ port: listenPort }, async (req) => {
     return json({
       username: app.username,
       createdAt: Number(app.ts) || 0,
+      registeredAt: Number(app.ts) || 0,
       balance: round2(c.bal),
+      self: app.id === u.id,
     });
   }
   if (req.method === "POST" && path === "/tip") {
@@ -880,10 +901,12 @@ Deno.serve({ port: listenPort }, async (req) => {
     if (toName.toLowerCase() === String(u.username).toLowerCase()) {
       return json({ error: "self" }, 400);
     }
+    const tipId = clip(b.tipId, 64);
+    if (tipId && tipId.length < 8) return json({ error: "invalid" }, 400);
     const app = await findApprovedByUsername(toName);
     if (!app) return json({ error: "not_found" }, 404);
     if (app.id === u.id) return json({ error: "self" }, 400);
-    const moved = await transferBalance(u.id, app.id, amount);
+    const moved = await transferBalance(u.id, app.id, amount, tipId || undefined);
     if (moved === "insufficient") return json({ error: "insufficient" }, 402);
     if (!moved) return json({ error: "invalid" }, 400);
     return json({
@@ -892,6 +915,7 @@ Deno.serve({ port: listenPort }, async (req) => {
       to: app.username,
       fromBalance: round2(moved.from),
       toBalance: round2(moved.to),
+      replay: !!moved.replay,
     });
   }
 

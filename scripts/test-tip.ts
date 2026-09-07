@@ -178,5 +178,25 @@ if (aliceFinal.body.balance !== 0) fail("alice after race should be 0, got " + a
 if (bobFinal.body.balance !== 30) fail("bob after race should be 30, got " + bobFinal.body.balance);
 if (aliceFinal.body.balance < 0 || bobFinal.body.balance < 0) fail("negative balance after race");
 
-console.log("PASS tip API: auth, profile, self, invalid, not_found, insufficient, success, concurrent");
+// --- tipId replay is idempotent ---
+await setBal(alice.id, 20);
+await setBal(bob.id, 0);
+const tipId = "idemp" + Date.now().toString(36) + "zz";
+const first = await j("/tip", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ token: alice.token, to: bob.username, amount: 5, tipId }),
+});
+if (!first.body?.ok || first.body.fromBalance !== 15) fail("tipId first tip: " + JSON.stringify(first));
+const second = await j("/tip", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ token: alice.token, to: bob.username, amount: 5, tipId }),
+});
+if (!second.body?.ok || !second.body.replay) fail("tipId replay should be idempotent: " + JSON.stringify(second));
+if (second.body.fromBalance !== 15) fail("tipId replay must not debit again: " + second.body.fromBalance);
+const bobAfter = await j("/cas/me?token=" + encodeURIComponent(bob.token));
+if (bobAfter.body.balance !== 5) fail("bob should have exactly 5 after replay, got " + bobAfter.body.balance);
+
+console.log("PASS tip API: auth, profile, self, invalid, not_found, insufficient, success, concurrent, tipId replay");
 console.log("alice=" + alice.username + " bob=" + bob.username);
