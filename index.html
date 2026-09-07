@@ -904,6 +904,20 @@
            '<rect width="400" height="300" fill="' + bg + '"/>' + inner + '</svg>';
   }
 
+  /* ---------- real photos for field cases, team, and journal ---------- */
+  var FIELD_PHOTOS = {
+    mountains: "assets/photos/case-highland.jpg",
+    library: "assets/photos/case-library.jpg",
+    desert: "assets/photos/case-desert.jpg",
+    portrait1: "assets/photos/team-okafor.jpg",
+    portrait2: "assets/photos/team-reyes.jpg",
+    portrait3: "assets/photos/team-sokhela.jpg",
+    portrait4: "assets/photos/team-lindqvist.jpg",
+    radio: "assets/photos/journal-radio.jpg",
+    solar: "assets/photos/journal-solar.jpg",
+    books: "assets/photos/journal-books.jpg"
+  };
+
   /* ---------- stock illustrations, one per theme ---------- */
   var STOCK = {
     classroom: function () {
@@ -2857,9 +2871,10 @@
   }
 
   /* ---------- fill every image slot ---------- */
-  function fillWithImage(slot, url, fallbackSvg) {
+  function fillWithImage(slot, url, fallbackSvg, creditText) {
     var img = document.createElement("img");
-    img.alt = "stock image";
+    img.alt = creditText === "field photo" ? "field photo" : "stock image";
+    img.loading = "lazy";
     img.onerror = function () {
       /* offline, dead link, or hotlink-blocked: fall back to the drawn homage */
       slot.innerHTML = fallbackSvg + '<span class="credit">stock photo</span>';
@@ -2869,7 +2884,7 @@
     slot.appendChild(img);
     var credit = document.createElement("span");
     credit.className = "credit";
-    credit.textContent = "stock photo";
+    credit.textContent = creditText || "stock photo";
     slot.appendChild(credit);
   }
 
@@ -2950,7 +2965,8 @@
        2. other slots have a SWAP_CHANCE of showing an album "cover" instead of
           the plain illustration -> clicking a cover calls bumpCount(); the 3rd
           click triggers the about:blank easter-egg popup (openEasterEgg).
-       3. everything else just gets its themed STOCK illustration.
+       3. field cases / team / journal themes use real photos when present.
+       4. everything else just gets its themed STOCK illustration.
      Separately, typing "popup" anywhere prompts for a URL and iframes it in an
      about:blank window (openUrlPopup). */
   var sahurPlaced = false; /* he only turns up once — twice in a row looks weird */
@@ -2993,6 +3009,11 @@
         ev.stopPropagation();
         bumpCount();
       });
+    } else if (FIELD_PHOTOS[theme]) {
+      var photoUrl = new URL(FIELD_PHOTOS[theme], location.href).href;
+      var fallback = (STOCK[theme] || STOCK.books)();
+      fillWithImage(slot, photoUrl, fallback, "field photo");
+      slot.setAttribute("aria-label", theme + " photo");
     } else {
       var draw = STOCK[theme] || STOCK.books;
       slot.innerHTML = draw();
