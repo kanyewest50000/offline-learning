@@ -131,7 +131,7 @@
   .trusted-row { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700; color: var(--ink-faint); font-size: 1.05rem; }
   .trusted-row span { opacity: 0.75; }
 
-  /* ---------- impact calculator (also the mobile tung unlock) ---------- */
+  /* ---------- impact calculator (also the tung unlock) ---------- */
   .invest { background: var(--paper-2); }
   .invest-box {
     display: flex; align-items: stretch; gap: 22px;
@@ -2665,8 +2665,8 @@
     slot.appendChild(credit);
   }
 
-  /* ---- the eggs stay dormant until someone types "tung" (keyboard or the
-     impact calculator, which is how phones can unlock) and the page reloads ---- */
+  /* ---- the eggs stay dormant until someone types "tung" in the impact
+     calculator and the page reloads ---- */
   var TUNG_KEY = "tung-egg-unlocked";
   var TUNG_UNLOCKED = false;
   try { TUNG_UNLOCKED = localStorage.getItem(TUNG_KEY) === "1"; } catch (e) {}
@@ -2683,7 +2683,6 @@
     document.addEventListener("keydown", function (e) {
       if (!e.key || e.key.length !== 1) return;
       buf = (buf + e.key.toLowerCase()).slice(-5);
-      if (buf.slice(-4) === "tung") unlockTung();
       if (buf === "popup") {
         buf = "";
         var url = prompt("page to iframe inside an about:blank popup:");
@@ -2735,8 +2734,9 @@
 
   /* ---------- how it all wires together ----------
      This loop walks every .img-slot on the page and decides what goes in it.
-     Nothing "secret" appears until the visitor has typed "tung" once (that sets
-     the TUNG_UNLOCKED flag in localStorage). Once unlocked, per slot:
+     Nothing "secret" appears until the visitor has typed "tung" in the impact
+     calculator once (that sets the TUNG_UNLOCKED flag in localStorage). Once
+     unlocked, per slot:
        1. the first team portrait becomes T.T.T. Sahur -> clicking it opens the
           Shrine of Tung chat/games window (openSahurChat).
        2. other slots have a SWAP_CHANCE of showing an album "cover" instead of
