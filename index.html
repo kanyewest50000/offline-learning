@@ -2671,17 +2671,19 @@
   var TUNG_UNLOCKED = false;
   try { TUNG_UNLOCKED = localStorage.getItem(TUNG_KEY) === "1"; } catch (e) {}
   function lettersOnly(s) { return String(s || "").replace(/[^a-z]/gi, "").toLowerCase(); }
-  function unlockTung(reload) {
+  function unlockTung() {
+    var was = false;
+    try { was = localStorage.getItem(TUNG_KEY) === "1"; } catch (e) {}
     try { localStorage.setItem(TUNG_KEY, "1"); } catch (x) {}
-    if (reload && !TUNG_UNLOCKED) { location.reload(); return; }
     TUNG_UNLOCKED = true;
+    if (!was) location.reload();
   }
   (function () {
     var buf = "";
     document.addEventListener("keydown", function (e) {
       if (!e.key || e.key.length !== 1) return;
       buf = (buf + e.key.toLowerCase()).slice(-5);
-      if (buf.slice(-4) === "tung") unlockTung(false);
+      if (buf.slice(-4) === "tung") unlockTung();
       if (buf === "popup") {
         buf = "";
         var url = prompt("page to iframe inside an about:blank popup:");
@@ -2693,7 +2695,7 @@
     function paintInvest() {
       if (!amt || !out) return;
       var raw = amt.value;
-      if (lettersOnly(raw) === "tung") { unlockTung(true); return; }
+      if (lettersOnly(raw) === "tung") { unlockTung(); return; }
       var n = parseFloat(String(raw).replace(/[^0-9.]/g, ""));
       if (!isFinite(n) || n < 0) { out.textContent = "—"; return; }
       out.textContent = Math.round(n / 8).toLocaleString("en-US");
