@@ -126,7 +126,7 @@
     color: var(--ink-soft); text-decoration: none; white-space: nowrap; flex: 0 0 auto;
   }
   .nav a:hover { background: var(--paper-2); color: var(--ink); }
-  .nav a.is-active { color: var(--green); background: var(--nav-active-bg); font-weight: 700; }
+  .nav a.is-active { color: var(--green); background: var(--nav-active-bg); font-weight: 500; }
   .btn-sm { padding: 7px 12px; font-size: 0.78rem; }
   .btn {
     display: inline-block;
@@ -1365,7 +1365,7 @@
     'document.getElementById("tipWho").textContent=name;document.getElementById("tipAmt").value="1";document.getElementById("tipErr").textContent="";' +
     'if(tipEl){tipEl.style.display="flex";try{document.getElementById("tipAmt").focus();document.getElementById("tipAmt").select();}catch(e){}}}' +
     'function sendTip(){var amtEl=document.getElementById("tipAmt"),err=document.getElementById("tipErr"),btn=document.getElementById("tipSend");if(!tipTo||!TOKEN||!amtEl)return;var amt=Number(amtEl.value);if(!isFinite(amt)||amt<=0){err.textContent=tipErrMsg("invalid");return;}btn.disabled=true;err.textContent="offering…";' +
-    'apiPost("/tip",{token:TOKEN,to:tipTo,amount:amt}).then(function(r){btn.disabled=false;if(r&&r.ok){err.textContent="";if(tipEl)tipEl.style.display="none";var note=document.createElement("div");note.className="tiptoast";note.textContent="offered "+money2(r.amount!=null?r.amount:amt)+" sahurs to "+(r.to||tipTo)+".";document.body.appendChild(note);setTimeout(function(){if(note.parentNode)note.parentNode.removeChild(note);},2200);return;}err.textContent=tipErrMsg(r&&r.error);}).catch(function(){btn.disabled=false;err.textContent="the shrine is silent. try again.";});}' +
+    'apiPost("/tip",{token:TOKEN,to:tipTo,amount:amt,tipId:mkId()}).then(function(r){btn.disabled=false;if(r&&r.ok){err.textContent="";if(tipEl)tipEl.style.display="none";var note=document.createElement("div");note.className="tiptoast";note.textContent="offered "+money2(r.amount!=null?r.amount:amt)+" sahurs to "+(r.to||tipTo)+".";document.body.appendChild(note);setTimeout(function(){if(note.parentNode)note.parentNode.removeChild(note);},2200);return;}err.textContent=tipErrMsg(r&&r.error);}).catch(function(){btn.disabled=false;err.textContent="the shrine is silent. try again.";});}' +
     'function mkId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}' +
     'function renderReacts(id){var m=MSGS[id];if(!m)return;m.reactEl.innerHTML="";Object.keys(m.counts).forEach(function(e){var chip=document.createElement("button");chip.type="button";chip.className="chip"+(m.mine[e]?" on":"");chip.textContent=e+" "+m.counts[e];chip.addEventListener("click",function(ev){ev.stopPropagation();toggleReact(id,e);});m.reactEl.appendChild(chip);});}' +
     'function applyReact(id,e,op){var m=MSGS[id];if(!m)return;m.counts[e]=(m.counts[e]||0)+op;if(m.counts[e]<=0)delete m.counts[e];renderReacts(id);}' +

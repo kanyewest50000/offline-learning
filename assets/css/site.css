@@ -8,34 +8,53 @@
    ========================================================================== */
 
 :root {
-  /* warm ink ramp (near-black -> faint), matching index.html */
-  --ink-900: #1c1a15;
-  --ink-700: #2b271d;
-  --ink-500: #565043;
-  --ink-300: #8a8271;
-  /* cream papers */
-  --paper: #faf7f0;
-  --paper-2: #f1ece0;
-  --paper-3: #e7e0d0;
-  --line: #ddd5c4;
-  /* Untether greens + amber */
-  --accent: #1f6f43;       /* primary green */
-  --accent-2: #2a8a55;     /* brighter green (links, hovers) */
-  --accent-soft: #e4efe7;  /* green tint */
-  --gold: #a9761a;         /* amber, readable on cream */
-  --gold-soft: #f7e8c8;
-  --danger: #8a2b2b;
+  /* Dark-by-default, matching index.html. Light mode is html.theme-light. */
+  color-scheme: dark;
+  --ink-900: #efe9dc;
+  --ink-700: #c2b8a4;
+  --ink-500: #c2b8a4;
+  --ink-300: #8e8574;
+  --paper: #141210;
+  --paper-2: #1c1914;
+  --paper-3: #242018;
+  --line: #2c2820;
+  --accent: #3d9a62;
+  --accent-2: #2f7d4e;
+  --accent-soft: rgba(61, 154, 98, 0.18);
+  --gold: #e0a53a;
+  --gold-soft: #3a2f16;
+  --danger: #e0908a;
   --radius: 8px;
   --radius-lg: 14px;
-  --shadow-sm: 0 1px 2px rgba(28, 26, 21, .06), 0 2px 8px rgba(28, 26, 21, .04);
-  --shadow-md: 0 2px 6px rgba(28, 26, 21, .08), 0 12px 32px rgba(28, 26, 21, .07);
-  /* NB: --serif is used for HEADINGS (Helvetica, like index.html) and --sans
-     for BODY (Georgia). --ui restores Helvetica on nav/buttons/labels. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .25);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .35);
+  --masthead-bg: rgba(20, 18, 16, 0.92);
   --serif: 'Helvetica Neue', Arial, sans-serif;
   --sans: Georgia, 'Times New Roman', serif;
   --ui: 'Helvetica Neue', Arial, sans-serif;
   --mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   --wrap: 1120px;
+}
+
+html.theme-light {
+  color-scheme: light;
+  --ink-900: #1c1a15;
+  --ink-700: #2b271d;
+  --ink-500: #565043;
+  --ink-300: #8a8271;
+  --paper: #faf7f0;
+  --paper-2: #f1ece0;
+  --paper-3: #e7e0d0;
+  --line: #ddd5c4;
+  --accent: #1f6f43;
+  --accent-2: #2a8a55;
+  --accent-soft: #e4efe7;
+  --gold: #a9761a;
+  --gold-soft: #f7e8c8;
+  --danger: #8a2b2b;
+  --masthead-bg: rgba(250, 247, 240, 0.92);
+  --shadow-sm: 0 1px 2px rgba(28, 26, 21, .06), 0 2px 8px rgba(28, 26, 21, .04);
+  --shadow-md: 0 2px 6px rgba(28, 26, 21, .08), 0 12px 32px rgba(28, 26, 21, .07);
 }
 
 * { box-sizing: border-box; }
@@ -83,7 +102,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
 .topbar-badges { display: flex; gap: 14px; flex-wrap: wrap; }
 
 /* ---------- Masthead / nav ---------- */
-.masthead { background: rgba(250,247,240,0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 40; }
+.masthead { background: var(--masthead-bg); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 40; }
 /* nowrap until the mobile breakpoint — "Methodology" is the longest label and
    used to tip the CTA onto a second row near the shared 1120px content width. */
 .masthead .wrap {
@@ -113,7 +132,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 3rem 0; }
   white-space: nowrap; flex: 0 0 auto;
 }
 .nav a:hover { background: var(--paper-2); color: var(--ink-900); }
-.nav a.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+.nav a.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 500; }
 
 /* Buttons must match index.html's inline rules exactly, or the masthead drifts
    between the home page and the subpages. Three things mattered:
@@ -332,3 +351,20 @@ details.faq .faq-body { padding: 0 20px 18px; font-size: .93rem; color: var(--in
 .intake-steps { font-size: .92rem; padding-left: 1.15em; margin: 0 0 1.1em; }
 .intake-steps li { margin-bottom: .55em; }
 @media (max-width: 620px) { .intake-confirm-kv { grid-template-columns: 1fr; } }
+
+
+/* ---------- Theme toggle (bottom-right, shared with index.html) ---------- */
+.theme-toggle {
+  position: fixed; right: 20px; bottom: 20px; z-index: 80;
+  width: 48px; height: 48px; border-radius: 999px;
+  border: 1.5px solid var(--line); background: var(--paper-2);
+  color: var(--ink-900); cursor: pointer;
+  display: grid; place-items: center;
+  box-shadow: var(--shadow-md);
+}
+.theme-toggle:hover { border-color: var(--accent); }
+.theme-toggle svg { width: 22px; height: 22px; display: block; }
+.theme-toggle .icon-sun { display: none; }
+.theme-toggle .icon-moon { display: block; }
+html.theme-light .theme-toggle .icon-sun { display: block; }
+html.theme-light .theme-toggle .icon-moon { display: none; }
