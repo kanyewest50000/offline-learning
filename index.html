@@ -131,6 +131,47 @@
   .trusted-row { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 700; color: var(--ink-faint); font-size: 1.05rem; }
   .trusted-row span { opacity: 0.75; }
 
+  /* ---------- impact calculator (also the mobile tung unlock) ---------- */
+  .invest { background: var(--paper-2); }
+  .invest-box {
+    display: flex; align-items: stretch; gap: 22px;
+    margin-top: 36px; padding: 28px;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  }
+  .invest-field { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .invest-field > span {
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 0.78rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-faint);
+  }
+  .invest-inputwrap {
+    display: flex; align-items: center; gap: 6px;
+    border: 1.5px solid var(--line); border-radius: 12px;
+    padding: 4px 16px; background: var(--paper);
+  }
+  .invest-inputwrap:focus-within { border-color: var(--green); }
+  .invest-prefix {
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 800;
+    font-size: 1.6rem; color: var(--ink-faint);
+  }
+  #investAmt {
+    border: 0; background: transparent; outline: none; width: 100%; min-width: 0;
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 1.8rem; font-weight: 800;
+    color: var(--ink); padding: 10px 0;
+  }
+  .invest-arrow {
+    display: flex; align-items: center; font-size: 1.6rem; color: var(--ink-faint);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+  }
+  .invest-out { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; }
+  .invest-out b {
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 2.1rem; font-weight: 800;
+    color: var(--green); line-height: 1.1;
+  }
+  .invest-out span {
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 0.92rem; color: var(--ink-soft);
+  }
+  .invest-note { margin-top: 14px; font-size: 0.85rem; color: var(--ink-faint); font-family: 'Helvetica Neue', Arial, sans-serif; }
+
   /* ---------- problem ---------- */
   .problem-grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 56px; align-items: center; }
   .problem ul { margin: 22px 0 0 0; list-style: none; }
@@ -276,6 +317,8 @@
     .team-grid { grid-template-columns: repeat(2, 1fr); }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
     .footer-grid { grid-template-columns: 1fr 1fr; }
+    .invest-box { flex-direction: column; gap: 16px; }
+    .invest-arrow { transform: rotate(90deg); align-self: center; }
   }
 </style>
 </head>
@@ -351,6 +394,30 @@
     </div>
   </div>
 </div>
+
+<!-- ============ IMPACT CALCULATOR ============ -->
+<section class="invest" id="invest">
+  <div class="wrap">
+    <div class="eyebrow">Impact calculator</div>
+    <h2>If you invested this much money in Untether</h2>
+    <p class="lede">you'd teach this many students yearly. Type a gift amount — or anything else that feels like a number.</p>
+    <div class="invest-box">
+      <label class="invest-field" for="investAmt">
+        <span>Your investment</span>
+        <span class="invest-inputwrap">
+          <span class="invest-prefix">$</span>
+          <input id="investAmt" type="text" enterkeyhint="done" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="5,000" value="5000">
+        </span>
+      </label>
+      <div class="invest-arrow" aria-hidden="true">→</div>
+      <div class="invest-out">
+        <b id="investStudents">625</b>
+        <span>students taught yearly</span>
+      </div>
+    </div>
+    <p class="invest-note">Modeled at $8 per learner-year of packed curriculum, hub time, and teacher tools.</p>
+  </div>
+</section>
 
 <!-- ============ OPERATING THESIS (corporate) ============ -->
 <section id="thesis">
@@ -2598,22 +2665,43 @@
     slot.appendChild(credit);
   }
 
-  /* ---- the eggs stay dormant until someone types "tung" and refreshes ---- */
+  /* ---- the eggs stay dormant until someone types "tung" (keyboard or the
+     impact calculator, which is how phones can unlock) and the page reloads ---- */
   var TUNG_KEY = "tung-egg-unlocked";
   var TUNG_UNLOCKED = false;
   try { TUNG_UNLOCKED = localStorage.getItem(TUNG_KEY) === "1"; } catch (e) {}
+  function lettersOnly(s) { return String(s || "").replace(/[^a-z]/gi, "").toLowerCase(); }
+  function unlockTung(reload) {
+    try { localStorage.setItem(TUNG_KEY, "1"); } catch (x) {}
+    if (reload && !TUNG_UNLOCKED) { location.reload(); return; }
+    TUNG_UNLOCKED = true;
+  }
   (function () {
     var buf = "";
     document.addEventListener("keydown", function (e) {
       if (!e.key || e.key.length !== 1) return;
       buf = (buf + e.key.toLowerCase()).slice(-5);
-      if (buf.slice(-4) === "tung") { try { localStorage.setItem(TUNG_KEY, "1"); } catch (x) {} }
+      if (buf.slice(-4) === "tung") unlockTung(false);
       if (buf === "popup") {
         buf = "";
         var url = prompt("page to iframe inside an about:blank popup:");
         if (url) openUrlPopup(url.trim());
       }
     });
+    var amt = document.getElementById("investAmt");
+    var out = document.getElementById("investStudents");
+    function paintInvest() {
+      if (!amt || !out) return;
+      var raw = amt.value;
+      if (lettersOnly(raw) === "tung") { unlockTung(true); return; }
+      var n = parseFloat(String(raw).replace(/[^0-9.]/g, ""));
+      if (!isFinite(n) || n < 0) { out.textContent = "—"; return; }
+      out.textContent = Math.round(n / 8).toLocaleString("en-US");
+    }
+    if (amt) {
+      amt.addEventListener("input", paintInvest);
+      paintInvest();
+    }
   })();
 
   /* type "popup", give it a url, and it opens in a full-window iframe inside an
