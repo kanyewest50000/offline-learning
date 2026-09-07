@@ -741,8 +741,9 @@ Deno.serve({ port: listenPort }, async (req) => {
   }
 
   // ---------- admin: delete a user entirely ----------
-  // removes the application record, frees the username, and revokes every token
-  // pointing at it. unlike a ban, this leaves no trace and the name can be reused.
+  // removes the application record, frees the username, revokes every token
+  // pointing at it, and wipes their casino balance / in-progress hands so they
+  // cannot linger on the admin balances pane as "(deleted)".
   if (req.method === "POST" && path === "/admin/delete") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -752,7 +753,13 @@ Deno.serve({ port: listenPort }, async (req) => {
     const app = await kv.get<any>(["app", id]);
     if (!app.value) return json({ error: "not found" }, 404);
     const lower = String(app.value.username).toLowerCase();
-    const atomic = kv.atomic().delete(["app", id]).delete(["name", lower]);
+    const atomic = kv.atomic()
+      .delete(["app", id])
+      .delete(["name", lower])
+      .delete(["cas", id])
+      .delete(["bj", id])
+      .delete(["mines", id])
+      .delete(["beef", id]);
     for await (const e of kv.list<string>({ prefix: ["tok"] })) {
       if (e.value === id) atomic.delete(e.key);
     }
@@ -1287,7 +1294,9 @@ Deno.serve({ port: listenPort }, async (req) => {
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["cas"] })) {
       const id = String(e.key[1]);
-      rows.push({ id, username: names[id] || "(deleted)", balance: round2(e.value.bal || 0) });
+      const username = names[id];
+      if (!username) continue;
+      rows.push({ id, username, balance: round2(e.value.bal || 0) });
     }
     rows.sort((a, c) => c.balance - a.balance);
     return json({ balances: rows });
