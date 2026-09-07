@@ -17,8 +17,6 @@
 //   GET  /admin                                           -> admin page (html)
 //   GET  /admin/pending?key=                              -> {pending:[...]}
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
-//   GET  /user/profile?token=&username=                   -> {username, registeredAt, balance}
-//   POST /cas/tip       {token, to, amount, tipId}        -> {ok, balance, tipped}
 
 const kv = await Deno.openKv();
 const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
@@ -53,9 +51,7 @@ const GAME_TTL = 6 * 60 * 60 * 1000;      // an abandoned in-progress hand self-
 //   ["mines", id]      -> mines board in progress
 //   ["beef", id]       -> beef (crash-chicken) walk in progress
 //   ["shopitem", itemId] -> {id,name,desc,price,active,ts}  a redeemable shop entry
-//   ["tiplock", tipId]  -> {from,to,amount,ts}  idempotency lock for a tip (prevents replay)
 // One active hand per game per user; starting a new one replaces the old.
-const TIP_TTL = 7 * 24 * 60 * 60 * 1000;  // tip idempotency keys live a week
 
 // crypto-strong float in [0,1).
 // 53 bits of entropy = the top 21 bits of the first word (a[0] >>> 11) used as the
@@ -121,49 +117,6 @@ async function adjustBalance(id: string, delta: number): Promise<number | null> 
     const res = await kv.atomic().check(cur)
       .set(["cas", id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL }).commit();
     if (res.ok) return Math.max(0, nb);
-  }
-}
-
-// Atomic tip: debit `fromId` and credit `toId` in ONE compare-and-swap, plus an
-// idempotency lock on tipId so a retried/replayed request cannot double-pay.
-// Returns null on insufficient funds / corrupt math; never trusts client balances.
-async function transferTip(
-  fromId: string,
-  toId: string,
-  amount: number,
-  tipId: string,
-): Promise<{ fromBal: number; toBal: number; replay: boolean } | null> {
-  if (fromId === toId) return null;
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  const amt = round2(amount);
-  if (!Number.isFinite(amt) || amt < MIN_BET || amt > MAX_BET) return null;
-  for (;;) {
-    const lock = await kv.get<{ from: string; to: string; amount: number; ts: number }>(["tiplock", tipId]);
-    if (lock.value) {
-      // Same tipId already settled — treat as idempotent success (no second debit).
-      const fromBal = round2((await getCas(fromId)).bal);
-      const toBal = round2((await getCas(toId)).bal);
-      return { fromBal, toBal, replay: true };
-    }
-    const from = await kv.get<{ bal: number; lastClaim: number }>(["cas", fromId]);
-    const to = await kv.get<{ bal: number; lastClaim: number }>(["cas", toId]);
-    const fromRec = from.value ?? { bal: 0, lastClaim: 0 };
-    const toRec = to.value ?? { bal: 0, lastClaim: 0 };
-    const fromBase = Number.isFinite(fromRec.bal) ? fromRec.bal : 0;
-    const toBase = Number.isFinite(toRec.bal) ? toRec.bal : 0;
-    const newFrom = round2(fromBase - amt);
-    const newTo = round2(toBase + amt);
-    if (!Number.isFinite(newFrom) || newFrom < -1e-9) return null;
-    if (!Number.isFinite(newTo) || newTo < 0) return null;
-    const res = await kv.atomic()
-      .check(lock)
-      .check(from)
-      .check(to)
-      .set(["cas", fromId], { ...fromRec, bal: Math.max(0, newFrom) }, { expireIn: CAS_TTL })
-      .set(["cas", toId], { ...toRec, bal: Math.max(0, newTo) }, { expireIn: CAS_TTL })
-      .set(["tiplock", tipId], { from: fromId, to: toId, amount: amt, ts: Date.now() }, { expireIn: TIP_TTL })
-      .commit();
-    if (res.ok) return { fromBal: Math.max(0, newFrom), toBal: Math.max(0, newTo), replay: false };
   }
 }
 
@@ -907,15 +860,12 @@ Deno.serve({ port: listenPort }, async (req) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const name = clip(url.searchParams.get("user") || url.searchParams.get("username"), 24);
     if (!name) return json({ error: "invalid" }, 400);
-    const nameId = await kv.get<string>(["name", name.toLowerCase()]);
-    if (!nameId.value) return json({ error: "not_found" }, 404);
-    // deno-lint-ignore no-explicit-any
-    const app = await kv.get<any>(["app", nameId.value]);
-    if (!app.value || app.value.status !== "approved") return json({ error: "not_found" }, 404);
-    const c = await getCas(app.value.id);
+    const app = await findApprovedByUsername(name);
+    if (!app) return json({ error: "not_found" }, 404);
+    const c = await getCas(app.id);
     return json({
-      username: app.value.username,
-      createdAt: Number(app.value.ts) || 0,
+      username: app.username,
+      createdAt: Number(app.ts) || 0,
       balance: round2(c.bal),
     });
   }
@@ -930,19 +880,16 @@ Deno.serve({ port: listenPort }, async (req) => {
     if (toName.toLowerCase() === String(u.username).toLowerCase()) {
       return json({ error: "self" }, 400);
     }
-    const nameId = await kv.get<string>(["name", toName.toLowerCase()]);
-    if (!nameId.value) return json({ error: "not_found" }, 404);
-    // deno-lint-ignore no-explicit-any
-    const app = await kv.get<any>(["app", nameId.value]);
-    if (!app.value || app.value.status !== "approved") return json({ error: "not_found" }, 404);
-    if (app.value.id === u.id) return json({ error: "self" }, 400);
-    const moved = await transferBalance(u.id, app.value.id, amount);
+    const app = await findApprovedByUsername(toName);
+    if (!app) return json({ error: "not_found" }, 404);
+    if (app.id === u.id) return json({ error: "self" }, 400);
+    const moved = await transferBalance(u.id, app.id, amount);
     if (moved === "insufficient") return json({ error: "insufficient" }, 402);
     if (!moved) return json({ error: "invalid" }, 400);
     return json({
       ok: true,
       amount,
-      to: app.value.username,
+      to: app.username,
       fromBalance: round2(moved.from),
       toBalance: round2(moved.to),
     });
