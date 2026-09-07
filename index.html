@@ -1336,7 +1336,7 @@
     'function saveToken(t){try{localStorage.setItem(TKEY,t);}catch(e){}if(typeof SHRINE_BOOT_TOKEN!=="undefined")SHRINE_BOOT_TOKEN=t;}' +
     'function clearToken(){try{localStorage.removeItem(TKEY);}catch(e){}if(typeof SHRINE_BOOT_TOKEN!=="undefined")SHRINE_BOOT_TOKEN="";}' +
     'function paintKey(){if(myhash)myhash.textContent=TOKEN||"";if(exportKeyBtn)exportKeyBtn.style.display=TOKEN?"inline-block":"none";}' +
-    /* login key = full access. confirm before clipboard so people know what they are copying. */ +
+    /* login key = full access. confirm before clipboard so people know what they are copying. */
     'var tipTo=null,pendingCopyBtn=null;' +
     'var profEl=document.getElementById("profOverlay");' +
     'var tipEl=document.getElementById("tipOverlay");' +
@@ -2377,7 +2377,7 @@
       '.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px;background:transparent;border:0;padding:0;cursor:pointer;font-family:inherit;font-weight:600;text-align:left;line-height:1.2}' +
       '.who:hover{color:#f2c063;text-decoration:underline}' +
       '.msg.me .who{color:#f2c063}' +
-      /* profile / tip / login-key overlays — shrine-native chrome, not marketing page */ +
+      /* profile / tip / login-key overlays — shrine-native chrome, not marketing page */
       '.ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#000a;z-index:50;padding:16px}' +
       '.ovcard{width:100%;max-width:320px;background:linear-gradient(160deg,#2e1c08,#1d1206);border:1px solid #7a5a1a;border-radius:14px;padding:16px;box-shadow:0 12px 40px #000a}' +
       '.ovcard h3{margin:0 0 6px;color:#f2c063;font-size:16px}' +
@@ -2804,7 +2804,7 @@
       /* ---- Tung’s Casino: top-level view; its chrome lives in the main header ---- */
       '<div id="casino"><div id="casscreen"></div></div>' +
       '<div id="rpal"></div>' +
-      /* chat profile / tip / login-key confirm overlays */ +
+      /* chat profile / tip / login-key confirm overlays */
       '<div id="profOverlay" class="ov" role="dialog" aria-modal="true">' +
       '<div class="ovcard">' +
       '<h3 id="profName">member</h3>' +
