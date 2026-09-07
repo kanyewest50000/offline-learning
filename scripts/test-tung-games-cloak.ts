@@ -28,6 +28,9 @@ must([...veil].filter((ch) => ch.charCodeAt(0) === 0x043e).length === 1, "proxy 
 must(snake.includes("var N=18, CELL=24, W=N*CELL, H=N*CELL;"), "snake board must fill N*CELL");
 must(snake.includes('width="432" height="432"'), "snake canvas must be 432x432");
 must(snake.includes("style=\"--gw:432;--gh:432\""), "snake stage must match the board");
+must(snake.includes("eat. lengthen. forget why."), "snake tagline must be the forget-why line");
+must(!snake.includes("the red square is already taken."), "old snake tagline must be gone");
+must(index.includes("eat. lengthen. forget why."), "originals list must use the new snake tagline");
 must(snake.includes("var STEP=180;"), "snake step must be slower than 120ms");
 must(snake.includes("window.__tungHiDPI"), "snake must use the HiDPI backing store");
 
