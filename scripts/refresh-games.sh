@@ -7,7 +7,8 @@
 # from that game's own host (jsDelivr, statically, etc.) via <base href>.
 #
 # Pin: keep DEFAULT_COMMIT in lockstep with the commit baked into GAMES URLs
-# in index.html (gn-math/html/<commit>/...). Bump both together.
+# in assets/js/shrine/games-catalog.js (gn-math/html/<commit>/...). Bump both
+# together.
 #
 # Usage:
 #   scripts/refresh-games.sh              # the pinned commit below
@@ -16,15 +17,16 @@
 #
 # After it runs, review `git status games/g/` and commit. New game files are
 # reported but NOT auto-added to the launcher — wire them into the GAMES array
-# in index.html by hand if you want them listed.
+# in assets/js/shrine/games-catalog.js by hand if you want them listed.
 set -euo pipefail
 
 REPO="gn-math/html"
-# Must match the commit in index.html GAMES URLs and any leftover docs.
+# Must match the commit in the games-catalog.js GAMES URLs and any leftover docs.
 DEFAULT_COMMIT="9b343737669dd2067dd6cd731859a99008772388"
 REF="${1:-$DEFAULT_COMMIT}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/games/g"
+CATALOG="$ROOT/assets/js/shrine/games-catalog.js"
 
 if [ "$REF" = "latest" ]; then
   REF="$(curl -fsSL "https://api.github.com/repos/$REPO/commits/main" \
@@ -171,16 +173,16 @@ removed="$(comm -23 <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true
 n_added="$(printf '%s\n' "$added" | grep -c . || true)"
 n_removed="$(printf '%s\n' "$removed" | grep -c . || true)"
 echo "changed vs previous games/g/: +$n_added / -$n_removed"
-[ "$n_added" -gt 0 ] && { echo "new stub files (not yet in the GAMES list in index.html):"; printf '%s\n' "$added" | sed 's/^/  /'; }
+[ "$n_added" -gt 0 ] && { echo "new stub files (not yet in the GAMES list in games-catalog.js):"; printf '%s\n' "$added" | sed 's/^/  /'; }
 
 # Safety: warn if any game the launcher references no longer has a stub.
-if [ -f "$ROOT/index.html" ]; then
-  referenced="$(grep -oE 'gn-math/html/[0-9a-f]+/[^"]+\.html' "$ROOT/index.html" \
+if [ -f "$CATALOG" ]; then
+  referenced="$(grep -oE 'gn-math/html/[0-9a-f]+/[^"]+\.html' "$CATALOG" \
     | sed -E 's#.*/##' | sort -u || true)"
   missing="$(comm -23 <(printf '%s\n' "$referenced") <(printf '%s\n' "$after") || true)"
   n_missing="$(printf '%s\n' "$missing" | grep -c . || true)"
   if [ "$n_missing" -gt 0 ]; then
-    echo "WARNING: $n_missing game(s) referenced by index.html no longer have a stub:" >&2
+    echo "WARNING: $n_missing game(s) referenced by the catalog no longer have a stub:" >&2
     printf '%s\n' "$missing" | sed 's/^/  /' >&2
   fi
 fi

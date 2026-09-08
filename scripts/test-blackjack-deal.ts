@@ -1,10 +1,11 @@
 #!/usr/bin/env -S deno run --allow-read
-// Opening deal order, dealer draws, and the 0.4s gap live in index.html's
-// casino client. Pull those helpers out and check them the same way a stand
-// reply would feed the table.
+// Opening deal order, dealer draws, and the 0.4s gap live in the shrine's
+// casino client (assets/js/shrine/casino.js). Pull those helpers out and check
+// them the same way a stand reply would feed the table.
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const src = await Deno.readTextFile(`${ROOT}/index.html`);
+import { readShrineFile } from "./shrine-sources.ts";
+
+const src = await readShrineFile("assets/js/shrine/casino.js");
 
 function fail(msg: string): never {
   throw new Error(msg);

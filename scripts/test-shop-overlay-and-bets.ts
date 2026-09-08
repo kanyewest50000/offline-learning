@@ -3,44 +3,46 @@
 // admin output box have to stay shrine-native, and casino stakes under/over
 // the rails have to name the floor and the ceiling instead of "bad bet".
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+import { readShrine, ROOT, readShrineFile } from "./shrine-sources.ts";
 
 function must(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
 }
 
-const index = await Deno.readTextFile(`${ROOT}/index.html`);
+// the shop and the bet rails live in shrine/casino.js, the field widths in shrine/styles.js
+const shrine = await readShrine();
+const casinoModule = await readShrineFile("assets/js/shrine/casino.js");
 const server = await Deno.readTextFile(`${ROOT}/server.ts`);
 
-must(!index.includes("prompt(it.inputLabel)"), "shop redeem must not use the browser prompt");
-must(!index.includes('confirm("Redeem '), "shop redeem must not use the browser confirm");
-must(index.includes("function shopConfirm(it,buy)"), "shop redeem must open a pay overlay first");
-must(index.includes("function shopCollect(p)"), "the question field must wait until after they have paid");
-must(index.includes("function shopRedeem(it,buy,done)"), "shop redeem must run from the pay overlay");
-must(index.includes("function shopLoad()"), "the shop must reload so an unfinished redeem stays on the shelf");
-must(index.includes('title:"place it on the altar"'), "pay overlay title must be the altar line");
-must(index.includes('title:"the shelves have you"'), "the question overlay must only open after a sale");
-must(index.includes("tung does not do refunds. tung does not do sympathy."), "overlay must keep the deadpan refund line");
-must(index.includes("you already paid. the question remains. walk away and it will still be waiting on the shelf."), "walking away after pay must admit the question is still owed");
-must(index.includes("unfinished. you already paid. tung is still waiting."), "unfinished redemptions must stay visible on the shop");
-must(index.includes('shopitem wait'), "owed answers must be a distinct unfinished card");
-must(index.includes('"answer him"'), "the unfinished card must let them finish later");
-must(index.includes("if(spec.onNo)spec.onNo()"), "walk away and the backdrop must keep the owed question");
-must(index.includes("redeemId:p.id"), "the typed answer must name the unfinished redeem");
-must(index.includes('placeholder="tung is listening"'), "overlay input must use the listening placeholder");
-must(index.includes("so be it") && index.includes("walk away"), "overlay buttons must be so be it / walk away");
-must(index.includes("tung asked a question. you stared back. try again."), "empty overlay answer must scold, not look like a form error");
-must(index.includes("#tipAmt,#shopAsk{"), "shop overlay field must share the tip-box width rules");
-must(index.includes('ov.id="shopOverlay"'), "overlay must be a named shrine dialog");
-must(index.includes("if(spec.ask){"), "the input field must be gated on the after-pay overlay");
-must(!index.includes("if(it.inputLabel){"), "the buy overlay must not grow an input just because the item has a question");
+must(!shrine.includes("prompt(it.inputLabel)"), "shop redeem must not use the browser prompt");
+must(!shrine.includes('confirm("Redeem '), "shop redeem must not use the browser confirm");
+must(shrine.includes("function shopConfirm(it,buy)"), "shop redeem must open a pay overlay first");
+must(shrine.includes("function shopCollect(p)"), "the question field must wait until after they have paid");
+must(shrine.includes("function shopRedeem(it,buy,done)"), "shop redeem must run from the pay overlay");
+must(shrine.includes("function shopLoad()"), "the shop must reload so an unfinished redeem stays on the shelf");
+must(shrine.includes('title:"place it on the altar"'), "pay overlay title must be the altar line");
+must(shrine.includes('title:"the shelves have you"'), "the question overlay must only open after a sale");
+must(shrine.includes("tung does not do refunds. tung does not do sympathy."), "overlay must keep the deadpan refund line");
+must(shrine.includes("you already paid. the question remains. walk away and it will still be waiting on the shelf."), "walking away after pay must admit the question is still owed");
+must(shrine.includes("unfinished. you already paid. tung is still waiting."), "unfinished redemptions must stay visible on the shop");
+must(shrine.includes('shopitem wait'), "owed answers must be a distinct unfinished card");
+must(shrine.includes('"answer him"'), "the unfinished card must let them finish later");
+must(shrine.includes("if(spec.onNo)spec.onNo()"), "walk away and the backdrop must keep the owed question");
+must(shrine.includes("redeemId:p.id"), "the typed answer must name the unfinished redeem");
+must(shrine.includes('placeholder="tung is listening"'), "overlay input must use the listening placeholder");
+must(shrine.includes("so be it") && shrine.includes("walk away"), "overlay buttons must be so be it / walk away");
+must(shrine.includes("tung asked a question. you stared back. try again."), "empty overlay answer must scold, not look like a form error");
+must(shrine.includes("#tipAmt,#shopAsk{"), "shop overlay field must share the tip-box width rules");
+must(shrine.includes('ov.id="shopOverlay"'), "overlay must be a named shrine dialog");
+must(shrine.includes("if(spec.ask){"), "the input field must be gated on the after-pay overlay");
+must(!shrine.includes("if(it.inputLabel){"), "the buy overlay must not grow an input just because the item has a question");
 
 const marker = "var CASINO_JS = `";
-const jsStart = index.indexOf(marker);
+const jsStart = casinoModule.indexOf(marker);
 must(jsStart >= 0, "CASINO_JS template is missing");
-const jsEnd = index.indexOf("\n`;\n\n  function sahurChatDoc", jsStart);
+const jsEnd = casinoModule.indexOf("\n`;\n", jsStart);
 must(jsEnd > jsStart, "CASINO_JS close is missing");
-const casinoJs = index.slice(jsStart + marker.length, jsEnd);
+const casinoJs = casinoModule.slice(jsStart + marker.length, jsEnd);
 must(!casinoJs.includes("${"), "CASINO_JS is a template literal and cannot interpolate");
 must(!casinoJs.includes("`"), "CASINO_JS cannot contain backticks");
 must(casinoJs.includes("function shopCollect(p)"), "after-pay question overlay lives inside CASINO_JS");
@@ -65,8 +67,8 @@ must(server.includes('["shoppend", u.id, pending.id]'), "a pending question is s
 must(server.includes("pending: await listShopPending(u.id)"), "the shop list must return unfinished redemptions");
 
 must(server.includes("const FAUCET_INTERVAL = 2 * 60 * 60 * 1000"), "the shrine faucet is every 2 hours");
-must(index.includes("free sahurs, on the house. every 2 hours."), "ready shrine copy must name the two-hour pour");
-must(index.includes("tung already blessed you. he does not pour twice in two hours. sit."), "cooldown copy must not pretend the blessing lasts all day");
-must(!index.includes("blessed you today"), "a two-hour faucet must not say tung blessed you today");
+must(shrine.includes("free sahurs, on the house. every 2 hours."), "ready shrine copy must name the two-hour pour");
+must(shrine.includes("tung already blessed you. he does not pour twice in two hours. sit."), "cooldown copy must not pretend the blessing lasts all day");
+must(!shrine.includes("blessed you today"), "a two-hour faucet must not say tung blessed you today");
 
 console.log("shop overlay, admin output CSS, and wager copy checks passed");

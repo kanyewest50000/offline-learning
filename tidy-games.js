@@ -10,10 +10,10 @@ const WRAPPERS = new Set(["FSM_stuff", "VexGames", "gnmath", "goodnightmath", "g
 
 const ROOT = process.cwd();
 const GAMES_DIR = path.join(ROOT, "games");
-const INDEX = path.join(ROOT, "index.html");
+const CATALOG = path.join(ROOT, "assets", "js", "shrine", "games-catalog.js");
 const APPLY = process.argv.includes("--apply");
 if (!fs.existsSync(GAMES_DIR)) { console.error("!! no games/ here — cd to repo root."); process.exit(1); }
-if (!fs.existsSync(INDEX)) { console.error("!! no index.html here."); process.exit(1); }
+if (!fs.existsSync(CATALOG)) { console.error("!! no assets/js/shrine/games-catalog.js here."); process.exit(1); }
 
 function walkDirs(dir, depth, out) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -31,9 +31,9 @@ const cleanUrl = u => !u.startsWith(PREFIX) ? u :
   PREFIX + u.slice(PREFIX.length).split("/").map(decodeURIComponent).filter(s => !WRAPPERS.has(s)).map(encodeURIComponent).join("/");
 const urlToRepoPath = u => !u.startsWith(PREFIX) ? null : path.join("games", ...u.slice(PREFIX.length).split("/").map(decodeURIComponent));
 
-let html = fs.readFileSync(INDEX, "utf8");
-const m = html.match(/var GAMES = (\[[\s\S]*?\]);/);
-if (!m) { console.error("!! couldn't find `var GAMES = [...];` in index.html"); process.exit(1); }
+let catalog = fs.readFileSync(CATALOG, "utf8");
+const m = catalog.match(/var GAMES = (\[[\s\S]*?\]);/);
+if (!m) { console.error("!! couldn't find `var GAMES = [...];` in the catalog module"); process.exit(1); }
 let games; try { games = JSON.parse(m[1]); } catch (e) { console.error("!! GAMES isn't valid JSON:", e.message); process.exit(1); }
 
 const collisions = []; let movedCount = 0;
@@ -62,8 +62,8 @@ const newGames = games.map(g => {
   changed++; return { n: g.n, u: cleaned };
 });
 if (APPLY) {
-  fs.copyFileSync(INDEX, INDEX + ".bak");
-  fs.writeFileSync(INDEX, html.replace(/var GAMES = \[[\s\S]*?\];/, "var GAMES = " + JSON.stringify(newGames) + ";"));
+  fs.copyFileSync(CATALOG, CATALOG + ".bak");
+  fs.writeFileSync(CATALOG, catalog.replace(/var GAMES = \[[\s\S]*?\];/, "var GAMES = " + JSON.stringify(newGames) + ";"));
 }
 
 console.log("wrappers:", [...WRAPPERS].join(", "));
@@ -78,5 +78,5 @@ if (!APPLY) {
   newGames.forEach((g, i) => { if (g.u !== games[i].u) console.log("   " + games[i].u.slice(PREFIX.length) + "  ->  " + g.u.slice(PREFIX.length)); });
   console.log("\nDRY RUN — nothing changed. Re-run with --apply to move + rewrite.");
 } else {
-  console.log("\nApplied. Original menu backed up to index.html.bak");
+  console.log("\nApplied. Original menu backed up to games-catalog.js.bak");
 }

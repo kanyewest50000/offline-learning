@@ -1,28 +1,29 @@
 #!/usr/bin/env -S deno run --allow-read
 // :tung: is the cricket bat. Three bats then :sahur: summons the god portrait.
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+import { readShrine, ROOT } from "./shrine-sources.ts";
 
 function must(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
 }
 
-const index = await Deno.readTextFile(`${ROOT}/index.html`);
+// the shortcode table lives in shrine/chat.js, the embed sizing in shrine/styles.js
+const shrine = await readShrine();
 const embed = await Deno.readTextFile(`${ROOT}/embed/chat.html`);
 
-must(index.includes('"tung":"🏏"'), "shrine chat must map :tung: to the bat");
+must(shrine.includes('"tung":"🏏"'), "shrine chat must map :tung: to the bat");
 must(embed.includes('"tung":"🏏"'), "embed chat must map :tung: to the bat");
-must(index.includes("function makeGodCombo()"), "shrine chat must embed tung tung god");
+must(shrine.includes("function makeGodCombo()"), "shrine chat must embed tung tung god");
 must(embed.includes("function makeGodCombo()"), "embed chat must embed tung tung god");
-must(index.includes(":tung:\\\\s*:tung:\\\\s*:tung:\\\\s*:sahur:"), "shrine combo is :tung: x3 then :sahur:");
+must(shrine.includes(":tung:\\\\s*:tung:\\\\s*:tung:\\\\s*:sahur:"), "shrine combo is :tung: x3 then :sahur:");
 must(embed.includes(":tung:\\s*:tung:\\s*:tung:\\s*:sahur:"), "embed combo is :tung: x3 then :sahur:");
-must(index.includes("i.src=TUNGGOD_IMG"), "shrine god embed uses the injected god portrait");
+must(shrine.includes("i.src=TUNGGOD_IMG"), "shrine god embed uses the injected god portrait");
 must(embed.includes("assets/tungtunggod.png"), "embed god embed points at tungtunggod.png");
-must(index.includes(".embed.god{max-height:min(70vh,560px)}"), "god portrait is larger than an inline emoji");
+must(shrine.includes(".embed.god{max-height:min(70vh,560px)}"), "god portrait is larger than an inline emoji");
 must(embed.includes(".embed.god{max-height:min(70vh,560px)}"), "embed god portrait is larger than an inline emoji");
-must(!index.includes(":tongue:\\\\s*:tongue:\\\\s*:tongue:\\\\s*:sahur:"), "the tongue combo must not embed a portrait");
+must(!shrine.includes(":tongue:\\\\s*:tongue:\\\\s*:tongue:\\\\s*:sahur:"), "the tongue combo must not embed a portrait");
 must(!embed.includes(":tongue:\\s*:tongue:\\s*:tongue:\\s*:sahur:"), "embed must not keep the tongue combo");
-must(!index.includes("function makeCombo()"), "shrine chat must not keep the old sahur combo helper");
+must(!shrine.includes("function makeCombo()"), "shrine chat must not keep the old sahur combo helper");
 must(!embed.includes("function makeCombo()"), "embed chat must not keep the old sahur combo helper");
 
 const god = await Deno.stat(`${ROOT}/assets/tungtunggod.png`);

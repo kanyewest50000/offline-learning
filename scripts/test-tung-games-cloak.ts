@@ -1,23 +1,24 @@
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+import { readShrine, ROOT } from "./shrine-sources.ts";
 
 function must(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
 }
 
-const index = await Deno.readTextFile(`${ROOT}/index.html`);
+// labels live in shrine/config.js, the originals list in shrine/originals.js
+const shrine = await readShrine();
 const snake = await Deno.readTextFile(`${ROOT}/games/tung/snake.html`);
 const pong = await Deno.readTextFile(`${ROOT}/games/tung/pong.html`);
 const flappy = await Deno.readTextFile(`${ROOT}/games/tung/flappy.html`);
 const fit = await Deno.readTextFile(`${ROOT}/games/tung/tung-fit.js`);
 const tungCss = await Deno.readTextFile(`${ROOT}/games/tung/tung.css`);
 
-must(index.includes('var LBL_PLAYS = "gam\\u0435s";'), "games cloak must replace only the e");
-must(index.includes('var LBL_PLAYS_CAP = "Gam\\u0435s";'), "Games cloak must replace only the e");
-must(index.includes('var LBL_VEIL = "pr\\u043Exy";'), "proxy cloak must replace only the o");
-must(index.includes('var LBL_VEIL_CAP = "Pr\\u043Exy";'), "Proxy cloak must replace only the o");
-must(!index.includes("\\u0440"), "Cyrillic r must not appear in shrine labels");
-must(!index.includes("\\u0261"), "Latin gamma lookalike must not appear in shrine labels");
-must(!index.includes("\\u0455"), "Cyrillic s lookalike must not appear in shrine labels");
+must(shrine.includes('var LBL_PLAYS = "gam\\u0435s";'), "games cloak must replace only the e");
+must(shrine.includes('var LBL_PLAYS_CAP = "Gam\\u0435s";'), "Games cloak must replace only the e");
+must(shrine.includes('var LBL_VEIL = "pr\\u043Exy";'), "proxy cloak must replace only the o");
+must(shrine.includes('var LBL_VEIL_CAP = "Pr\\u043Exy";'), "Proxy cloak must replace only the o");
+must(!shrine.includes("\\u0440"), "Cyrillic r must not appear in shrine labels");
+must(!shrine.includes("\\u0261"), "Latin gamma lookalike must not appear in shrine labels");
+must(!shrine.includes("\\u0455"), "Cyrillic s lookalike must not appear in shrine labels");
 
 const play = JSON.parse('"' + "gam\\u0435s" + '"');
 const veil = JSON.parse('"' + "pr\\u043Exy" + '"');
@@ -31,7 +32,7 @@ must(snake.includes('width="432" height="432"'), "snake canvas must be 432x432")
 must(snake.includes("style=\"--gw:432;--gh:432\""), "snake stage must match the board");
 must(snake.includes("eat. lengthen. forget why."), "snake tagline must be the forget-why line");
 must(!snake.includes("the red square is already taken."), "old snake tagline must be gone");
-must(index.includes("eat. lengthen. forget why."), "originals list must use the new snake tagline");
+must(shrine.includes("eat. lengthen. forget why."), "originals list must use the new snake tagline");
 must(snake.includes("var STEP=180;"), "snake step must be slower than 120ms");
 must(snake.includes("window.__tungHiDPI"), "snake must use the HiDPI backing store");
 

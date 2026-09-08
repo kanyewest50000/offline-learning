@@ -2,8 +2,9 @@
 // Walk the real deal queue the way playQueue does: one event per 400ms beat.
 // Chrome is not involved — this is the same apply/render contract the table uses.
 
-const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const src = await Deno.readTextFile(`${ROOT}/index.html`);
+import { readShrineFile } from "./shrine-sources.ts";
+
+const src = await readShrineFile("assets/js/shrine/casino.js");
 
 function fail(msg: string): never {
   throw new Error(msg);

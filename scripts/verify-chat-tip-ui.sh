@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Smoke-check that index.html wires tip profile + tip POST + login-key confirm.
+# Smoke-check that the shrine wires tip profile + tip POST + login-key confirm.
+# The overlays are markup (shrine/markup.js), the handlers are the chat client
+# (shrine/chat.js), so grep across the whole shrine module set.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-f="$ROOT/index.html"
+files=("$ROOT"/assets/js/shrine/*.js)
 need=(
   'profOverlay'
   'tipOverlay'
@@ -17,7 +19,7 @@ need=(
   'w.className="who"'
 )
 for n in "${need[@]}"; do
-  if ! grep -F -q "$n" "$f"; then
+  if ! grep -F -q -- "$n" "${files[@]}"; then
     echo "MISSING: $n" >&2
     exit 1
   fi
