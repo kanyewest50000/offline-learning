@@ -41,7 +41,7 @@ const TTL_MS = 14 * 24 * 60 * 60 * 1000; // messages auto-expire after 2 weeks
 // balance to an exact value via /admin/setbal — an explicit, key-gated action.
 // Every outcome is decided here on the server with crypto RNG, so nothing about a
 // bet, a shuffle, a mine layout, or a crash point is manipulable from the client.
-const HOUSE = 0.99;                       // 1% house edge baked into fair payouts
+const HOUSE = 0.999;                      // 0.1% house edge baked into fair payouts (blackjack has its own fixed payouts and is unaffected)
 const FAUCET_AMOUNT = 10;                 // sahurs per claim
 const FAUCET_INTERVAL = 20 * 60 * 60 * 1000; // every 20 hours
 const MIN_BET = 0.1;                      // smallest allowed wager
@@ -330,6 +330,25 @@ const PLINKO: Record<string, Record<number, number[]>> = {
     16: [1000, 130, 26, 9, 4, 2, 0.2, 0.2, 0.2, 0.2, 0.2, 2, 4, 9, 26, 130, 1000],
   },
 };
+// The bucket a ball lands in is binomial: P(k) = C(rows,k)/2^rows. A table's
+// raw RTP is that weighted mean of its multipliers — the Stake-style tables sit
+// around 98.9–99.1%, close to but not exactly the house target. PLINKO_CORR
+// scales every payout by HOUSE / rawMean so each risk+row config pays back
+// exactly HOUSE, matching the other games rather than drifting a little per
+// table. Computed once at boot from the tables above.
+function plinkoMean(tab: number[]): number {
+  const n = tab.length - 1;
+  let mean = 0, c = 1; // c = C(n,k), built up as k advances
+  for (let k = 0; k <= n; k++) { mean += (c / Math.pow(2, n)) * tab[k]; c = c * (n - k) / (k + 1); }
+  return mean;
+}
+const PLINKO_CORR: Record<string, Record<number, number>> = {};
+for (const risk of Object.keys(PLINKO)) {
+  PLINKO_CORR[risk] = {};
+  for (const rows of Object.keys(PLINKO[risk])) {
+    PLINKO_CORR[risk][Number(rows)] = HOUSE / plinkoMean(PLINKO[risk][Number(rows)]);
+  }
+}
 
 // Deno KV key-space (how the pieces connect):
 //   ["seq"]            -> number   monotonically increasing event counter
@@ -1094,9 +1113,15 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const target = round2(Number(b.target)); // desired cash-out multiplier
     if (!(target >= 1.01 && target <= 1000000)) return json({ error: "target 1.01–1e6" }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
-    // crash point c with P(c >= t) = HOUSE/t  → fair, 1% edge
-    const crash = Math.max(1, round2((1 / (1 - rnd())) * HOUSE));
-    const win = crash >= target;
+    // crash point c with P(c >= t) = HOUSE/t  → fair, 0.1% edge. The win MUST be
+    // decided on the exact crash: comparing the 2dp-rounded value let a 1.996
+    // round up to 2.00 and clear a 2.00 target it should have missed, which
+    // handed the player back part of the edge (worse the lower the target —
+    // 99.25% RTP at 2×, 99.49% at 1.10×). Floor the displayed value so what the
+    // player sees never rounds up past the real crash either.
+    const crashExact = Math.max(1, HOUSE / (1 - rnd()));
+    const win = crashExact >= target;
+    const crash = floor2(crashExact);
     const payout = win ? payoutOf(bet, target) : 0;
     const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
     return json({ ok: true, crash, target, win, multiplier: win ? target : 0, payout, balance: round2(bal!) });
@@ -1115,6 +1140,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // resolve payout multiplier (winnings-to-stake) for each bet kind
     const spin = rndInt(37);
     const isRed = RED.has(spin), zero = spin === 0;
+    // Roulette keeps the true single-zero wheel: flat 2×/3×/36× payouts with a
+    // green zero. The edge is structural (the zero), a fixed ~2.70% on every
+    // bet, and is deliberately NOT flattened to the 0.1% the other games use.
     let won = false, mult = 0;
     if (kind === "number") { if (!(val >= 0 && val <= 36)) return json({ error: "number 0–36" }, 400); won = spin === val; mult = 36; }
     else if (kind === "red") { won = isRed; mult = 2; }
@@ -1149,10 +1177,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const path2: number[] = [];
     let bucket = 0;
     for (let i = 0; i < rows; i++) { const r = rnd() < 0.5 ? 1 : 0; path2.push(r); bucket += r; }
-    const mult = table[bucket];
-    const payout = payoutOf(bet, mult);
+    // correct the raw table to exactly HOUSE (risk/rows validated above)
+    const exact = table[bucket] * PLINKO_CORR[risk][rows];
+    const payout = payoutOf(bet, exact);
     const bal = await adjustBalance(u.id, payout);
-    return json({ ok: true, path: path2, bucket, multiplier: mult, payout, balance: round2(bal!) });
+    return json({ ok: true, path: path2, bucket, multiplier: round2(exact), payout, balance: round2(bal!) });
   }
 
   // ---------- BLACKJACK (start / hit / stand / double) ----------
