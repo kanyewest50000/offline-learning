@@ -29,7 +29,9 @@
   /* OG flappy silhouette — half-extents of the composed sprite */
   var bird={x:96,y:280,vy:0,hw:40,hh:29};
   var pipes=[], frame=0, score=0, best=0, state="idle";
-  var GRAV=0.16, FLAP=-4.0, GAP=168, PW=54, SPEED=1.28, SPAWN=200;
+  /* the shrine used to let him float between distant pipes. it does not
+     do that anymore. heavier fall, a tighter mouth, a faster scroll. */
+  var GRAV=0.28, FLAP=-5.1, GAP=128, PW=56, SPEED=2.0, SPAWN=140;
   try{best=parseInt(localStorage.getItem("flappy-tung-best")||"0",10)||0;}catch(e){}
 
   function reset(){
@@ -190,7 +192,7 @@
     get:function(){
       return {
         score:score, best:best, state:state, speed:SPEED, grav:GRAV, flap:FLAP,
-        spawn:SPAWN, hw:bird.hw, hh:bird.hh, src:birdImg.src
+        gap:GAP, spawn:SPAWN, hw:bird.hw, hh:bird.hh, src:birdImg.src
       };
     },
     reset:reset,
