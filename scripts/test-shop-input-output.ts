@@ -1,9 +1,7 @@
 #!/usr/bin/env -S deno run --allow-net --allow-env
 // Shop items can ask the buyer to type something (sent on to the webhook) and
-// can show them something back after redeeming. This checks the whole path:
-// the prompt label is listed but the output is held back, a missing response
-// is refused before any sahurs are spent, and on success the typed text lands
-// in the webhook while the output comes back to the buyer.
+// can show them something back after redeeming. The question field waits
+// until they have already paid. Output is held back from the public list.
 //
 // Usage (app running with ADMIN_KEY, and DISCORD_WEBHOOK_URL pointed at the
 // capture server whose GET side is CAPTURE):
@@ -25,7 +23,6 @@ async function j(path: string, opt?: RequestInit) {
 const post = (path: string, obj: unknown) =>
   j(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(obj) });
 
-// approved buyer, funded
 const username = "shopIO" + Date.now().toString(36).slice(-6);
 const apply = await post("/apply", { username, application: "shop io test" });
 const token = apply.body?.token as string;
@@ -36,7 +33,6 @@ if (!id) fail("not pending");
 if (!(await post("/admin/decide", { key: ADMIN, id, action: "approve" })).body?.ok) fail("approve failed");
 if (!(await post("/admin/setbal", { key: ADMIN, id, balance: 1000 })).body?.ok) fail("setbal failed");
 
-// one item that asks for input and hands back an output, one plain item
 const LABEL = "Your Discord tag";
 const OUTPUT = "CODE-ABC123\nkeep this safe";
 const withIO = await post("/admin/shop/set", { key: ADMIN, name: "Sahur code", desc: "a code", price: 10, inputLabel: LABEL, output: OUTPUT });
@@ -45,48 +41,62 @@ const idIO = withIO.body?.item?.id, idPlain = plain.body?.item?.id;
 if (!idIO || !idPlain) fail("item create failed: " + JSON.stringify([withIO.body, plain.body]));
 if (withIO.body.item.inputLabel !== LABEL || withIO.body.item.output !== OUTPUT) fail("set did not persist input/output");
 
-// the public list carries the prompt but never the output
 const list = await j("/shop/list?token=" + encodeURIComponent(token));
 const seenIO = (list.body.items || []).find((x: { id: string }) => x.id === idIO);
 const seenPlain = (list.body.items || []).find((x: { id: string }) => x.id === idPlain);
 if (!seenIO || !seenPlain) fail("items not in shop list");
-if (seenIO.inputLabel !== LABEL) fail("inputLabel not listed for the buyer to be prompted");
+if (seenIO.inputLabel !== LABEL) fail("inputLabel not listed so the client knows a question comes after pay");
 if ("output" in seenIO) fail("output must not be exposed in the public list");
 if (seenPlain.inputLabel) fail("plain item should have no input prompt");
 
-// redeeming the input item with nothing typed is refused, and costs nothing
-const noInput = await post("/shop/redeem", { token, itemId: idIO });
-if (noInput.status !== 400 || noInput.body.error !== "input required") {
-  fail("empty input should be refused with 'input required', got " + JSON.stringify(noInput.body));
+// paying with nothing typed is the sale: they are charged, the output ships,
+// and the label comes back so the client can show the field now.
+const paid = await post("/shop/redeem", { token, itemId: idIO });
+if (!paid.body?.ok) fail("redeem without input should still sell, got " + JSON.stringify(paid.body));
+if (paid.body.output !== OUTPUT) fail("output not returned after the sale: " + JSON.stringify(paid.body.output));
+if (paid.body.inputLabel !== LABEL) fail("sale must return inputLabel so the field can appear after pay");
+if (paid.body.balance !== 990) fail("balance should be 990 after a 10 redeem, got " + paid.body.balance);
+
+const tooSoon = await post("/shop/tell", { token, itemId: idIO });
+if (tooSoon.status !== 400 || tooSoon.body.error !== "input required") {
+  fail("an empty tell should be refused, got " + JSON.stringify(tooSoon));
 }
-const balAfterRefusal = (await j("/shop/list?token=" + encodeURIComponent(token))).body.balance;
-if (balAfterRefusal !== 1000) fail("a refused redemption still moved the balance: " + balAfterRefusal);
+if ((await j("/shop/list?token=" + encodeURIComponent(token))).body.balance !== 990) {
+  fail("a refused tell must not charge again");
+}
 
-// redeem with input: output comes back, balance drops by the price
 const TYPED = "spooky#0001 <@everyone>";
-const good = await post("/shop/redeem", { token, itemId: idIO, input: TYPED });
-if (!good.body?.ok) fail("redeem with input failed: " + JSON.stringify(good.body));
-if (good.body.output !== OUTPUT) fail("output not returned to the buyer: " + JSON.stringify(good.body.output));
-if (good.body.balance !== 990) fail("balance should be 990 after a 10 redeem, got " + good.body.balance);
+const told = await post("/shop/tell", { token, itemId: idIO, input: TYPED });
+if (!told.body?.ok) fail("tell after pay failed: " + JSON.stringify(told.body));
 
-// plain item: no output, works with no input
+const twice = await post("/shop/tell", { token, itemId: idIO, input: "again" });
+if (twice.status !== 400 || twice.body.error !== "nothing to add") {
+  fail("a second tell should be refused, got " + JSON.stringify(twice));
+}
+
 const plainRedeem = await post("/shop/redeem", { token, itemId: idPlain });
 if (!plainRedeem.body?.ok) fail("plain redeem failed: " + JSON.stringify(plainRedeem.body));
 if (plainRedeem.body.output) fail("plain item should return no output");
+if (plainRedeem.body.inputLabel) fail("plain item should not ask a question after pay");
 
-// the webhook saw the typed text, with pings defused, and the plain redeem had none
+const stray = await post("/shop/tell", { token, itemId: idPlain, input: "nope" });
+if (stray.status !== 400 || stray.body.error !== "nothing to add") {
+  fail("telling on a no-question item should fail, got " + JSON.stringify(stray));
+}
+
 const caps = await (await fetch(CAPTURE + "/captured")).json() as string[];
-// the app also webhooks on /apply, so scope to redemption posts
 const redeems = caps.map((c) => JSON.parse(c)).filter((p) => (p.content || "").includes("shop redemption"));
-if (redeems.length !== 2) fail("expected 2 redemption webhooks (the refusal must not fire one), got " + redeems.length);
-const ioHook = redeems.find((p) => (p.content || "").includes("Sahur code"));
+if (redeems.length !== 3) fail("expected 3 redemption webhooks (sale, tell, plain), got " + redeems.length);
+const saleHook = redeems.find((p) => (p.content || "").includes("Sahur code") && !(p.content || "").includes("input:"));
+const tellHook = redeems.find((p) => (p.content || "").includes("Sahur code") && (p.content || "").includes("input:"));
 const plainHook = redeems.find((p) => (p.content || "").includes("A shoutout"));
-if (!ioHook) fail("no webhook for the input item");
-if (!ioHook.content.includes(TYPED)) fail("the typed input did not reach the webhook: " + ioHook.content);
-if (!ioHook.allowed_mentions || JSON.stringify(ioHook.allowed_mentions.parse) !== "[]") {
+if (!saleHook) fail("no webhook for the sale itself");
+if (!tellHook) fail("no webhook for the typed answer");
+if (!tellHook.content.includes(TYPED)) fail("the typed input did not reach the webhook: " + tellHook.content);
+if (!tellHook.allowed_mentions || JSON.stringify(tellHook.allowed_mentions.parse) !== "[]") {
   fail("webhook must disable mentions so a typed @everyone cannot ping");
 }
 if (!plainHook) fail("no webhook for the plain item");
 if (plainHook.content.includes("input:")) fail("a no-input item should not carry an input line");
 
-console.log("PASS list prompts w/o leaking output; empty input refused & free; input reached webhook (pings off); output returned; plain item clean");
+console.log("PASS sale without an answer still charges and returns output; question field is after pay; tell reaches webhook (pings off); plain item clean");

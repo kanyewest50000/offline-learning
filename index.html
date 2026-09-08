@@ -2492,59 +2492,89 @@
         var g=el("div","grow");g.appendChild(el("h4",null,it.name));if(it.desc)g.appendChild(el("p",null,it.desc));box.appendChild(g);
         box.appendChild(el("div","price",money(it.price)+" sahurs"));
         var buy=el("button","cbtn","redeem");
-        buy.onclick=function(){shopAsk(it,function(input){shopRedeem(it,buy,input);});};
+        buy.onclick=function(){shopConfirm(it,buy);};
         box.appendChild(buy);
         listWrap.appendChild(box);
       });
     }).catch(function(){listWrap.innerHTML="";bad(r,"network error");});
-    function shopRedeem(it,buy,input){
-      buy.disabled=true;
+    function shopPaintOut(text){
       var prev=v.querySelector(".shopout");if(prev)prev.remove();
-      jpost("/shop/redeem",{itemId:it.id,input:input}).then(function(rr){
-        buy.disabled=false;
-        if(rr.error){bad(r,rr.error==="insufficient"?"not enough sahurs. the shelves do not do credit.":(rr.error==="input required"?"tung asked a question. you stared back.":rr.error));return;}
-        setBal(rr.balance);ok(r,"redeemed "+rr.item+". tung has been notified. he did not smile.");
-        if(rr.output){
-          var ob=el("div","shopout",rr.output);
-          ob.style.cssText="margin:8px 0;padding:10px 12px;border:1px solid #7a5a1a;border-radius:8px;background:#160d04;color:#f2c063;white-space:pre-wrap;word-break:break-word;font-size:13px;user-select:text";
-          if(r.nextSibling)v.insertBefore(ob,r.nextSibling);else v.appendChild(ob);
-        }
-      }).catch(function(){buy.disabled=false;bad(r,"network error");});
+      if(!text)return;
+      var ob=el("div","shopout",text);
+      ob.style.cssText="margin:8px 0;padding:10px 12px;border:1px solid #7a5a1a;border-radius:8px;background:#160d04;color:#f2c063;white-space:pre-wrap;word-break:break-word;font-size:13px;user-select:text";
+      if(r.nextSibling)v.insertBefore(ob,r.nextSibling);else v.appendChild(ob);
     }
-    /* the browser prompt is a stranger in the shrine. this is the same card
-       the tip overlay uses: tung-brown, one question, two buttons. */
-    function shopAsk(it,go){
+    function shopRedeem(it,buy,done){
+      buy.disabled=true;
+      jpost("/shop/redeem",{itemId:it.id}).then(function(rr){
+        buy.disabled=false;
+        if(rr.error){done(rr);return;}
+        setBal(rr.balance);ok(r,"redeemed "+rr.item+". tung has been notified. he did not smile.");
+        shopPaintOut(rr.output);
+        done(rr);
+      }).catch(function(){buy.disabled=false;done({error:"network error"});});
+    }
+    /* buy first. the question field is a stranger until the sahurs have moved.
+       same tung-brown card as the tip overlay, two beats: pay, then speak. */
+    function shopOverlay(spec){
       var old=document.getElementById("shopOverlay");
       if(old&&old.parentNode)old.parentNode.removeChild(old);
       var ov=el("div","ov");ov.id="shopOverlay";ov.setAttribute("role","dialog");
       var card=el("div","ovcard");
-      card.appendChild(el("h3",null,"place it on the altar"));
-      card.appendChild(el("p","ovsub",it.name+" costs "+money(it.price)+" sahurs. tung does not do refunds. tung does not do sympathy."));
+      card.appendChild(el("h3",null,spec.title));
+      card.appendChild(el("p","ovsub",spec.sub));
       var inp=null;
-      if(it.inputLabel){
-        card.appendChild(el("p","ovsub",it.inputLabel));
+      if(spec.ask){
+        card.appendChild(el("p","ovsub",spec.ask));
         inp=el("input");inp.id="shopAsk";inp.placeholder="tung is listening";
         inp.maxLength=200;card.appendChild(inp);
       }
       var err=el("p","overr","");card.appendChild(err);
       var acts=el("div","ovacts");
-      var yes=el("button",null,"so be it");
-      var no=el("button","ghost","walk away");
+      var yes=el("button",null,spec.yes||"so be it");
+      var no=el("button","ghost",spec.no||"walk away");
       function close(){if(ov.parentNode)ov.parentNode.removeChild(ov);}
       no.onclick=close;
       ov.addEventListener("click",function(ev){if(ev.target===ov)close();});
       yes.onclick=function(){
-        var input="";
-        if(inp){
-          input=String(inp.value||"").trim();
-          if(!input){err.textContent="tung asked a question. you stared back. try again.";return;}
-        }
-        close();go(input);
+        var input=inp?String(inp.value||"").trim():"";
+        if(inp&&!input){err.textContent="tung asked a question. you stared back. try again.";return;}
+        spec.onYes(input,{close:close,err:function(t){err.textContent=t;},busy:function(on){yes.disabled=on;no.disabled=on;}});
       };
       if(inp)inp.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();yes.onclick();}});
       acts.appendChild(yes);acts.appendChild(no);card.appendChild(acts);
       ov.appendChild(card);document.body.appendChild(ov);ov.style.display="flex";
       if(inp)try{inp.focus();}catch(e){}
+    }
+    function shopConfirm(it,buy){
+      shopOverlay({
+        title:"place it on the altar",
+        sub:it.name+" costs "+money(it.price)+" sahurs. tung does not do refunds. tung does not do sympathy.",
+        ask:"",
+        onYes:function(_input,api){
+          api.busy(true);
+          shopRedeem(it,buy,function(rr){
+            if(rr.error){api.err(rr.error==="insufficient"?"not enough sahurs. the shelves do not do credit.":rr.error);api.busy(false);return;}
+            api.close();
+            if(rr.inputLabel)shopCollect(it,rr.inputLabel);
+          });
+        }
+      });
+    }
+    function shopCollect(it,label){
+      shopOverlay({
+        title:"the shelves have you",
+        sub:"you already paid. tung does not do refunds. he does have a question.",
+        ask:label,
+        onYes:function(input,api){
+          api.busy(true);
+          jpost("/shop/tell",{itemId:it.id,input:input}).then(function(rr){
+            if(rr.error){api.err(rr.error==="nothing to add"?"tung already heard you. or he never will.":rr.error);api.busy(false);return;}
+            api.close();
+            ok(r,"tung wrote it down. he did not smile.");
+          }).catch(function(){api.err("the shelves are silent.");api.busy(false);});
+        }
+      });
     }
   }
 })();

@@ -14,15 +14,20 @@ const server = await Deno.readTextFile(`${ROOT}/server.ts`);
 
 must(!index.includes("prompt(it.inputLabel)"), "shop redeem must not use the browser prompt");
 must(!index.includes('confirm("Redeem '), "shop redeem must not use the browser confirm");
-must(index.includes("function shopAsk(it,go)"), "shop redeem must open an in-page overlay");
-must(index.includes("function shopRedeem(it,buy,input)"), "shop redeem must stay in the overlay callback");
-must(index.includes('el("h3",null,"place it on the altar")'), "overlay title must be the altar line");
+must(index.includes("function shopConfirm(it,buy)"), "shop redeem must open a pay overlay first");
+must(index.includes("function shopCollect(it,label)"), "the question field must wait until after they have paid");
+must(index.includes("function shopRedeem(it,buy,done)"), "shop redeem must run from the pay overlay");
+must(index.includes('title:"place it on the altar"'), "pay overlay title must be the altar line");
+must(index.includes('title:"the shelves have you"'), "the question overlay must only open after a sale");
 must(index.includes("tung does not do refunds. tung does not do sympathy."), "overlay must keep the deadpan refund line");
+must(index.includes("you already paid. tung does not do refunds. he does have a question."), "the question beat must admit they already paid");
 must(index.includes('placeholder="tung is listening"'), "overlay input must use the listening placeholder");
 must(index.includes("so be it") && index.includes("walk away"), "overlay buttons must be so be it / walk away");
 must(index.includes("tung asked a question. you stared back. try again."), "empty overlay answer must scold, not look like a form error");
 must(index.includes("#tipAmt,#shopAsk{"), "shop overlay field must share the tip-box width rules");
 must(index.includes('ov.id="shopOverlay"'), "overlay must be a named shrine dialog");
+must(index.includes("if(spec.ask){"), "the input field must be gated on the after-pay overlay");
+must(!index.includes("if(it.inputLabel){"), "the buy overlay must not grow an input just because the item has a question");
 
 const marker = "var CASINO_JS = `";
 const jsStart = index.indexOf(marker);
@@ -32,7 +37,8 @@ must(jsEnd > jsStart, "CASINO_JS close is missing");
 const casinoJs = index.slice(jsStart + marker.length, jsEnd);
 must(!casinoJs.includes("${"), "CASINO_JS is a template literal and cannot interpolate");
 must(!casinoJs.includes("`"), "CASINO_JS cannot contain backticks");
-must(casinoJs.includes("function shopAsk(it,go)"), "shop overlay lives inside CASINO_JS");
+must(casinoJs.includes("function shopCollect(it,label)"), "after-pay question overlay lives inside CASINO_JS");
+must(casinoJs.includes("ask:\"\""), "the pay overlay must pass an empty ask so no field is created");
 new Function("SHRINE_API", casinoJs);
 
 must(server.includes("input,textarea{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit;box-sizing:border-box}"), "admin fields must style input and textarea the same");
@@ -46,5 +52,8 @@ must(server.includes("even tung tung god has a ceiling."), "over-max bets must n
 must(server.includes("tung does not wager ghosts. put a real number on the felt."), "non-numbers need the ghost line");
 must(server.includes("function wagerError(") && server.includes("function readWager("), "bet copy is centralized");
 must((server.match(/wagerError\(b\.bet\)/g) || []).length === 7, "every casino start path must surface wagerError");
+must(!server.includes('if (inputLabel && !input) return json({ error: "input required"'), "a missing answer must not block the sale");
+must(server.includes('path === "/shop/tell"'), "typed answers land on /shop/tell after the sale");
+must(server.includes('["shopask", u.id, it.value.id]'), "a pending question is stored only after they have paid");
 
 console.log("shop overlay, admin output CSS, and wager copy checks passed");

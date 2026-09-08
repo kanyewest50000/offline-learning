@@ -1448,16 +1448,40 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // deno-lint-ignore no-explicit-any
     const it = await kv.get<any>(["shopitem", clip(b.itemId, 32)]);
     if (!it.value || !it.value.active) return json({ error: "unavailable" }, 404);
-    // if the item asks for something typed, it must be there before anyone is
-    // charged — validate first so a missing response never spends sahurs.
+    // the question (discord tag, etc) is asked AFTER they have paid. a missing
+    // answer must not block the sale — the client shows the field once the
+    // shelves already have their sahurs.
     const inputLabel = String(it.value.inputLabel || "").trim();
     const input = clip(b.input, 500);
-    if (inputLabel && !input) return json({ error: "input required", inputLabel }, 400);
     const price = round2(Number(it.value.price));
     const bal = await adjustBalance(u.id, -price);
     if (bal === null) return json({ error: "insufficient" }, 402);
+    if (inputLabel && !input) {
+      await kv.set(["shopask", u.id, it.value.id], { name: it.value.name, price }, { expireIn: 24 * 60 * 60 * 1000 });
+    }
     notifyRedeem(u.username, { name: it.value.name, price }, inputLabel ? input : "");
-    return json({ ok: true, balance: round2(bal), item: it.value.name, price, output: it.value.output || "" });
+    return json({
+      ok: true,
+      balance: round2(bal),
+      item: it.value.name,
+      price,
+      output: it.value.output || "",
+      inputLabel,
+    });
+  }
+  if (req.method === "POST" && path === "/shop/tell") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const itemId = clip(b.itemId, 32);
+    const input = clip(b.input, 500);
+    if (!itemId || !input) return json({ error: "input required" }, 400);
+    const pending = await kv.get<{ name: string; price: number }>(["shopask", u.id, itemId]);
+    if (!pending.value) return json({ error: "nothing to add" }, 400);
+    await kv.delete(["shopask", u.id, itemId]);
+    notifyRedeem(u.username, { name: pending.value.name, price: pending.value.price }, input);
+    return json({ ok: true });
   }
 
   // ---------- admin: SET a player's balance (moderation tool) ----------
