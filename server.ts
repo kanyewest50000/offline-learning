@@ -24,6 +24,8 @@ const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
 const OPEN_MSGS = 30; // a fresh /events?since=0 only ships this many chat lines
+const MSG_MAX = 3; // chat messages one account may post
+const MSG_WINDOW_MS = 6000; // ...within this window, before /send starts refusing
 
 // gn-math HTML loaders live on GitHub Pages at games/g/, pinned to
 // 9b343737669dd2067dd6cd731859a99008772388 (see scripts/refresh-games.sh).
@@ -720,6 +722,20 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (sbs.blocked) return json({ error: "blocked", reason: sbs.reason, until: sbs.until }, 403);
     const text = clip(b.text, 1000);
     if (!text) return json({ error: "empty" }, 400);
+    // Per-account flood cap: MSG_MAX messages per MSG_WINDOW_MS. Keyed on the
+    // account, not the IP or connection, so it holds whether someone spams from
+    // one tab, several tabs, or a script reusing the token — and a shared
+    // classroom IP is unaffected. Checked only after the message proves
+    // non-empty, so empty POSTs cannot burn a real message's allowance. The
+    // in-memory gate rejects a rapid burst on the spot at zero KV cost; the KV
+    // gate, reached only once a send is otherwise allowed, makes the cap hold
+    // across isolates so it cannot be sidestepped by fanning out. The admin key
+    // posts uncapped, for moderator announcements and for seeding.
+    const modPost = ADMIN_KEY !== "" && String(b.key ?? "") === ADMIN_KEY;
+    if (!modPost) {
+      if (!allow("msg:" + user.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
+      if (!await allowGlobal("msg:" + user.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
+    }
     const reply = b.reply && b.reply.id
       ? { id: clip(b.reply.id, 32), name: clip(b.reply.name, 24), text: clip(b.reply.text, 140) }
       : null;
