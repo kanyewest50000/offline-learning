@@ -26,7 +26,7 @@
   if(window.__tungHiDPI) window.__tungHiDPI(c, ctx, W, H);
   var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
   var you, him, ball, youScore, himScore, state, spin;
-  var PW=28, PH=100, BR=12, WIN=7;
+  var PW=28, PH=100, BR=12, WIN=7, PLACE=2.0;
 
   /* ---- the night watch ----
      the pos ronda plates and the overnight sahur broadcast. absolute URLs:
@@ -37,7 +37,7 @@
   var ronda=new Image(); ronda.src="../../assets/tungronda.png";
   var rondaNear=new Image(); rondaNear.src=RONDA_NEAR;
   /* rise slowly to half, stand down, then the broadcast takes the room */
-  var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=25000;
+  var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=30000, V_LOCK=15000;
   var vigil={phase:"off", t:0, a:0, dry:0};
   var feed=null, primed=false;
 
@@ -63,6 +63,13 @@
     ball.vy=rel*4.0;
     spin+=dir*0.4;
   }
+  /* he does not merely return it, he puts it where the player is not. this is
+     what ends a rally: without it both paddles just keep returning until the
+     ball outruns them both, and a point takes a minute to settle. */
+  function place(){
+    var away=(you.y+PH/2)<H/2 ? 1 : -1;
+    ball.vy=away*PLACE + ball.vy*0.3;
+  }
   function hitsPad(p){
     return ball.x+BR>p.x && ball.x-BR<p.x+PW && ball.y+BR>p.y && ball.y-BR<p.y+PH;
   }
@@ -74,16 +81,13 @@
       him.y=clamp(target, minY, maxY);
       return;
     }
-    /* he tightens as the player climbs but never all the way. the sway is the
-       real difficulty dial: with his reach capped he can always get somewhere
-       in time, so the only thing that makes him miss is aiming off the ball.
-       it narrows from 90px to 30px across the climb and never reaches zero, so
-       every point up to the sixth stays winnable. only the branch above, where
-       he tracks the ball exactly with no cap and no sway, cannot be beaten. */
+    /* below the rigged point he is beatable but not generous: the sway that
+       makes him miss narrows from 22px to 9px across the climb, and he chases
+       harder the closer the player gets. */
     var heat=youScore/Math.max(1, WIN-1);
-    var follow=0.05+heat*0.09;
-    var maxStep=2.0+heat*1.9;
-    var wobble=30+(1-heat)*60;
+    var follow=0.06+heat*0.12;
+    var maxStep=2.4+heat*2.6;
+    var wobble=9+(1-heat)*13;
     var desired;
     if(ball.vx>0){
       desired=target+Math.sin(Date.now()/240)*wobble;
@@ -105,7 +109,17 @@
       if(ball.y<BR || ball.y>H-BR){ ball.vy*=-1; ball.y=clamp(ball.y, BR, H-BR); }
       aiMove();
       if(ball.vx<0 && hitsPad(you)) bounce(you, 1);
-      if(ball.vx>0 && hitsPad(him)) bounce(him, -1);
+      if(ball.vx>0){
+        if(youScore>=WIN-1){
+          /* the point he is not allowed to concede. his whole face is the wall,
+             at any speed — no gap for a fast ball to slip through — and he
+             returns it flat. he is not trying to win, he is refusing to lose. */
+          if(ball.x+BR>him.x){ ball.x=him.x-BR; bounce(him, -1); }
+        } else if(hitsPad(him)){
+          bounce(him, -1);
+          place();
+        }
+      }
       if(ball.x<-20){ himScore++; vigil.dry=0; if(himScore>=WIN) state="lose"; else { state="idle"; resetBall(true); } }
       if(ball.x>W+20){ youScore++; vigil.dry=0; if(youScore>=WIN) state="win"; else { state="idle"; resetBall(false); } }
     }
@@ -139,13 +153,15 @@
     else if(state==="win") overlay("a rare bounce", "a point he allowed. cherish it.");
     requestAnimationFrame(tick);
   }
-  /* he comes out either when the score line goes rigged — the point he is not
-     allowed to concede — or after a long dry spell with the player well ahead. */
+  /* he only comes out of a stalemate, never off the scoreline alone: half a
+     minute without a point from five up, or a quarter of one on the rigged
+     point, where nobody can score and the volley just goes on. */
   function vigilStep(dt){
     if(state==="play"||state==="idle") vigil.dry+=dt;
     if(vigil.phase==="off"){
       if(state!=="play") return;
-      if(youScore>=WIN-1 || (youScore>=4 && vigil.dry>=V_DRY)){ vigil.phase="rise"; vigil.t=0; }
+      var need=youScore>=WIN-1 ? V_LOCK : (youScore>=5 ? V_DRY : Infinity);
+      if(vigil.dry>=need){ vigil.phase="rise"; vigil.t=0; }
       return;
     }
     if(vigil.phase==="air") return;
