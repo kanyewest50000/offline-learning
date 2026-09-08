@@ -5,8 +5,14 @@ const asset = `${ROOT}/assets/eviltungtungtungsahur.jpg`;
 if (!html.includes('evil.src="../../assets/eviltungtungtungsahur.jpg"')) {
   throw new Error("snake.html does not load the evil tung sprite");
 }
-if (!html.includes("if(foe && head.x===foe.x && head.y===foe.y)")) {
+if (!html.includes('die("evil")') || !html.includes("onList(foes")) {
   throw new Error("walking into evil tung does not kill the player");
+}
+if (!html.includes("foes.push") || html.includes("STAY_MIN")) {
+  throw new Error("evil tungs must stay on the board and stack");
+}
+if (!html.includes("gods.push")) {
+  throw new Error("god tungs must stack instead of replacing each other");
 }
 if (!html.includes("if(onSnake(x,y)) return false")) {
   throw new Error("spawn helpers do not refuse snake-occupied cells");

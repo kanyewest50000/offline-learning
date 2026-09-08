@@ -36,7 +36,11 @@ must(snake.includes("window.__tungHiDPI"), "snake must use the HiDPI backing sto
 
 must(pong.includes("var PW=28, PH=100, BR=12, WIN=7;"), "pong paddles must be larger rectangles");
 must(pong.includes("vx:(toHim?2.1:-2.1)"), "pong serve must be slower than 3.2");
-must(pong.includes("Math.min(5.6, Math.abs(ball.vx)+0.22)"), "pong max ball speed must be capped");
+must(pong.includes("ball.vx=dir*(Math.abs(ball.vx)+0.48)"), "pong ball must accelerate faster with no top-speed cap");
+must(!pong.includes("Math.min(5.6"), "pong ball speed must be uncapped");
+must(snake.includes("foes.push"), "evil tungs must stack on the board");
+must(snake.includes("gods.push"), "god tungs must stack on the board");
+must(!snake.includes("STAY_MIN"), "evil tungs must not time out");
 must(pong.includes("window.__tungHiDPI"), "pong must use the HiDPI backing store");
 
 must(flappy.includes('birdImg.src="../../assets/flappy-tung-bird.png"'), "flappy must use the sahur-filled OG bird");
