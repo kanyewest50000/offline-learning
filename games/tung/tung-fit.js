@@ -1,16 +1,35 @@
 /* Uniformly scale the game canvas to fit .stage. Never stretch.
-   HiDPI backing store keeps the picture sharp when the CSS box is large. */
+   The backing store tracks the on-screen CSS box * devicePixelRatio so the
+   bitmap is never smaller than the pixels the browser is painting. Sizing it
+   from the logical 420x640 (etc.) and capping DPR left the picture chunky
+   whenever the stage was larger than that bitmap. */
 (function () {
+  var bound = null;
+
+  function applyBacking(canvas, ctx, W, H) {
+    var dpr = Math.max(1, window.devicePixelRatio || 1);
+    var cssW = canvas.clientWidth || 0;
+    var cssH = canvas.clientHeight || 0;
+    if (cssW < 2) cssW = parseFloat(canvas.style.width) || W;
+    if (cssH < 2) cssH = parseFloat(canvas.style.height) || H;
+    var bw = Math.max(1, Math.round(cssW * dpr));
+    var bh = Math.max(1, Math.round(cssH * dpr));
+    if (canvas.width !== bw || canvas.height !== bh) {
+      canvas.width = bw;
+      canvas.height = bh;
+    }
+    ctx.setTransform(bw / W, 0, 0, bh / H, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    if (ctx.imageSmoothingQuality) ctx.imageSmoothingQuality = "high";
+  }
+
   window.__tungHiDPI = function (canvas, ctx, W, H) {
     canvas.setAttribute("data-logical-w", String(W));
     canvas.setAttribute("data-logical-h", String(H));
-    var dpr = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1));
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.imageSmoothingEnabled = true;
-    if (ctx.imageSmoothingQuality) ctx.imageSmoothingQuality = "high";
+    bound = { canvas: canvas, ctx: ctx, W: W, H: H };
+    applyBacking(canvas, ctx, W, H);
   };
+
   function fit() {
     var stage = document.querySelector(".stage");
     var frame = document.querySelector(".frame");
@@ -28,6 +47,9 @@
     frame.style.height = dh + "px";
     canvas.style.width = dw + "px";
     canvas.style.height = dh + "px";
+    if (bound && bound.canvas === canvas) {
+      applyBacking(bound.canvas, bound.ctx, bound.W, bound.H);
+    }
   }
   window.__tungFit = fit;
   window.addEventListener("resize", fit);
