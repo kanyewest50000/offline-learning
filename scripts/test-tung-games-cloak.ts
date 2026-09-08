@@ -60,8 +60,9 @@ must(flappy.includes('ctx.fillStyle="#1d1206"'), "fallen card must be opaque so 
 /* pong difficulty: the climb has to stay winnable up to the sixth point.
    his reach is capped and his sway never reaches zero, so he can always be
    made to miss — except on the rigged point, where he tracks the ball exactly. */
-must(pong.includes("var follow=0.06+heat*0.12;"), "pong AI must close on the ball steadily");
-must(pong.includes("var maxStep=1.4+heat*4.5;"), "his bat must start slow and quicken as the score climbs");
+must(pong.includes("var follow=0.05+heat*0.10;"), "pong AI must close on the ball steadily");
+must(pong.includes("var maxStep=1.0+heat*1.8;"), "his bat must stay slow enough that an angled shot beats him at a speed a person can still aim at");
+must(!pong.includes("heat*4.5"), "a bat that quick reaches an angled shot before the ball is even hard to read");
 must(pong.includes("var wobble=30+(1-heat)*14;"), "the sway must stay with him at every score below the rigged point");
 must(!pong.includes("PLACE"), "he must not aim his return away from the player; the angle is the player's to set");
 
@@ -119,19 +120,22 @@ must(
 );
 must(pong.includes('ctx.globalAlpha=vigil.a;'), "the plate must honour the rise alpha");
 must(pong.includes("z-index:2147483647"), "the shell cover must sit above everything on the page");
-must(pong.includes("object-fit:cover"), "the shell cover must fill the page without letterboxing");
+must(pong.includes("background-size:cover"), "the shell cover must fill the page without letterboxing");
 
 /* a picture handed over at the moment it is wanted still has to be decoded
    before it can paint, which showed as a beat of black */
 must(pong.includes("function hangPlate(){"), "the cover must be built ahead of the moment it is shown");
 must(pong.includes("hangPlate();") && pong.indexOf("hangPlate();") < pong.indexOf("function hangPlate(){"), "the cover must be hung as soon as the watch arms");
 must(/opacity:0;pointer-events:none;/.test(pong), "the cover must hang fully transparent and let clicks through until its moment");
-must(pong.includes('img.decode()'), "the cover picture must be decoded up front, not at the moment of reveal");
+must(pong.includes('warm.decode()'), "the cover picture must be decoded up front, not at the moment of reveal");
 must(
-  pong.includes('plate.style.opacity="1"; plate.style.pointerEvents="auto";'),
-  "revealing the cover must be a change of opacity, not a fresh element",
+  pong.includes('el.style.opacity="1"; el.style.pointerEvents="auto";'),
+  "revealing the cover must be a change of opacity on the element already hung",
 );
-must(!pong.includes('background:#000 url('), "the cover must not fetch its picture through a stylesheet at reveal time");
+/* the picture rides on the element's own background, the way it always has.
+   an <img> child rendered as a black screen in the shell it actually runs in. */
+must(pong.includes('background:#000 url('), "the cover must carry its picture as its own background");
+must(!pong.includes('createElement("img")'), "the cover must not depend on an img element inside the shell");
 must(pong.includes("function shell()"), "the cover must be mounted on the outermost reachable document");
 must(pong.includes("requestFullscreen"), "the shell must go fullscreen when the broadcast opens");
 must(pong.includes("feed.volume=1") && pong.includes("feed.muted=false"), "the broadcast must open at full volume");
@@ -167,7 +171,9 @@ for (const [file, what] of plates) {
   } catch {
     throw new Error(`assets/${file} is missing — ${what}`);
   }
-  must(size > 20000, `assets/${file} is too small to be ${what}`);
+  /* a stand-in dropped at this path while testing must not satisfy the check:
+     these are full-bleed photographs and run to megabytes */
+  must(size > 400000, `assets/${file} is only ${size} bytes — too small to be ${what}`);
 }
 const broadcast = await Deno.stat(`${ROOT}/assets/sahur-broadcast.mp3`);
 must(broadcast.size > 100000, "the broadcast audio is missing or truncated");
