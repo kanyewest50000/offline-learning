@@ -90,12 +90,21 @@ must(pong.includes('new URL("../../assets/tungrondaclose.png", location.href).hr
 must(pong.includes('new URL("../../assets/sahur-broadcast.mp3", location.href).href'), "the broadcast must resolve absolutely for the about:blank shell");
 must(pong.includes('ronda.src="../../assets/tungronda.png"'), "the court plate must load from assets");
 
-/* the code line under the court is the reason the room turns the volume up */
-must(pong.includes('<p class="ledger" id="ledger">'), "pong must carry the code line under the court");
-must(pong.includes("turn it up for the rest."), "the code line must send people to the speakers");
-must(tungCss.includes(".ledger {") && tungCss.includes(".ledger.live {"), "the code line needs a resting and a live style");
-must(pong.includes("actx.createBufferSource()"), "the carrier under the code line must be generated, not shipped as a file");
-must(/g\.gain\.exponentialRampToValueAtTime\(0\.02, t0\+0\.15\);/.test(pong), "the carrier must stay near the floor of hearing");
+/* the line under the court is the only nudge the room gets about the volume,
+   and it is plain text: nothing is ever played to bait it up */
+must(pong.includes('<p class="ledger">'), "pong must carry the line under the court");
+must(pong.includes("tung rewards those who listen"), "the line must still offer the reward for listening");
+must(pong.includes("free sahur codes go out over the air, never on screen."), "the line must send people to the speakers, not the screen");
+must(tungCss.includes(".ledger {"), "the line under the court needs a style");
+must(!tungCss.includes(".ledger.live"), "the line no longer changes, so it needs no live style");
+must(!pong.includes("createBufferSource"), "nothing may be played to bait the volume up");
+must(!pong.includes("AudioContext"), "the game must open no audio context of its own");
+must(!/setTimeout\((pulse|onAir|whisper)/.test(pong), "no periodic sound may be scheduled");
+must(
+  pong.split("new Audio(").length > 1 &&
+    pong.split("new Audio(").slice(1).every((rest) => rest.startsWith("BROADCAST)")),
+  "the broadcast must be the only sound the game loads",
+);
 
 const plates = [
   ["tungronda.png", "the pos ronda plate that rises on the court"],
