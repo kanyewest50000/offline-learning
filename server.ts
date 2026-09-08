@@ -1556,7 +1556,8 @@ aside.nav{width:230px;flex-shrink:0;background:#241505;border-right:1px solid #3
 .pane h2{margin:0 0 4px;font-size:18px}
 .hint{color:#c8823c;font-size:13px;margin:0 0 14px}
 .keybar{display:flex;gap:8px;margin-bottom:16px}
-input{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px}
+input,textarea{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit;box-sizing:border-box}
+textarea{min-height:72px;resize:vertical;width:100%}
 .search{width:100%;flex:none;box-sizing:border-box;margin:0 0 14px}
 button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:pointer}
 .load{background:#c8823c;color:#1d1206}
@@ -1889,7 +1890,7 @@ function itemCard(it){
   var inputLabel=document.createElement("input");inputLabel.className="uname";inputLabel.placeholder="ask the buyer for… (optional, e.g. your Discord tag)";inputLabel.value=it.inputLabel||"";inputLabel.maxLength=80;
   r2b.appendChild(inputLabel);el.appendChild(r2b);
   var r2c=document.createElement("div");r2c.className="row";
-  var output=document.createElement("textarea");output.className="uname";output.placeholder="shown to them after they redeem (optional, e.g. a code)";output.value=it.output||"";output.maxLength=1000;output.rows=2;output.style.cssText="resize:vertical;font-family:inherit";
+  var output=document.createElement("textarea");output.className="uname";output.placeholder="shown to them after they redeem (optional, e.g. a code)";output.value=it.output||"";output.maxLength=1000;output.rows=3;
   r2c.appendChild(output);el.appendChild(r2c);
   var r3=document.createElement("div");r3.className="row";
   var lab=document.createElement("label");lab.style.cssText="display:flex;align-items:center;gap:6px;color:#e9d9c2;font-size:14px";
