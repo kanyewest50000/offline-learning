@@ -17,7 +17,7 @@
     <div class="frame"><canvas id="c" width="720" height="420"></canvas></div>
   </div>
   <p class="hint">move with mouse / touch / up-down · first to 7</p>
-  <p class="ledger" id="ledger">tung rewards those who listen — free sahur codes go out over the air, never on screen.</p>
+  <p class="ledger">tung rewards those who listen — free sahur codes go out over the air, never on screen.</p>
 <script src="tung-fit.js"></script>
 <script>
 (function(){
@@ -39,7 +39,7 @@
   /* rise slowly to half, stand down, then the broadcast takes the room */
   var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=25000;
   var vigil={phase:"off", t:0, a:0, dry:0};
-  var feed=null, actx=null, primed=false;
+  var feed=null, primed=false;
 
   function resetBall(toHim){
     ball={x:W/2, y:H/2, vx:(toHim?2.1:-2.1), vy:(Math.random()*2-1)*1.6};
@@ -258,19 +258,9 @@
   window.addEventListener("keyup", function(ev){
     if(ev.key==="ArrowUp"||ev.key==="w"||ev.key==="W"||ev.key==="ArrowDown"||ev.key==="s"||ev.key==="S") you.vy=0;
   });
-  /* ---- sahur codes on the air ----
-     the codes are only ever spoken, never printed, so the line under the court
-     shows the head of one and leaves the rest to the speakers. the carrier
-     underneath is deliberately faint: a room at a comfortable volume hears
-     nothing at all, which is the point. */
-  var ledger=document.getElementById("ledger");
-  var LEDGER_REST=ledger?ledger.textContent:"";
-  var restore=null;
-  function codeHead(){
-    var A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789", s="";
-    for(var i=0;i<3;i++) s+=A.charAt(Math.floor(Math.random()*A.length));
-    return "SAHUR-"+s;
-  }
+  /* the broadcast opens at full volume with no warning, so the line under the
+     court is the only nudge the room gets to be ready for it. nothing is ever
+     played to bait the volume up — the line just says what is on offer. */
   function prime(){
     if(primed) return; primed=true;
     /* park a loaded, silent copy of the broadcast while the gesture is fresh,
@@ -282,48 +272,10 @@
       var p=feed.play();
       if(p&&p.then) p.then(park, function(){}); else park();
     }catch(e){}
-    try{
-      var AC=window.AudioContext||window.webkitAudioContext;
-      if(AC) actx=new AC();
-    }catch(e){}
   }
-  function carrier(){
-    if(!actx) return;
-    try{
-      if(actx.state==="suspended") actx.resume();
-      var dur=0.8, sr=actx.sampleRate, n=Math.floor(sr*dur);
-      var buf=actx.createBuffer(1,n,sr), ch=buf.getChannelData(0);
-      for(var i=0;i<n;i++) ch[i]=Math.random()*2-1;
-      var src=actx.createBufferSource(); src.buffer=buf;
-      var bp=actx.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=1500; bp.Q.value=0.6;
-      var g=actx.createGain(), t0=actx.currentTime;
-      g.gain.setValueAtTime(0.0001, t0);
-      g.gain.exponentialRampToValueAtTime(0.02, t0+0.15);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
-      src.connect(bp); bp.connect(g); g.connect(actx.destination);
-      src.start(t0); src.stop(t0+dur);
-    }catch(e){}
-  }
-  function pulse(){
-    if(vigil.phase==="air") return;
-    carrier();
-    if(ledger){
-      ledger.textContent="…"+codeHead()+"▮▮▮ just went out. turn it up for the rest.";
-      ledger.className="ledger live";
-      if(restore) clearTimeout(restore);
-      restore=setTimeout(function(){
-        if(vigil.phase==="air") return;
-        ledger.textContent=LEDGER_REST;
-        ledger.className="ledger";
-      }, 2600);
-    }
-    queuePulse();
-  }
-  function queuePulse(){ setTimeout(pulse, 9000+Math.random()*7000); }
   ["pointerdown","mousedown","keydown","touchstart"].forEach(function(k){
     window.addEventListener(k, prime, true);
   });
-  queuePulse();
 
   window.__tungPong = {
     scores: function(){ return {you:youScore, him:himScore, win:WIN, ps:PH, pw:PW, ph:PH}; },
