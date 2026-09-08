@@ -56,6 +56,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
 .flash{outline:2px solid #f2c063}
 .isvg{height:1.7em;width:auto;vertical-align:-0.5em}
 .embed{display:block;max-width:100%;max-height:240px;border-radius:8px;margin-top:3px}
+.embed.god{max-height:min(70vh,560px)}
 #replybar{display:none;align-items:center;gap:8px;padding:6px 12px;background:#241505;border-top:1px solid #3a2410;font-size:12px;color:#c8823c}
 #replybar b{color:#f5efe0}
 #replybar .x{margin-left:auto;cursor:pointer;padding:2px 8px;background:#160d04;border:1px solid #3a2410;border-radius:6px}
@@ -121,9 +122,11 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   }
   var API = (param("api") || PROD_API).replace(/\/$/, "");
   var TUNG_IMG = PROD_ASSET;
+  var GOD_IMG = "https://cdn.jsdelivr.net/gh/kanyewest50000/offline-learning@main/assets/tungtunggod.png";
   try {
     if (location.protocol !== "about:" && /\/embed\//.test(location.pathname)) {
       TUNG_IMG = new URL("../assets/tungtungtungsahur.png", location.href).href;
+      GOD_IMG = new URL("../assets/tungtunggod.png", location.href).href;
     }
   } catch(e) {}
 
@@ -164,7 +167,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   var replybar = document.getElementById("replybar");
   var rpal = document.getElementById("rpal");
 
-  var EMOJI = {"sob":"😭","joy":"😂","rofl":"🤣","skull":"💀","fire":"🔥","heart":"❤️","broken_heart":"💔","100":"💯","pray":"🙏","eyes":"👀","sunglasses":"😎","thinking":"🤔","cry":"😢","sweat_smile":"😅","heart_eyes":"😍","smirk":"😏","wink":"😉","grin":"😁","upside_down":"🙃","melting":"🫠","clap":"👏","ok_hand":"👌","thumbsup":"👍","thumbsdown":"👎","poop":"💩","tada":"🎉","rocket":"🚀","star":"⭐","zzz":"😴","cold_face":"🥶","hot_face":"🥵","nauseated":"🤢","wave":"👋","muscle":"💪","brain":"🧠","moai":"🗿","wood":"🪵","bat":"🦇","goat":"🐐","sparkles":"✨","raised_hands":"🙌","facepalm":"🤦","shrug":"🤷","angry":"😡","yawn":"🥱","salute":"🫡","israel":"🇮🇱","middle_finger":"🖕","sweat_drops":"💦","pleading":"🥺","clown":"🤡","rich":"🤑","feet":"🦶","tongue":"👅","wheelchair":"♿","ninja":"🥷","sahur":"🗿"};
+  var EMOJI = {"sob":"😭","joy":"😂","rofl":"🤣","skull":"💀","fire":"🔥","heart":"❤️","broken_heart":"💔","100":"💯","pray":"🙏","eyes":"👀","sunglasses":"😎","thinking":"🤔","cry":"😢","sweat_smile":"😅","heart_eyes":"😍","smirk":"😏","wink":"😉","grin":"😁","upside_down":"🙃","melting":"🫠","clap":"👏","ok_hand":"👌","thumbsup":"👍","thumbsdown":"👎","poop":"💩","tada":"🎉","rocket":"🚀","star":"⭐","zzz":"😴","cold_face":"🥶","hot_face":"🥵","nauseated":"🤢","wave":"👋","muscle":"💪","brain":"🧠","moai":"🗿","wood":"🪵","bat":"🦇","goat":"🐐","sparkles":"✨","raised_hands":"🙌","facepalm":"🤦","shrug":"🤷","angry":"😡","yawn":"🥱","salute":"🫡","israel":"🇮🇱","middle_finger":"🖕","sweat_drops":"💦","pleading":"🥺","clown":"🤡","rich":"🤑","feet":"🦶","tongue":"👅","wheelchair":"♿","ninja":"🥷","sahur":"🗿","tung":"🏏"};
   function emojify(t){ return t.replace(/:([a-z0-9_+-]+):/g, function(m,c){ return EMOJI[c]||m; }); }
   function insertTok(tok){
     var s = input.selectionStart, e = input.selectionEnd;
@@ -200,6 +203,11 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     i.className = "embed"; i.alt = "tung tung tung sahur"; i.loading = "lazy"; i.src = TUNG_IMG;
     return i;
   }
+  function makeGodCombo(){
+    var i = document.createElement("img");
+    i.className = "embed god"; i.alt = "tung tung tung god"; i.loading = "lazy"; i.src = GOD_IMG;
+    return i;
+  }
   function renderInline(el, seg){
     var re = /:([a-z0-9_+-]+):/g, last = 0, m;
     while ((m = re.exec(seg))) {
@@ -214,12 +222,14 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   }
   function renderBody(el, text){
     el.textContent = "";
-    var re = /:tongue:\s*:tongue:\s*:tongue:\s*:sahur:/g;
-    var parts = text.split(re);
-    for (var i = 0; i < parts.length; i++) {
-      renderInline(el, parts[i]);
-      if (i < parts.length - 1) el.appendChild(makeCombo());
+    var re = /:tongue:\s*:tongue:\s*:tongue:\s*:sahur:|:tung:\s*:tung:\s*:tung:\s*:sahur:/g;
+    var last = 0, m;
+    while ((m = re.exec(text))) {
+      renderInline(el, text.slice(last, m.index));
+      el.appendChild(/^:tung:/.test(m[0]) ? makeGodCombo() : makeCombo());
+      last = re.lastIndex;
     }
+    renderInline(el, text.slice(last));
   }
 
   var MSGS = {};

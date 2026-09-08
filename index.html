@@ -1276,7 +1276,7 @@
     /* catalog titles no longer play inside this chat window — each opens in its own
        about:blank tab (see openPlay below), so there are no in-page player refs */
     /* ---- discord-style emoji shortcodes + per-user pinned favourites ---- */
-    'var EMOJI={"sob":"😭","joy":"😂","rofl":"🤣","skull":"💀","fire":"🔥","heart":"❤️","broken_heart":"💔","100":"💯","pray":"🙏","eyes":"👀","sunglasses":"😎","thinking":"🤔","cry":"😢","sweat_smile":"😅","heart_eyes":"😍","smirk":"😏","wink":"😉","grin":"😁","upside_down":"🙃","melting":"🫠","clap":"👏","ok_hand":"👌","thumbsup":"👍","thumbsdown":"👎","poop":"💩","tada":"🎉","rocket":"🚀","star":"⭐","zzz":"😴","cold_face":"🥶","hot_face":"🥵","nauseated":"🤢","wave":"👋","muscle":"💪","brain":"🧠","moai":"🗿","wood":"🪵","bat":"🦇","goat":"🐐","sparkles":"✨","raised_hands":"🙌","facepalm":"🤦","shrug":"🤷","angry":"😡","yawn":"🥱","salute":"🫡","israel":"🇮🇱","middle_finger":"🖕","sweat_drops":"💦","pleading":"🥺","clown":"🤡","rich":"🤑","feet":"🦶","tongue":"👅","wheelchair":"♿","ninja":"🥷","sahur":"🗿"};' +
+    'var EMOJI={"sob":"😭","joy":"😂","rofl":"🤣","skull":"💀","fire":"🔥","heart":"❤️","broken_heart":"💔","100":"💯","pray":"🙏","eyes":"👀","sunglasses":"😎","thinking":"🤔","cry":"😢","sweat_smile":"😅","heart_eyes":"😍","smirk":"😏","wink":"😉","grin":"😁","upside_down":"🙃","melting":"🫠","clap":"👏","ok_hand":"👌","thumbsup":"👍","thumbsdown":"👎","poop":"💩","tada":"🎉","rocket":"🚀","star":"⭐","zzz":"😴","cold_face":"🥶","hot_face":"🥵","nauseated":"🤢","wave":"👋","muscle":"💪","brain":"🧠","moai":"🗿","wood":"🪵","bat":"🦇","goat":"🐐","sparkles":"✨","raised_hands":"🙌","facepalm":"🤦","shrug":"🤷","angry":"😡","yawn":"🥱","salute":"🫡","israel":"🇮🇱","middle_finger":"🖕","sweat_drops":"💦","pleading":"🥺","clown":"🤡","rich":"🤑","feet":"🦶","tongue":"👅","wheelchair":"♿","ninja":"🥷","sahur":"🗿","tung":"🏏"};' +
     'function emojify(t){return t.replace(/:([a-z0-9_+-]+):/g,function(m,c){return EMOJI[c]||m;});}' +
     'function insertTok(tok){var s=input.selectionStart,e=input.selectionEnd;if(s==null){s=e=input.value.length;}input.value=input.value.slice(0,s)+tok+" "+input.value.slice(e);var p=s+tok.length+1;input.focus();try{input.setSelectionRange(p,p);}catch(x){}}' +
     /* sahur shares the moai glyph, so show its real PNG in the picker instead —
@@ -1346,12 +1346,13 @@
     'function openOriginal(g){orighub.style.display="none";origplay.style.display="flex";origTitle.textContent=g.n;origframe.src=g.u;}' +
     'function buildOriginals(){orighub.innerHTML="";var lead=document.createElement("p");lead.className="origlead";lead.textContent="he made these himself. they are not kind.";orighub.appendChild(lead);var grid=document.createElement("div");grid.className="origgrid";ORIGINALS.forEach(function(g){var b=document.createElement("button");b.type="button";b.className="origtile";var t=document.createElement("strong");t.textContent=g.n;var s=document.createElement("span");s.textContent=g.s;b.appendChild(t);b.appendChild(s);b.addEventListener("click",function(){openOriginal(g);});grid.appendChild(b);});orighub.appendChild(grid);}' +
     'function filterCatalog(){var q=gsearch.value.toLowerCase();Array.prototype.forEach.call(playgrid.children,function(b){b.style.display=b.getAttribute("data-name").indexOf(q)>=0?"":"none";});}' +
-    /* ---- :sahur: inline svg + the tongue x3 + sahur combo embed ---- */
+    /* ---- :sahur: inline png, :tung: bat, tongue x3 sahur embed, tung x3 god embed ---- */
     'var SAHUR_IMG=TUNG_IMG;' +
     'function makeSahurSvg(){var i=document.createElement("img");i.className="isvg";i.alt=":sahur:";i.title=":sahur:";i.src=SAHUR_IMG;return i;}' +
     'function makeCombo(){var i=document.createElement("img");i.className="embed";i.alt="tung tung tung sahur";i.loading="lazy";i.src=TUNG_IMG;return i;}' +
+    'function makeGodCombo(){var i=document.createElement("img");i.className="embed god";i.alt="tung tung tung god";i.loading="lazy";i.src=TUNGGOD_IMG;return i;}' +
     'function renderInline(el,seg){var re=/:([a-z0-9_+-]+):/g,last=0,m;while((m=re.exec(seg))){if(m.index>last)el.appendChild(document.createTextNode(seg.slice(last,m.index)));var code=m[1];if(code==="sahur")el.appendChild(makeSahurSvg());else if(EMOJI[code])el.appendChild(document.createTextNode(EMOJI[code]));else el.appendChild(document.createTextNode(m[0]));last=re.lastIndex;}if(last<seg.length)el.appendChild(document.createTextNode(seg.slice(last)));}' +
-    'function renderBody(el,text){el.textContent="";var re=/:tongue:\\s*:tongue:\\s*:tongue:\\s*:sahur:/g;var parts=text.split(re);for(var i=0;i<parts.length;i++){renderInline(el,parts[i]);if(i<parts.length-1)el.appendChild(makeCombo());}}' +
+    'function renderBody(el,text){el.textContent="";var re=/:tongue:\\s*:tongue:\\s*:tongue:\\s*:sahur:|:tung:\\s*:tung:\\s*:tung:\\s*:sahur:/g;var last=0,m;while((m=re.exec(text))){renderInline(el,text.slice(last,m.index));el.appendChild(/^:tung:/.test(m[0])?makeGodCombo():makeCombo());last=re.lastIndex;}renderInline(el,text.slice(last));}' +
     /* ---- message replies + reactions (live-only, over the same relay) ---- */
     'var MSGS={};' +
     'var REACTS=["❤️","👍","👎","😂","😮","😢","🔥","🤡","🙏","💀"];' +
@@ -2701,6 +2702,7 @@
       '.flash{outline:2px solid #f2c063}' +
       '.isvg{height:1.7em;width:auto;vertical-align:-0.5em}' +
       '.embed{display:block;max-width:100%;max-height:240px;border-radius:8px;margin-top:3px}' +
+      '.embed.god{max-height:min(70vh,560px)}' +
       '#replybar{display:none;align-items:center;gap:8px;padding:6px 12px;background:#241505;border-top:1px solid #3a2410;font-size:12px;color:#c8823c}' +
       '#replybar b{color:#f5efe0}' +
       '#replybar .x{margin-left:auto;cursor:pointer;padding:2px 8px;background:#160d04;border:1px solid #3a2410;border-radius:6px}' +
