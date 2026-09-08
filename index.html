@@ -2481,22 +2481,50 @@
     var v=mount("Shop","🛒");VIEW="shop";
     var r=res(v);
     var listWrap=el("div",null,"");v.appendChild(listWrap);
-    listWrap.appendChild(el("div","casnote","loading shop..."));
-    jget("/shop/list?token="+encodeURIComponent(tok())).then(function(d){
+    function shopLoad(){
       listWrap.innerHTML="";
-      if(d.error){bad(r,d.error);return;}
-      setBal(d.balance);
-      if(!d.items||!d.items.length){listWrap.appendChild(el("div","casnote","the shelves are empty. tung hasn't stocked the shop yet."));return;}
-      d.items.forEach(function(it){
-        var box=el("div","shopitem");
-        var g=el("div","grow");g.appendChild(el("h4",null,it.name));if(it.desc)g.appendChild(el("p",null,it.desc));box.appendChild(g);
-        box.appendChild(el("div","price",money(it.price)+" sahurs"));
-        var buy=el("button","cbtn","redeem");
-        buy.onclick=function(){shopConfirm(it,buy);};
-        box.appendChild(buy);
-        listWrap.appendChild(box);
-      });
-    }).catch(function(){listWrap.innerHTML="";bad(r,"network error");});
+      listWrap.appendChild(el("div","casnote","loading shop..."));
+      jget("/shop/list?token="+encodeURIComponent(tok())).then(function(d){
+        listWrap.innerHTML="";
+        if(d.error){bad(r,d.error);return;}
+        setBal(d.balance);
+        var pending=d.pending||[];
+        var items=d.items||[];
+        if(!pending.length&&!items.length){
+          listWrap.appendChild(el("div","casnote","the shelves are empty. tung hasn't stocked the shop yet."));
+          return;
+        }
+        if(pending.length){
+          listWrap.appendChild(el("div","casnote","unfinished. you already paid. tung is still waiting."));
+          pending.forEach(function(p){
+            var box=el("div","shopitem wait");
+            var g=el("div","grow");
+            g.appendChild(el("h4",null,p.name||"offering"));
+            g.appendChild(el("p",null,"unfinished. tung is still waiting."));
+            if(p.output)g.appendChild(el("p",null,p.output));
+            box.appendChild(g);
+            box.appendChild(el("div","price","paid"));
+            var ans=el("button","cbtn","answer him");
+            ans.onclick=function(){shopCollect(p);};
+            box.appendChild(ans);
+            listWrap.appendChild(box);
+          });
+        }
+        if(items.length){
+          if(pending.length)listWrap.appendChild(el("div","casnote","the shelves"));
+          items.forEach(function(it){
+            var box=el("div","shopitem");
+            var g=el("div","grow");g.appendChild(el("h4",null,it.name));if(it.desc)g.appendChild(el("p",null,it.desc));box.appendChild(g);
+            box.appendChild(el("div","price",money(it.price)+" sahurs"));
+            var buy=el("button","cbtn","redeem");
+            buy.onclick=function(){shopConfirm(it,buy);};
+            box.appendChild(buy);
+            listWrap.appendChild(box);
+          });
+        }
+      }).catch(function(){listWrap.innerHTML="";bad(r,"network error");});
+    }
+    shopLoad();
     function shopPaintOut(text){
       var prev=v.querySelector(".shopout");if(prev)prev.remove();
       if(!text)return;
@@ -2511,11 +2539,13 @@
         if(rr.error){done(rr);return;}
         setBal(rr.balance);ok(r,"redeemed "+rr.item+". tung has been notified. he did not smile.");
         shopPaintOut(rr.output);
+        shopLoad();
         done(rr);
       }).catch(function(){buy.disabled=false;done({error:"network error"});});
     }
     /* buy first. the question field is a stranger until the sahurs have moved.
-       same tung-brown card as the tip overlay, two beats: pay, then speak. */
+       same tung-brown card as the tip overlay, two beats: pay, then speak.
+       walking away after pay must leave the owed question on the shelf. */
     function shopOverlay(spec){
       var old=document.getElementById("shopOverlay");
       if(old&&old.parentNode)old.parentNode.removeChild(old);
@@ -2534,8 +2564,9 @@
       var yes=el("button",null,spec.yes||"so be it");
       var no=el("button","ghost",spec.no||"walk away");
       function close(){if(ov.parentNode)ov.parentNode.removeChild(ov);}
-      no.onclick=close;
-      ov.addEventListener("click",function(ev){if(ev.target===ov)close();});
+      function walk(){close();if(spec.onNo)spec.onNo();}
+      no.onclick=walk;
+      ov.addEventListener("click",function(ev){if(ev.target===ov)walk();});
       yes.onclick=function(){
         var input=inp?String(inp.value||"").trim():"";
         if(inp&&!input){err.textContent="tung asked a question. you stared back. try again.";return;}
@@ -2556,24 +2587,28 @@
           shopRedeem(it,buy,function(rr){
             if(rr.error){api.err(rr.error==="insufficient"?"not enough sahurs. the shelves do not do credit.":rr.error);api.busy(false);return;}
             api.close();
-            if(rr.inputLabel)shopCollect(it,rr.inputLabel);
+            if(rr.pending)shopCollect(rr.pending);
           });
         }
       });
     }
-    function shopCollect(it,label){
+    function shopCollect(p){
       shopOverlay({
         title:"the shelves have you",
-        sub:"you already paid. tung does not do refunds. he does have a question.",
-        ask:label,
+        sub:"you already paid. the question remains. walk away and it will still be waiting on the shelf.",
+        ask:p.inputLabel,
+        yes:"answer him",
         onYes:function(input,api){
           api.busy(true);
-          jpost("/shop/tell",{itemId:it.id,input:input}).then(function(rr){
+          jpost("/shop/tell",{redeemId:p.id,itemId:p.itemId,input:input}).then(function(rr){
             if(rr.error){api.err(rr.error==="nothing to add"?"tung already heard you. or he never will.":rr.error);api.busy(false);return;}
             api.close();
             ok(r,"tung wrote it down. he did not smile.");
+            shopPaintOut(rr.output);
+            shopLoad();
           }).catch(function(){api.err("the shelves are silent.");api.busy(false);});
-        }
+        },
+        onNo:function(){shopLoad();}
       });
     }
   }
@@ -2952,6 +2987,7 @@
       '.card{min-width:38px;height:54px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;background:#f5efe0;color:#1d1206;border-radius:6px;border:1px solid #ccc}' +
       '.card.red{color:#b3261e}' +
       '.shopitem{display:flex;align-items:center;gap:12px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:12px 14px}' +
+      '.shopitem.wait{border-color:#c8823c}' +
       '.shopitem .grow{flex:1}' +
       '.shopitem h4{margin:0 0 2px;font-size:14px}' +
       '.shopitem p{margin:0;font-size:12px;color:#c8823c}' +

@@ -56,18 +56,35 @@ if (!paid.body?.ok) fail("redeem without input should still sell, got " + JSON.s
 if (paid.body.output !== OUTPUT) fail("output not returned after the sale: " + JSON.stringify(paid.body.output));
 if (paid.body.inputLabel !== LABEL) fail("sale must return inputLabel so the field can appear after pay");
 if (paid.body.balance !== 990) fail("balance should be 990 after a 10 redeem, got " + paid.body.balance);
+if (!paid.body.pending?.id || paid.body.pending.itemId !== idIO) {
+  fail("sale must return a pending redeem so they can finish later: " + JSON.stringify(paid.body.pending));
+}
+if (paid.body.pending.inputLabel !== LABEL || paid.body.pending.output !== OUTPUT) {
+  fail("pending must keep the question and the output: " + JSON.stringify(paid.body.pending));
+}
 
-const tooSoon = await post("/shop/tell", { token, itemId: idIO });
+// walking away is a client close. the owed answer must still be on the list.
+const listed = await j("/shop/list?token=" + encodeURIComponent(token));
+const owed = (listed.body.pending || []).find((p: { id: string }) => p.id === paid.body.pending.id);
+if (!owed) fail("unfinished redeem missing from /shop/list after pay: " + JSON.stringify(listed.body.pending));
+if (owed.output !== OUTPUT) fail("list pending must still carry the output");
+if (listed.body.balance !== 990) fail("listing unfinished redemptions must not charge again");
+
+const tooSoon = await post("/shop/tell", { token, redeemId: paid.body.pending.id, itemId: idIO });
 if (tooSoon.status !== 400 || tooSoon.body.error !== "input required") {
   fail("an empty tell should be refused, got " + JSON.stringify(tooSoon));
 }
-if ((await j("/shop/list?token=" + encodeURIComponent(token))).body.balance !== 990) {
-  fail("a refused tell must not charge again");
+if ((await j("/shop/list?token=" + encodeURIComponent(token))).body.pending?.length !== 1) {
+  fail("a refused tell must leave the unfinished redeem on the shelf");
 }
 
 const TYPED = "spooky#0001 <@everyone>";
-const told = await post("/shop/tell", { token, itemId: idIO, input: TYPED });
+const told = await post("/shop/tell", { token, redeemId: paid.body.pending.id, itemId: idIO, input: TYPED });
 if (!told.body?.ok) fail("tell after pay failed: " + JSON.stringify(told.body));
+if (told.body.output !== OUTPUT) fail("tell should still return the output: " + JSON.stringify(told.body.output));
+if ((await j("/shop/list?token=" + encodeURIComponent(token))).body.pending?.length) {
+  fail("answering must clear the unfinished redeem");
+}
 
 const twice = await post("/shop/tell", { token, itemId: idIO, input: "again" });
 if (twice.status !== 400 || twice.body.error !== "nothing to add") {

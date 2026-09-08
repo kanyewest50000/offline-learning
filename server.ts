@@ -55,6 +55,7 @@ const GAME_TTL = 6 * 60 * 60 * 1000;      // an abandoned in-progress hand self-
 //   ["mines", id]      -> mines board in progress
 //   ["beef", id]       -> beef (crash-chicken) walk in progress
 //   ["shopitem", itemId] -> {id,name,desc,price,active,ts}  a redeemable shop entry
+//   ["shoppend", uid, rid] -> unfinished redeem (paid, still owes an answer)
 // One active hand per game per user; starting a new one replaces the old.
 
 // crypto-strong float in [0,1).
@@ -230,6 +231,25 @@ function notifyRedeem(username: string, item: { name: string; price: number }, i
     // the input is untrusted text from a public kiosk: never let it ping.
     body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
   }).catch(() => {});
+}
+
+type ShopPending = {
+  id: string;
+  itemId: string;
+  name: string;
+  price: number;
+  inputLabel: string;
+  output: string;
+  ts: number;
+};
+
+async function listShopPending(uid: string): Promise<ShopPending[]> {
+  const rows: ShopPending[] = [];
+  for await (const e of kv.list<ShopPending>({ prefix: ["shoppend", uid] })) {
+    if (e.value) rows.push(e.value);
+  }
+  rows.sort((a, c) => a.ts - c.ts);
+  return rows;
 }
 
 // --- card helpers (blackjack) ---
@@ -1438,7 +1458,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // deno-lint-ignore no-explicit-any
     items.sort((a: any, c: any) => a.price - c.price);
     const bal = (await getCas(u.id)).bal;
-    return json({ items, balance: round2(bal) });
+    return json({ items, pending: await listShopPending(u.id), balance: round2(bal) });
   }
   if (req.method === "POST" && path === "/shop/redeem") {
     // deno-lint-ignore no-explicit-any
@@ -1456,8 +1476,20 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const price = round2(Number(it.value.price));
     const bal = await adjustBalance(u.id, -price);
     if (bal === null) return json({ error: "insufficient" }, 402);
+    let pending: ShopPending | null = null;
     if (inputLabel && !input) {
-      await kv.set(["shopask", u.id, it.value.id], { name: it.value.name, price }, { expireIn: 24 * 60 * 60 * 1000 });
+      // they paid. walking away must not lose the question — keep an owed
+      // redeem until they answer, and put it back on the shop list.
+      pending = {
+        id: rid(6),
+        itemId: it.value.id,
+        name: it.value.name,
+        price,
+        inputLabel,
+        output: String(it.value.output || ""),
+        ts: Date.now(),
+      };
+      await kv.set(["shoppend", u.id, pending.id], pending, { expireIn: CAS_TTL });
     }
     notifyRedeem(u.username, { name: it.value.name, price }, inputLabel ? input : "");
     return json({
@@ -1467,6 +1499,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       price,
       output: it.value.output || "",
       inputLabel,
+      pending,
     });
   }
   if (req.method === "POST" && path === "/shop/tell") {
@@ -1474,14 +1507,22 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
-    const itemId = clip(b.itemId, 32);
     const input = clip(b.input, 500);
-    if (!itemId || !input) return json({ error: "input required" }, 400);
-    const pending = await kv.get<{ name: string; price: number }>(["shopask", u.id, itemId]);
-    if (!pending.value) return json({ error: "nothing to add" }, 400);
-    await kv.delete(["shopask", u.id, itemId]);
-    notifyRedeem(u.username, { name: pending.value.name, price: pending.value.price }, input);
-    return json({ ok: true });
+    if (!input) return json({ error: "input required" }, 400);
+    const redeemId = clip(b.redeemId, 32);
+    const itemId = clip(b.itemId, 32);
+    let pending: ShopPending | null = null;
+    if (redeemId) {
+      const hit = await kv.get<ShopPending>(["shoppend", u.id, redeemId]);
+      pending = hit.value;
+    } else if (itemId) {
+      const owed = (await listShopPending(u.id)).filter((p) => p.itemId === itemId);
+      pending = owed[0] || null;
+    }
+    if (!pending) return json({ error: "nothing to add" }, 400);
+    await kv.delete(["shoppend", u.id, pending.id]);
+    notifyRedeem(u.username, { name: pending.name, price: pending.price }, input);
+    return json({ ok: true, output: pending.output || "" });
   }
 
   // ---------- admin: SET a player's balance (moderation tool) ----------
