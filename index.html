@@ -1346,13 +1346,12 @@
     'function openOriginal(g){orighub.style.display="none";origplay.style.display="flex";origTitle.textContent=g.n;origframe.src=g.u;}' +
     'function buildOriginals(){orighub.innerHTML="";var lead=document.createElement("p");lead.className="origlead";lead.textContent="he made these himself. they are not kind.";orighub.appendChild(lead);var grid=document.createElement("div");grid.className="origgrid";ORIGINALS.forEach(function(g){var b=document.createElement("button");b.type="button";b.className="origtile";var t=document.createElement("strong");t.textContent=g.n;var s=document.createElement("span");s.textContent=g.s;b.appendChild(t);b.appendChild(s);b.addEventListener("click",function(){openOriginal(g);});grid.appendChild(b);});orighub.appendChild(grid);}' +
     'function filterCatalog(){var q=gsearch.value.toLowerCase();Array.prototype.forEach.call(playgrid.children,function(b){b.style.display=b.getAttribute("data-name").indexOf(q)>=0?"":"none";});}' +
-    /* ---- :sahur: inline png, :tung: bat, tongue x3 sahur embed, tung x3 god embed ---- */
+    /* ---- :sahur: inline png, :tung: bat, tung x3 + sahur embeds the god ---- */
     'var SAHUR_IMG=TUNG_IMG;' +
     'function makeSahurSvg(){var i=document.createElement("img");i.className="isvg";i.alt=":sahur:";i.title=":sahur:";i.src=SAHUR_IMG;return i;}' +
-    'function makeCombo(){var i=document.createElement("img");i.className="embed";i.alt="tung tung tung sahur";i.loading="lazy";i.src=TUNG_IMG;return i;}' +
     'function makeGodCombo(){var i=document.createElement("img");i.className="embed god";i.alt="tung tung tung god";i.loading="lazy";i.src=TUNGGOD_IMG;return i;}' +
     'function renderInline(el,seg){var re=/:([a-z0-9_+-]+):/g,last=0,m;while((m=re.exec(seg))){if(m.index>last)el.appendChild(document.createTextNode(seg.slice(last,m.index)));var code=m[1];if(code==="sahur")el.appendChild(makeSahurSvg());else if(EMOJI[code])el.appendChild(document.createTextNode(EMOJI[code]));else el.appendChild(document.createTextNode(m[0]));last=re.lastIndex;}if(last<seg.length)el.appendChild(document.createTextNode(seg.slice(last)));}' +
-    'function renderBody(el,text){el.textContent="";var re=/:tongue:\\s*:tongue:\\s*:tongue:\\s*:sahur:|:tung:\\s*:tung:\\s*:tung:\\s*:sahur:/g;var last=0,m;while((m=re.exec(text))){renderInline(el,text.slice(last,m.index));el.appendChild(/^:tung:/.test(m[0])?makeGodCombo():makeCombo());last=re.lastIndex;}renderInline(el,text.slice(last));}' +
+    'function renderBody(el,text){el.textContent="";var re=/:tung:\\s*:tung:\\s*:tung:\\s*:sahur:/g;var last=0,m;while((m=re.exec(text))){renderInline(el,text.slice(last,m.index));el.appendChild(makeGodCombo());last=re.lastIndex;}renderInline(el,text.slice(last));}' +
     /* ---- message replies + reactions (live-only, over the same relay) ---- */
     'var MSGS={};' +
     'var REACTS=["❤️","👍","👎","😂","😮","😢","🔥","🤡","🙏","💀"];' +

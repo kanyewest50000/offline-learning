@@ -198,11 +198,6 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     i.className = "isvg"; i.alt = ":sahur:"; i.title = ":sahur:"; i.src = TUNG_IMG;
     return i;
   }
-  function makeCombo(){
-    var i = document.createElement("img");
-    i.className = "embed"; i.alt = "tung tung tung sahur"; i.loading = "lazy"; i.src = TUNG_IMG;
-    return i;
-  }
   function makeGodCombo(){
     var i = document.createElement("img");
     i.className = "embed god"; i.alt = "tung tung tung god"; i.loading = "lazy"; i.src = GOD_IMG;
@@ -222,11 +217,11 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   }
   function renderBody(el, text){
     el.textContent = "";
-    var re = /:tongue:\s*:tongue:\s*:tongue:\s*:sahur:|:tung:\s*:tung:\s*:tung:\s*:sahur:/g;
+    var re = /:tung:\s*:tung:\s*:tung:\s*:sahur:/g;
     var last = 0, m;
     while ((m = re.exec(text))) {
       renderInline(el, text.slice(last, m.index));
-      el.appendChild(/^:tung:/.test(m[0]) ? makeGodCombo() : makeCombo());
+      el.appendChild(makeGodCombo());
       last = re.lastIndex;
     }
     renderInline(el, text.slice(last));

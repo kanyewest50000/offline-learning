@@ -18,9 +18,12 @@ must(index.includes(":tung:\\\\s*:tung:\\\\s*:tung:\\\\s*:sahur:"), "shrine comb
 must(embed.includes(":tung:\\s*:tung:\\s*:tung:\\s*:sahur:"), "embed combo is :tung: x3 then :sahur:");
 must(index.includes("i.src=TUNGGOD_IMG"), "shrine god embed uses the injected god portrait");
 must(embed.includes("assets/tungtunggod.png"), "embed god embed points at tungtunggod.png");
-must(index.includes(".embed.god{max-height:min(70vh,560px)}"), "god portrait is larger than the sahur combo");
-must(embed.includes(".embed.god{max-height:min(70vh,560px)}"), "embed god portrait is larger than the sahur combo");
-must(index.includes(":tongue:\\\\s*:tongue:\\\\s*:tongue:\\\\s*:sahur:"), "the old tongue combo must still fire");
+must(index.includes(".embed.god{max-height:min(70vh,560px)}"), "god portrait is larger than an inline emoji");
+must(embed.includes(".embed.god{max-height:min(70vh,560px)}"), "embed god portrait is larger than an inline emoji");
+must(!index.includes(":tongue:\\\\s*:tongue:\\\\s*:tongue:\\\\s*:sahur:"), "the tongue combo must not embed a portrait");
+must(!embed.includes(":tongue:\\s*:tongue:\\s*:tongue:\\s*:sahur:"), "embed must not keep the tongue combo");
+must(!index.includes("function makeCombo()"), "shrine chat must not keep the old sahur combo helper");
+must(!embed.includes("function makeCombo()"), "embed chat must not keep the old sahur combo helper");
 
 const god = await Deno.stat(`${ROOT}/assets/tungtunggod.png`);
 must(god.isFile && god.size > 1000, "tungtunggod.png must ship with the repo");
