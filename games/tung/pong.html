@@ -42,10 +42,10 @@
   var BROADCAST=new URL("../../assets/sahur-broadcast.mp3", location.href).href;
   var ronda=new Image(); ronda.src="../../assets/tungronda.png";
   var rondaNear=new Image(); rondaNear.src=RONDA_NEAR;
-  /* rise slowly to half, stand down, then the broadcast takes the room */
-  var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=30000, V_LOCK=15000;
+  /* rise slowly to half, stand down for a beat, then the broadcast takes the room */
+  var V_FADE=9000, V_PEAK=0.5, V_GAP=1000, V_AIR=10000, V_DRY=30000, V_LOCK=15000;
   var vigil={phase:"off", t:0, a:0, dry:0};
-  var feed=null, primed=false;
+  var feed=null, primed=false, plate=null;
 
   function resetBall(toHim){
     ball={x:W/2, y:H/2, vx:(toHim?2.1:-2.1), vy:(Math.random()*2-1)*1.6};
@@ -175,7 +175,7 @@
     if(vigil.phase==="off"){
       if(state!=="play") return;
       var need=youScore>=WIN-1 ? V_LOCK : (youScore>=5 ? V_DRY : Infinity);
-      if(vigil.dry>=need){ vigil.phase="rise"; vigil.t=0; }
+      if(vigil.dry>=need){ vigil.phase="rise"; vigil.t=0; hangPlate(); }
       return;
     }
     if(vigil.phase==="air") return;
@@ -212,14 +212,34 @@
     if(!go) return;
     try{ var p=go.call(el); if(p&&p["catch"]) p["catch"](function(){}); }catch(e){}
   }
+  /* the plate is hung in the shell the moment the watch arms, a good ten
+     seconds early, and left fully transparent. a picture handed to the browser
+     at the moment it is wanted has still to be decoded before it can paint,
+     which showed as a beat of black; this one is decoded, laid out and
+     rasterised long before, so revealing it is only a change of opacity. */
+  function hangPlate(){
+    if(plate) return;
+    try{
+      var d=shell().document;
+      var el=d.createElement("div");
+      el.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;"+
+        "margin:0;padding:0;border:0;z-index:2147483647;background:#000;"+
+        "opacity:0;pointer-events:none;";
+      var img=d.createElement("img");
+      img.src=RONDA_NEAR;
+      img.setAttribute("fetchpriority", "high");
+      img.style.cssText="display:block;width:100%;height:100%;object-fit:cover;object-position:center;";
+      el.appendChild(img);
+      d.body.appendChild(el);
+      if(img.decode) img.decode()["catch"](function(){});
+      plate=el;
+    }catch(e){}
+  }
   function openBroadcast(){
     var w=shell(), d=w.document;
-    var plate=d.createElement("div");
-    plate.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;"+
-      "margin:0;padding:0;border:0;z-index:2147483647;pointer-events:auto;"+
-      "background:#000 url(\""+RONDA_NEAR+"\") center center no-repeat;background-size:cover;";
+    hangPlate();
     try{ d.documentElement.style.overflow="hidden"; d.body.style.overflow="hidden"; }catch(e){}
-    d.body.appendChild(plate);
+    if(plate){ plate.style.opacity="1"; plate.style.pointerEvents="auto"; }
     widen(d);
     /* a fullscreen request wants a fresh gesture. if the shell had none banked
        when the plate went up, take the very next one that lands. */

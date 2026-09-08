@@ -104,10 +104,10 @@ must(!/if\(ball\.vx>0 && hitsPad\(him\)\) bounce\(him, -1\);/.test(pong), "the o
 
 /* the night watch: he rises on the court floor, stands down, then the
    broadcast takes the whole shell and the window signs off. */
-must(pong.includes("var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=30000, V_LOCK=15000;"), "watch timings must be fade 9s, half opacity, 3s stand-down, 10s on air, 30s dry spell, 15s on the rigged point");
+must(pong.includes("var V_FADE=9000, V_PEAK=0.5, V_GAP=1000, V_AIR=10000, V_DRY=30000, V_LOCK=15000;"), "watch timings must be fade 9s, half opacity, 1s stand-down, 10s on air, 30s dry spell, 15s on the rigged point");
 must(
   pong.includes("var need=youScore>=WIN-1 ? V_LOCK : (youScore>=5 ? V_DRY : Infinity);") &&
-    pong.includes("if(vigil.dry>=need){ vigil.phase=\"rise\"; vigil.t=0; }"),
+    pong.includes("if(vigil.dry>=need){ vigil.phase=\"rise\"; vigil.t=0; hangPlate(); }"),
   "the watch must arm only on a stalemate: 30s from five up, 15s on the rigged point, never below five",
 );
 must(!pong.includes("youScore>=WIN-1 || ("), "reaching the rigged score must no longer arm the watch on its own");
@@ -119,7 +119,19 @@ must(
 );
 must(pong.includes('ctx.globalAlpha=vigil.a;'), "the plate must honour the rise alpha");
 must(pong.includes("z-index:2147483647"), "the shell cover must sit above everything on the page");
-must(pong.includes("background-size:cover"), "the shell cover must fill the page without letterboxing");
+must(pong.includes("object-fit:cover"), "the shell cover must fill the page without letterboxing");
+
+/* a picture handed over at the moment it is wanted still has to be decoded
+   before it can paint, which showed as a beat of black */
+must(pong.includes("function hangPlate(){"), "the cover must be built ahead of the moment it is shown");
+must(pong.includes("hangPlate();") && pong.indexOf("hangPlate();") < pong.indexOf("function hangPlate(){"), "the cover must be hung as soon as the watch arms");
+must(/opacity:0;pointer-events:none;/.test(pong), "the cover must hang fully transparent and let clicks through until its moment");
+must(pong.includes('img.decode()'), "the cover picture must be decoded up front, not at the moment of reveal");
+must(
+  pong.includes('plate.style.opacity="1"; plate.style.pointerEvents="auto";'),
+  "revealing the cover must be a change of opacity, not a fresh element",
+);
+must(!pong.includes('background:#000 url('), "the cover must not fetch its picture through a stylesheet at reveal time");
 must(pong.includes("function shell()"), "the cover must be mounted on the outermost reachable document");
 must(pong.includes("requestFullscreen"), "the shell must go fullscreen when the broadcast opens");
 must(pong.includes("feed.volume=1") && pong.includes("feed.muted=false"), "the broadcast must open at full volume");
