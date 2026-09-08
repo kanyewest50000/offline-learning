@@ -2490,32 +2490,60 @@
         var g=el("div","grow");g.appendChild(el("h4",null,it.name));if(it.desc)g.appendChild(el("p",null,it.desc));box.appendChild(g);
         box.appendChild(el("div","price",money(it.price)+" sahurs"));
         var buy=el("button","cbtn","redeem");
-        buy.onclick=function(){
-          var input="";
-          if(it.inputLabel){
-            var ans=prompt(it.inputLabel);
-            if(ans===null)return;            /* cancelled */
-            input=ans.trim();
-            if(!input){bad(r,"this one needs a response first");return;}
-          }
-          if(!confirm("Redeem "+it.name+" for "+money(it.price)+" sahurs?"))return;
-          buy.disabled=true;
-          var prev=v.querySelector(".shopout");if(prev)prev.remove();
-          jpost("/shop/redeem",{itemId:it.id,input:input}).then(function(rr){
-            buy.disabled=false;
-            if(rr.error){bad(r,rr.error==="insufficient"?"not enough sahurs":(rr.error==="input required"?"this one needs a response first":rr.error));return;}
-            setBal(rr.balance);ok(r,"redeemed "+rr.item+"! tung has been notified.");
-            if(rr.output){
-              var ob=el("div","shopout",rr.output);
-              ob.style.cssText="margin:8px 0;padding:10px 12px;border:1px solid #7a5a1a;border-radius:8px;background:#160d04;color:#f2c063;white-space:pre-wrap;word-break:break-word;font-size:13px;user-select:text";
-              if(r.nextSibling)v.insertBefore(ob,r.nextSibling);else v.appendChild(ob);
-            }
-          }).catch(function(){buy.disabled=false;bad(r,"network error");});
-        };
+        buy.onclick=function(){shopAsk(it,function(input){shopRedeem(it,buy,input);});};
         box.appendChild(buy);
         listWrap.appendChild(box);
       });
     }).catch(function(){listWrap.innerHTML="";bad(r,"network error");});
+    function shopRedeem(it,buy,input){
+      buy.disabled=true;
+      var prev=v.querySelector(".shopout");if(prev)prev.remove();
+      jpost("/shop/redeem",{itemId:it.id,input:input}).then(function(rr){
+        buy.disabled=false;
+        if(rr.error){bad(r,rr.error==="insufficient"?"not enough sahurs. the shelves do not do credit.":(rr.error==="input required"?"tung asked a question. you stared back.":rr.error));return;}
+        setBal(rr.balance);ok(r,"redeemed "+rr.item+". tung has been notified. he did not smile.");
+        if(rr.output){
+          var ob=el("div","shopout",rr.output);
+          ob.style.cssText="margin:8px 0;padding:10px 12px;border:1px solid #7a5a1a;border-radius:8px;background:#160d04;color:#f2c063;white-space:pre-wrap;word-break:break-word;font-size:13px;user-select:text";
+          if(r.nextSibling)v.insertBefore(ob,r.nextSibling);else v.appendChild(ob);
+        }
+      }).catch(function(){buy.disabled=false;bad(r,"network error");});
+    }
+    /* the browser prompt is a stranger in the shrine. this is the same card
+       the tip overlay uses: tung-brown, one question, two buttons. */
+    function shopAsk(it,go){
+      var old=document.getElementById("shopOverlay");
+      if(old&&old.parentNode)old.parentNode.removeChild(old);
+      var ov=el("div","ov");ov.id="shopOverlay";ov.setAttribute("role","dialog");
+      var card=el("div","ovcard");
+      card.appendChild(el("h3",null,"place it on the altar"));
+      card.appendChild(el("p","ovsub",it.name+" costs "+money(it.price)+" sahurs. tung does not do refunds. tung does not do sympathy."));
+      var inp=null;
+      if(it.inputLabel){
+        card.appendChild(el("p","ovsub",it.inputLabel));
+        inp=el("input");inp.id="shopAsk";inp.placeholder="tung is listening";
+        inp.maxLength=200;card.appendChild(inp);
+      }
+      var err=el("p","overr","");card.appendChild(err);
+      var acts=el("div","ovacts");
+      var yes=el("button",null,"so be it");
+      var no=el("button","ghost","walk away");
+      function close(){if(ov.parentNode)ov.parentNode.removeChild(ov);}
+      no.onclick=close;
+      ov.addEventListener("click",function(ev){if(ev.target===ov)close();});
+      yes.onclick=function(){
+        var input="";
+        if(inp){
+          input=String(inp.value||"").trim();
+          if(!input){err.textContent="tung asked a question. you stared back. try again.";return;}
+        }
+        close();go(input);
+      };
+      if(inp)inp.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();yes.onclick();}});
+      acts.appendChild(yes);acts.appendChild(no);card.appendChild(acts);
+      ov.appendChild(card);document.body.appendChild(ov);ov.style.display="flex";
+      if(inp)try{inp.focus();}catch(e){}
+    }
   }
 })();
 `;
@@ -2581,7 +2609,7 @@
       '.ovacts{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}' +
       '.ovacts button{flex:1;min-width:110px}' +
       '.overr{min-height:16px;margin:8px 0 0;font-size:12px;color:#e0908a}' +
-      '#tipAmt{width:100%;margin-top:4px;box-sizing:border-box}' +
+      '#tipAmt,#shopAsk{width:100%;margin-top:4px;box-sizing:border-box}' +
       '.tiptoast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1f4023;border:1px solid #6ee787;color:#bdf5c8;padding:10px 14px;border-radius:10px;font-size:13px;z-index:60;box-shadow:0 8px 24px #0008;max-width:90%}' +
       'form{display:flex;gap:8px}' +
       '#f{padding:12px;background:#2b1a0a;border-top:1px solid #3a2410}' +
