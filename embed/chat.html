@@ -85,9 +85,8 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   </div>
   <div id="loginView">
     <h2>log in</h2>
-    <p>username + the key you copied from the shrine.</p>
+    <p>the key you copied from the shrine.</p>
     <form id="loginForm">
-      <input id="lu" autocomplete="username" placeholder="username">
       <input id="lk" autocomplete="off" placeholder="login key">
       <button id="loginBtn" type="submit">log in</button>
     </form>
@@ -97,7 +96,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   <div id="pendingView">
     <h2>application pending</h2>
     <p>tung is reviewing your submission.</p>
-    <p class="hint">save this key — you need it to log in here later (username + key). keep it secret.</p>
+    <p class="hint">save this key — you need it to log in here later. keep it secret.</p>
     <code id="myhash"></code>
     <p class="hint">once youre approved, this window will open the chat on its own.</p>
     <div id="appThread"></div>
@@ -147,7 +146,6 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   var loginForm = document.getElementById("loginForm");
   var gu = document.getElementById("gu");
   var ga = document.getElementById("ga");
-  var lu = document.getElementById("lu");
   var lk = document.getElementById("lk");
   var applyBtn = document.getElementById("applyBtn");
   var loginBtn = document.getElementById("loginBtn");
@@ -429,13 +427,13 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   });
   loginForm.addEventListener("submit", function(ev){
     ev.preventDefault();
-    var u = lu.value.trim(), k = lk.value.trim();
-    if (!u || !k) { loginWarn.textContent = "enter your username and key."; return; }
+    var k = lk ? lk.value.trim() : "";
+    if (!k) { loginWarn.textContent = "enter your login key."; return; }
     loginBtn.disabled = true; loginWarn.textContent = "logging in...";
-    apiPost("/login", { username:u, token:k }).then(function(r){
+    apiPost("/login", { token:k }).then(function(r){
       loginBtn.disabled = false;
       if (r && r.token) { saveToken(r.token); TOKEN = r.token; loginWarn.textContent = ""; refreshGate(); }
-      else loginWarn.textContent = "username and key do not match.";
+      else loginWarn.textContent = "that key is not known to the shrine.";
     }).catch(function(){ loginBtn.disabled = false; loginWarn.textContent = "network error, try again."; });
   });
   document.getElementById("toLogin").addEventListener("click", function(){ show("login"); });

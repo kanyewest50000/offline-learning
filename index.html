@@ -1235,7 +1235,6 @@
     'var myhash=document.getElementById("myhash");' +
     'var copyHashBtn=document.getElementById("copyHash");' +
     'var exportKeyBtn=document.getElementById("exportKey");' +
-    'var lu=document.getElementById("lu");' +
     'var lk=document.getElementById("lk");' +
     'var loginBtn=document.getElementById("loginBtn");' +
     'var log=document.getElementById("log");' +
@@ -1443,7 +1442,7 @@
     'if(profEl)profEl.addEventListener("click",function(ev){if(ev.target===profEl)profEl.style.display="none";});' +
     'if(tipEl)tipEl.addEventListener("click",function(ev){if(ev.target===tipEl)tipEl.style.display="none";});' +
     'if(keyEl)keyEl.addEventListener("click",function(ev){if(ev.target===keyEl){keyEl.style.display="none";pendingCopyBtn=null;}});' +
-    'if(loginBtn)loginBtn.addEventListener("click",function(){var u=lu.value.trim(),k=lk.value.trim();if(!u||!k){applyWarn("enter your username and key.");return;}loginBtn.disabled=true;applyWarn("logging in...");apiPost("/login",{username:u,token:k}).then(function(r){loginBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;applyWarn("");refreshGate();}else{applyWarn("username and key do not match.");}}).catch(function(){loginBtn.disabled=false;applyWarn("network error, try again.");});});' +
+    'if(loginBtn)loginBtn.addEventListener("click",function(){var k=lk?lk.value.trim():"";if(!k){applyWarn("enter your login key.");return;}loginBtn.disabled=true;applyWarn("logging in...");apiPost("/login",{token:k}).then(function(r){loginBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;applyWarn("");refreshGate();}else{applyWarn("that key is not known to the shrine.");}}).catch(function(){loginBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'if(lk)lk.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();if(loginBtn)loginBtn.click();}});' +
     'respBtn.addEventListener("click",function(){var t=respText.value.trim();if(!t)return;respText.value="";apiPost("/respond",{token:TOKEN,text:t}).then(function(r){if(r&&r.thread)renderThread(r.thread);});});' +
     'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:ME,text:text,mine:true,reply:rep});apiPost("/send",{token:TOKEN,id:id,text:text,reply:rep});cancelReply();});' +
@@ -2789,14 +2788,13 @@
       '<textarea id="ga" rows="4" placeholder="your application — real name, how you found us, why tung should bless you"></textarea>' +
       '<button id="applyBtn" type="submit">apply</button>' +
       '</form><p class="warn">heads up — your username is permanent. you cannot change it later.</p>' +
-      '<div id="loginBox"><p class="hint">already a member? log in with your username and key.</p>' +
-      '<input id="lu" autocomplete="username" placeholder="username">' +
+      '<div id="loginBox"><p class="hint">already a member? log in with your key.</p>' +
       '<input id="lk" autocomplete="off" placeholder="login key">' +
       '<button id="loginBtn" type="button">log in</button></div></div>' +
       '<div id="pendingView">' +
       '<h2>application pending</h2>' +
       '<p>tung is reviewing your submission.</p>' +
-      '<p class="hint">save this key — it is your login (username + key) for the embedded chat and other devices. keep it secret.</p>' +
+      '<p class="hint">save this key — it is your login for the embedded chat and other devices. keep it secret.</p>' +
       '<code id="myhash"></code>' +
       '<p class="hint">once youre approved, reload the site and reopen the shrine.</p>' +
       '<div id="appThread"></div>' +
