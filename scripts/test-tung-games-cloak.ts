@@ -44,6 +44,9 @@ must(flappy.includes("var GRAV=0.16, FLAP=-4.0, GAP=168, PW=54, SPEED=1.28, SPAW
 must(flappy.includes("window.__tungHiDPI"), "flappy must use the HiDPI backing store");
 
 must(fit.includes("data-logical-w"), "HiDPI fit must scale from logical size");
+must(fit.includes("clientWidth"), "HiDPI backing store must track the CSS box");
+must(fit.includes("devicePixelRatio"), "HiDPI backing store must use the display DPR");
+must(!fit.includes("Math.min(2.5"), "HiDPI must not cap the backing store at 2.5x logical size");
 
 const bird = await Deno.readFile(`${ROOT}/assets/flappy-tung-bird.png`);
 must(bird.byteLength > 8000, "composed bird sprite is missing or tiny");
