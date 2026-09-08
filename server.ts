@@ -36,14 +36,14 @@ const TTL_MS = 14 * 24 * 60 * 60 * 1000; // messages auto-expire after 2 weeks
 // ---------------------------------------------------------------------------
 // Tung's Casino — FUN-MONEY ONLY. "Sahurs" have no cash value, cannot be bought,
 // and cannot be cashed out. Sahurs normally enter circulation only through the
-// Shrine of Sahur faucet (a free claim every 4h). Admins can VIEW balances and,
+// Shrine of Sahur faucet (a free claim every 2h). Admins can VIEW balances and,
 // as a moderation tool (e.g. resetting an exploiter who found a bug), SET a
 // balance to an exact value via /admin/setbal — an explicit, key-gated action.
 // Every outcome is decided here on the server with crypto RNG, so nothing about a
 // bet, a shuffle, a mine layout, or a crash point is manipulable from the client.
 const HOUSE = 0.999;                      // 0.1% house edge baked into fair payouts (blackjack has its own fixed payouts and is unaffected)
 const FAUCET_AMOUNT = 10;                 // sahurs per claim
-const FAUCET_INTERVAL = 4 * 60 * 60 * 1000; // every 4 hours
+const FAUCET_INTERVAL = 2 * 60 * 60 * 1000; // every 2 hours
 const MIN_BET = 0.1;                      // smallest allowed wager
 const MAX_BET = 100000;                   // sanity cap
 const CAS_TTL = 400 * 24 * 60 * 60 * 1000;   // balances persist ~13 months of inactivity

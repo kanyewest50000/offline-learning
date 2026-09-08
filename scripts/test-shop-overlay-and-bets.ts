@@ -64,4 +64,9 @@ must(server.includes('path === "/shop/tell"'), "typed answers land on /shop/tell
 must(server.includes('["shoppend", u.id, pending.id]'), "a pending question is stored only after they have paid");
 must(server.includes("pending: await listShopPending(u.id)"), "the shop list must return unfinished redemptions");
 
+must(server.includes("const FAUCET_INTERVAL = 2 * 60 * 60 * 1000"), "the shrine faucet is every 2 hours");
+must(index.includes("free sahurs, on the house. every 2 hours."), "ready shrine copy must name the two-hour pour");
+must(index.includes("tung already blessed you. he does not pour twice in two hours. sit."), "cooldown copy must not pretend the blessing lasts all day");
+must(!index.includes("blessed you today"), "a two-hour faucet must not say tung blessed you today");
+
 console.log("shop overlay, admin output CSS, and wager copy checks passed");

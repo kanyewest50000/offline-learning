@@ -1629,13 +1629,13 @@
       var now=Date.now();
       if(me.canClaim||!me.nextClaim||now>=me.nextClaim){
         claim.disabled=false;claim.textContent="claim "+(me.faucetAmount||10)+" sahurs";
-        sub.textContent="free sahurs, on the house. every 4 hours.";clearTimer();
+        sub.textContent="free sahurs, on the house. every 2 hours.";clearTimer();
       }else{
         claim.disabled=true;
         var s=Math.max(0,Math.floor((me.nextClaim-now)/1000));
         var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;
         claim.textContent="next claim in "+h+"h "+(m<10?"0":"")+m+"m "+(ss<10?"0":"")+ss+"s";
-        sub.textContent="tung tung god has already blessed you today. come back later.";
+        sub.textContent="tung already blessed you. he does not pour twice in two hours. sit.";
       }
     }
     claim.disabled=true;claim.textContent="consulting the shrine...";
