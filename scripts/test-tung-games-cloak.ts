@@ -56,5 +56,8 @@ const ihdr = new TextDecoder().decode(png.slice(12, 16));
 must(ihdr === "IHDR", "Bird PNG header is corrupt");
 const colorType = png[25];
 must(colorType === 6, "composed bird must be RGBA so the black field can be transparent");
+const width = (png[16] << 24) | (png[17] << 16) | (png[18] << 8) | png[19];
+const height = (png[20] << 24) | (png[21] << 16) | (png[22] << 8) | png[23];
+must(width >= 300 && height >= 200, "composed bird crop is unexpectedly small");
 
 console.log("tung games + cloak checks passed");
