@@ -26,7 +26,13 @@
   if(window.__tungHiDPI) window.__tungHiDPI(c, ctx, W, H);
   var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
   var you, him, ball, youScore, himScore, state, spin;
-  var PW=28, PH=100, BR=12, WIN=7, PLACE=2.0;
+  var PW=28, PH=100, BR=12, WIN=7;
+  /* how far off the horizontal a return goes, from where on the paddle it
+     landed. the second term keeps that angle honest as the ball speeds up. */
+  var ANG=6.5, ANGV=0.30;
+  /* no single move may be wider than this, or the ball can cross a paddle
+     between two frames without ever being tested against it */
+  var SUBSTEP=8;
 
   /* ---- the night watch ----
      the pos ronda plates and the overnight sahur broadcast. absolute URLs:
@@ -57,18 +63,39 @@
     if(state==="win" || state==="lose") reset();
   }
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  /* where on the paddle it lands sets the angle, so the player aims by choosing
+     which part of the bat to meet it with. the angle scales with the ball's
+     speed: on a fixed vertical kick a fast ball flies flatter and flatter, which
+     makes it easier to reach the quicker it gets — backwards, and the reason a
+     long rally used to have no way of ending. */
   function bounce(p, dir){
-    var rel=((ball.y)-(p.y+PH/2))/(PH/2);
+    var rel=clamp(((ball.y)-(p.y+PH/2))/(PH/2), -1, 1);
     ball.vx=dir*(Math.abs(ball.vx)+0.48);
-    ball.vy=rel*4.0;
+    ball.vy=rel*(ANG+Math.abs(ball.vx)*ANGV);
     spin+=dir*0.4;
   }
-  /* he does not merely return it, he puts it where the player is not. this is
-     what ends a rally: without it both paddles just keep returning until the
-     ball outruns them both, and a point takes a minute to settle. */
-  function place(){
-    var away=(you.y+PH/2)<H/2 ? 1 : -1;
-    ball.vy=away*PLACE + ball.vy*0.3;
+  /* one frame of travel, cut into steps no wider than SUBSTEP. moving the whole
+     frame at once and then asking whether the ball overlaps a paddle only ever
+     sees where it landed, so once it covered more ground per frame than a
+     paddle is wide it passed straight through and scored. */
+  function travel(){
+    var n=Math.max(1, Math.ceil(Math.max(Math.abs(ball.vx), Math.abs(ball.vy))/SUBSTEP));
+    for(var i=0;i<n;i++){
+      ball.x+=ball.vx/n; ball.y+=ball.vy/n; spin+=ball.vx*0.01/n;
+      if(ball.y<BR || ball.y>H-BR){ ball.vy*=-1; ball.y=clamp(ball.y, BR, H-BR); }
+      if(ball.vx<0 && hitsPad(you)) bounce(you, 1);
+      if(ball.vx>0){
+        if(youScore>=WIN-1){
+          /* the point he is not allowed to concede. his whole face is the wall,
+             at any speed, and he returns it flat: he is not trying to win, he
+             is refusing to lose. */
+          if(ball.x+BR>him.x){ ball.x=him.x-BR; bounce(him, -1); }
+        } else if(hitsPad(him)){
+          bounce(him, -1);
+        }
+      }
+      if(ball.x<-20 || ball.x>W+20) break;
+    }
   }
   function hitsPad(p){
     return ball.x+BR>p.x && ball.x-BR<p.x+PW && ball.y+BR>p.y && ball.y-BR<p.y+PH;
@@ -81,13 +108,13 @@
       him.y=clamp(target, minY, maxY);
       return;
     }
-    /* below the rigged point he is beatable but not generous: the sway that
-       makes him miss narrows from 22px to 9px across the climb, and he chases
-       harder the closer the player gets. */
+    /* his bat is slow to begin with and quickens as the player climbs — that is
+       the difficulty, not accuracy. the sway never leaves him at any score, so
+       there is always a way through. only the branch above has neither. */
     var heat=youScore/Math.max(1, WIN-1);
     var follow=0.06+heat*0.12;
-    var maxStep=2.4+heat*2.6;
-    var wobble=9+(1-heat)*13;
+    var maxStep=1.4+heat*4.5;
+    var wobble=30+(1-heat)*14;
     var desired;
     if(ball.vx>0){
       desired=target+Math.sin(Date.now()/240)*wobble;
@@ -105,21 +132,8 @@
     vigilStep(dt);
     if(state==="play"){
       you.y=clamp(you.y+you.vy, 8, H-PH-8);
-      ball.x+=ball.vx; ball.y+=ball.vy; spin+=ball.vx*0.01;
-      if(ball.y<BR || ball.y>H-BR){ ball.vy*=-1; ball.y=clamp(ball.y, BR, H-BR); }
       aiMove();
-      if(ball.vx<0 && hitsPad(you)) bounce(you, 1);
-      if(ball.vx>0){
-        if(youScore>=WIN-1){
-          /* the point he is not allowed to concede. his whole face is the wall,
-             at any speed — no gap for a fast ball to slip through — and he
-             returns it flat. he is not trying to win, he is refusing to lose. */
-          if(ball.x+BR>him.x){ ball.x=him.x-BR; bounce(him, -1); }
-        } else if(hitsPad(him)){
-          bounce(him, -1);
-          place();
-        }
-      }
+      travel();
       if(ball.x<-20){ himScore++; vigil.dry=0; if(himScore>=WIN) state="lose"; else { state="idle"; resetBall(true); } }
       if(ball.x>W+20){ youScore++; vigil.dry=0; if(youScore>=WIN) state="win"; else { state="idle"; resetBall(false); } }
     }

@@ -35,7 +35,7 @@ must(index.includes("eat. lengthen. forget why."), "originals list must use the 
 must(snake.includes("var STEP=180;"), "snake step must be slower than 120ms");
 must(snake.includes("window.__tungHiDPI"), "snake must use the HiDPI backing store");
 
-must(pong.includes("var PW=28, PH=100, BR=12, WIN=7,"), "pong paddles must be larger rectangles");
+must(pong.includes("var PW=28, PH=100, BR=12, WIN=7;"), "pong paddles must be larger rectangles");
 must(pong.includes("vx:(toHim?2.1:-2.1)"), "pong serve must be slower than 3.2");
 must(pong.includes("ball.vx=dir*(Math.abs(ball.vx)+0.48)"), "pong ball must accelerate faster with no top-speed cap");
 must(!pong.includes("Math.min(5.6"), "pong ball speed must be uncapped");
@@ -60,12 +60,31 @@ must(flappy.includes('ctx.fillStyle="#1d1206"'), "fallen card must be opaque so 
 /* pong difficulty: the climb has to stay winnable up to the sixth point.
    his reach is capped and his sway never reaches zero, so he can always be
    made to miss — except on the rigged point, where he tracks the ball exactly. */
-must(pong.includes("var follow=0.06+heat*0.12;"), "pong AI must chase the ball hard");
-must(pong.includes("var maxStep=2.4+heat*2.6;"), "pong AI reach must widen as the score climbs");
-must(pong.includes("var wobble=9+(1-heat)*13;"), "pong AI sway must narrow to 9px but never reach zero");
-must(pong.includes("PLACE=2.0"), "he must put the ball away from the player, or a point never settles");
-must(pong.includes("var away=(you.y+PH/2)<H/2 ? 1 : -1;"), "placement must aim at the half the player is not in");
-must(/\} else if\(hitsPad\(him\)\)\{\s*bounce\(him, -1\);\s*place\(\);/.test(pong), "placement must ride on his ordinary return");
+must(pong.includes("var follow=0.06+heat*0.12;"), "pong AI must close on the ball steadily");
+must(pong.includes("var maxStep=1.4+heat*4.5;"), "his bat must start slow and quicken as the score climbs");
+must(pong.includes("var wobble=30+(1-heat)*14;"), "the sway must stay with him at every score below the rigged point");
+must(!pong.includes("PLACE"), "he must not aim his return away from the player; the angle is the player's to set");
+
+/* the ball is steered by where on the bat it lands, and that angle has to hold
+   up as it speeds up or a fast ball flies flatter than a slow one */
+must(pong.includes("var ANG=6.5, ANGV=0.30;"), "the return angle must come from the contact point and scale with speed");
+must(pong.includes("ball.vy=rel*(ANG+Math.abs(ball.vx)*ANGV);"), "the vertical kick must scale with the ball's speed");
+must(!pong.includes("ball.vy=rel*4.0;"), "a fixed vertical kick flattens the ball out as it accelerates");
+must(pong.includes("var rel=clamp(((ball.y)-(p.y+PH/2))/(PH/2), -1, 1);"), "contact off the end of the bat must not exceed a full-edge hit");
+
+/* the ball must never cross a paddle without being tested against it */
+must(pong.includes("var SUBSTEP=8;"), "no single move may be wider than a fraction of a paddle");
+must(pong.includes("function travel(){"), "a frame of travel must be cut into steps");
+must(
+  pong.includes("var n=Math.max(1, Math.ceil(Math.max(Math.abs(ball.vx), Math.abs(ball.vy))/SUBSTEP));"),
+  "the number of steps must follow the ball's speed, vertical travel included",
+);
+must(pong.includes("ball.x+=ball.vx/n; ball.y+=ball.vy/n;"), "each step must move only its share of the frame");
+must(!/ball\.x\+=ball\.vx; ball\.y\+=ball\.vy;/.test(pong), "the ball must not be moved a whole frame in one jump");
+must(
+  pong.indexOf("aiMove();") < pong.indexOf("travel();"),
+  "he must commit his bat for the frame before the ball is moved through it",
+);
 
 /* the rigged point: his whole face is the wall at any speed, so a fast ball
    cannot slip through the gap between frames, and he returns it flat */
