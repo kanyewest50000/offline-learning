@@ -26,25 +26,28 @@
   var tung=new Image(); tung.src="../../assets/tungtungtungsahur.png";
   var god=new Image(); god.src="../../assets/tungtunggod.png";
   var evil=new Image(); evil.src="../../assets/eviltungtungtungsahur.jpg";
-  var snake, dir, next, food, cursed, score, best, state, tickAcc, last, clock;
-  var warn, foe, nextFoeAt, deathKind;
+  var snake, dir, next, food, gods, warns, foes, score, best, state, tickAcc, last, clock;
+  var nextFoeAt, deathKind;
   try{best=parseInt(localStorage.getItem("sahur-snake-best")||"0",10)||0;}catch(e){best=0;}
   var STEP=180;
   var DEMO=/\bdemo\b/.test(location.search||"");
   var WARN_MS=DEMO?900:2600;
   var FOE_MIN=DEMO?200:3500, FOE_SPAN=DEMO?0:3500;
-  var STAY_MIN=6500, STAY_SPAN=3500;
 
   function onSnake(x,y){
     for(var i=0;i<snake.length;i++) if(snake[i].x===x && snake[i].y===y) return true;
     return false;
   }
+  function onList(list,x,y){
+    for(var i=0;i<list.length;i++) if(list[i].x===x && list[i].y===y) return i;
+    return -1;
+  }
   function reserved(x,y){
     if(onSnake(x,y)) return true;
     if(food && food.x===x && food.y===y) return true;
-    if(cursed && cursed.x===x && cursed.y===y) return true;
-    if(warn && warn.x===x && warn.y===y) return true;
-    if(foe && foe.x===x && foe.y===y) return true;
+    if(onList(gods,x,y)>=0) return true;
+    if(onList(warns,x,y)>=0) return true;
+    if(onList(foes,x,y)>=0) return true;
     return false;
   }
   function firstFree(){
@@ -72,11 +75,11 @@
   function scheduleFoe(now){
     nextFoeAt=now+FOE_MIN+Math.random()*FOE_SPAN;
   }
-  function clearHazard(){ warn=null; foe=null; nextFoeAt=0; }
+  function clearHazard(){ warns=[]; foes=[]; nextFoeAt=0; }
   function reset(){
     snake=DEMO?[{x:2,y:9},{x:1,y:9},{x:0,y:9}]:[{x:8,y:9},{x:7,y:9},{x:6,y:9}];
     dir={x:1,y:0}; next={x:1,y:0};
-    food=null; cursed=null; score=0; state="idle"; tickAcc=0; deathKind="self";
+    food=null; gods=[]; score=0; state="idle"; tickAcc=0; deathKind="self";
     clearHazard();
     food=emptyCell();
     if(DEMO && food && food.x===14 && food.y===9) food={x:8,y:3};
@@ -101,13 +104,17 @@
     var head={x:snake[0].x+dir.x, y:snake[0].y+dir.y};
     if(head.x<0||head.y<0||head.x>=N||head.y>=N){ die("wall"); return; }
     for(var i=0;i<snake.length;i++) if(snake[i].x===head.x && snake[i].y===head.y){ die("self"); return; }
-    if(foe && head.x===foe.x && head.y===foe.y){ die("evil"); return; }
+    if(onList(foes, head.x, head.y)>=0){ die("evil"); return; }
     snake.unshift(head);
+    var godAt=onList(gods, head.x, head.y);
     if(food && head.x===food.x && head.y===food.y){
       score+=1; food=emptyCell();
-      if(score%3===0) cursed=emptyCell();
-    } else if(cursed && head.x===cursed.x && head.y===cursed.y){
-      score+=5; cursed=null;
+      if(score%3===0){
+        var extra=emptyCell();
+        if(extra) gods.push(extra);
+      }
+    } else if(godAt>=0){
+      score+=5; gods.splice(godAt,1);
       snake.reverse();
       if(snake.length>1){
         dir={x:snake[0].x-snake[1].x, y:snake[0].y-snake[1].y};
@@ -164,10 +171,10 @@
       ctx.fillStyle=((x+y)%2)? "#1d1206":"#241505";
       ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
     }
-    if(warn) drawWarn(warn.x, warn.y);
+    for(var w=0;w<warns.length;w++) drawWarn(warns[w].x, warns[w].y);
     if(food) sprite(tung, food.x, food.y);
-    if(cursed) sprite(god, cursed.x, cursed.y);
-    if(foe) drawFoe(foe.x, foe.y);
+    for(var g=0;g<gods.length;g++) sprite(god, gods[g].x, gods[g].y);
+    for(var f=0;f<foes.length;f++) drawFoe(foes[f].x, foes[f].y);
     for(var i=snake.length-1;i>=0;i--){
       var s=snake[i];
       if(i===0) sprite(tung, s.x, s.y);
@@ -223,29 +230,19 @@
   function updateHazard(now){
     if(state!=="play") return;
     if(!nextFoeAt) scheduleFoe(now);
-    if(warn){
-      if(now>=warn.until){
-        if(!onSnake(warn.x, warn.y) && !(food && food.x===warn.x && food.y===warn.y) && !(cursed && cursed.x===warn.x && cursed.y===warn.y)){
-          foe={x:warn.x, y:warn.y, until:now+STAY_MIN+Math.random()*STAY_SPAN};
-        }
-        warn=null;
-        if(!foe) scheduleFoe(now);
+    for(var i=warns.length-1;i>=0;i--){
+      if(now<warns[i].until) continue;
+      var w=warns[i];
+      warns.splice(i,1);
+      if(!onSnake(w.x, w.y) && !(food && food.x===w.x && food.y===w.y) && onList(gods,w.x,w.y)<0 && onList(foes,w.x,w.y)<0){
+        foes.push({x:w.x, y:w.y});
       }
-      return;
-    }
-    if(foe){
-      if(now>=foe.until){
-        foe=null;
-        scheduleFoe(now);
-      }
-      return;
     }
     if(now>=nextFoeAt){
+      scheduleFoe(now);
       var cell=pickClearCell();
       if(cell && !onSnake(cell.x, cell.y)){
-        warn={x:cell.x, y:cell.y, until:now+WARN_MS};
-      } else {
-        scheduleFoe(now);
+        warns.push({x:cell.x, y:cell.y, until:now+WARN_MS});
       }
     }
   }
@@ -286,9 +283,11 @@
         return {
           state:state, score:score, best:best, deathKind:deathKind, N:N,
           snake:snake.map(function(p){return {x:p.x,y:p.y};}),
-          warn:warn&&{x:warn.x,y:warn.y},
-          foe:foe&&{x:foe.x,y:foe.y},
-          food:food&&{x:food.x,y:food.y}
+          warn:warns[0]&&{x:warns[0].x,y:warns[0].y},
+          foe:foes[0]&&{x:foes[0].x,y:foes[0].y},
+          food:food&&{x:food.x,y:food.y},
+          gods:gods.map(function(p){return {x:p.x,y:p.y};}),
+          foes:foes.map(function(p){return {x:p.x,y:p.y};})
         };
       },
       start:start,
@@ -300,12 +299,12 @@
       pickClearCell:pickClearCell,
       placeWarn:function(x,y,until){
         if(onSnake(x,y)) return false;
-        foe=null; warn={x:x,y:y,until:until||0};
+        warns.push({x:x,y:y,until:until||0});
         return true;
       },
       placeFoe:function(x,y){
         if(onSnake(x,y)) return false;
-        warn=null; foe={x:x,y:y,until:1e15};
+        foes.push({x:x,y:y});
         return true;
       }
     };
