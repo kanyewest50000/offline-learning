@@ -45,7 +45,7 @@ for (let i = 1; i <= 80; i++) {
   const sent = await j("/send", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token, id: tag + "-" + i, text: "hist " + i }),
+    body: JSON.stringify({ token, key: ADMIN, id: tag + "-" + i, text: "hist " + i }),
   });
   if (!sent.body?.ok) fail("send " + i + " failed: " + JSON.stringify(sent.body));
 }
