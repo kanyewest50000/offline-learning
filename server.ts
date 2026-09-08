@@ -199,15 +199,18 @@ async function casUser(token: unknown): Promise<any | null> {
 }
 
 // post a shop redemption to the chat webhook (best-effort, never blocks the reply)
-function notifyRedeem(username: string, item: { name: string; price: number }) {
+function notifyRedeem(username: string, item: { name: string; price: number }, input?: string) {
   if (!WEBHOOK) return;
+  let content = "🛒 **shop redemption**\nuser: **" + username + "**\nitem: **" +
+    item.name + "**\ncost: **" + item.price + " sahurs**";
+  // whatever the buyer typed rides along verbatim, fenced so its own markdown
+  // cannot reshape the message.
+  if (input) content += "\ninput:\n```\n" + input.replace(/```/g, "ʼʼʼ") + "\n```";
   fetch(WEBHOOK, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      content: "🛒 **shop redemption**\nuser: **" + username + "**\nitem: **" +
-        item.name + "**\ncost: **" + item.price + " sahurs**",
-    }),
+    // the input is untrusted text from a public kiosk: never let it ping.
+    body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
   }).catch(() => {});
 }
 
@@ -1373,7 +1376,17 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const items: unknown[] = [];
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["shopitem"] })) {
-      if (e.value.active) items.push({ id: e.value.id, name: e.value.name, desc: e.value.desc, price: e.value.price });
+      // inputLabel is shipped so the buyer can be prompted; output is held back
+      // until they actually redeem (it may be a code or a one-time reward).
+      if (e.value.active) {
+        items.push({
+          id: e.value.id,
+          name: e.value.name,
+          desc: e.value.desc,
+          price: e.value.price,
+          inputLabel: e.value.inputLabel || "",
+        });
+      }
     }
     // deno-lint-ignore no-explicit-any
     items.sort((a: any, c: any) => a.price - c.price);
@@ -1388,11 +1401,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // deno-lint-ignore no-explicit-any
     const it = await kv.get<any>(["shopitem", clip(b.itemId, 32)]);
     if (!it.value || !it.value.active) return json({ error: "unavailable" }, 404);
+    // if the item asks for something typed, it must be there before anyone is
+    // charged — validate first so a missing response never spends sahurs.
+    const inputLabel = String(it.value.inputLabel || "").trim();
+    const input = clip(b.input, 500);
+    if (inputLabel && !input) return json({ error: "input required", inputLabel }, 400);
     const price = round2(Number(it.value.price));
     const bal = await adjustBalance(u.id, -price);
     if (bal === null) return json({ error: "insufficient" }, 402);
-    notifyRedeem(u.username, { name: it.value.name, price });
-    return json({ ok: true, balance: round2(bal), item: it.value.name, price });
+    notifyRedeem(u.username, { name: it.value.name, price }, inputLabel ? input : "");
+    return json({ ok: true, balance: round2(bal), item: it.value.name, price, output: it.value.output || "" });
   }
 
   // ---------- admin: SET a player's balance (moderation tool) ----------
@@ -1452,11 +1470,15 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!name || !(price >= 0)) return json({ error: "name + price required" }, 400);
     const id = clip(b.id, 32) || rid(6);
     const active = b.active !== false;
+    // inputLabel: what the buyer is asked to type (blank = no prompt).
+    // output: what they are shown after redeeming (blank = nothing extra).
+    const inputLabel = clip(b.inputLabel, 80);
+    const output = clip(b.output, 1000);
     // deno-lint-ignore no-explicit-any
     const existing = await kv.get<any>(["shopitem", id]);
     const ts = existing.value?.ts || Date.now();
-    await kv.set(["shopitem", id], { id, name, desc, price, active, ts });
-    return json({ ok: true, item: { id, name, desc, price, active, ts } });
+    await kv.set(["shopitem", id], { id, name, desc, price, active, ts, inputLabel, output });
+    return json({ ok: true, item: { id, name, desc, price, active, ts, inputLabel, output } });
   }
   if (req.method === "POST" && path === "/admin/shop/delete") {
     // deno-lint-ignore no-explicit-any
@@ -1825,7 +1847,7 @@ function refreshShop(){
   }).catch(function(){shop.innerHTML='<div class="empty">network error.</div>';});
 }
 function itemCard(it){
-  it=it||{name:"",desc:"",price:0,active:true};
+  it=it||{name:"",desc:"",price:0,active:true,inputLabel:"",output:""};
   var el=document.createElement("div");el.className="app";
   var r1=document.createElement("div");r1.className="row";
   var name=document.createElement("input");name.className="uname";name.placeholder="item name";name.value=it.name||"";name.maxLength=60;
@@ -1834,21 +1856,27 @@ function itemCard(it){
   var r2=document.createElement("div");r2.className="row";
   var desc=document.createElement("input");desc.className="uname";desc.placeholder="description (optional)";desc.value=it.desc||"";desc.maxLength=200;
   r2.appendChild(desc);el.appendChild(r2);
+  var r2b=document.createElement("div");r2b.className="row";
+  var inputLabel=document.createElement("input");inputLabel.className="uname";inputLabel.placeholder="ask the buyer for… (optional, e.g. your Discord tag)";inputLabel.value=it.inputLabel||"";inputLabel.maxLength=80;
+  r2b.appendChild(inputLabel);el.appendChild(r2b);
+  var r2c=document.createElement("div");r2c.className="row";
+  var output=document.createElement("textarea");output.className="uname";output.placeholder="shown to them after they redeem (optional, e.g. a code)";output.value=it.output||"";output.maxLength=1000;output.rows=2;output.style.cssText="resize:vertical;font-family:inherit";
+  r2c.appendChild(output);el.appendChild(r2c);
   var r3=document.createElement("div");r3.className="row";
   var lab=document.createElement("label");lab.style.cssText="display:flex;align-items:center;gap:6px;color:#e9d9c2;font-size:14px";
   var chk=document.createElement("input");chk.type="checkbox";chk.checked=it.active!==false;chk.style.flex="0";
   lab.appendChild(chk);lab.appendChild(document.createTextNode("visible in shop"));
   var save=document.createElement("button");save.className="load";save.textContent=it.id?"save":"create";
-  save.onclick=function(){saveItem(it.id,name.value.trim(),desc.value.trim(),price.value,chk.checked,el);};
+  save.onclick=function(){saveItem(it.id,name.value.trim(),desc.value.trim(),price.value,chk.checked,inputLabel.value.trim(),output.value,el);};
   r3.appendChild(lab);r3.appendChild(save);
   if(it.id){var del=document.createElement("button");del.className="no";del.textContent="delete";del.onclick=function(){deleteItem(it.id,it.name);};r3.appendChild(del);}
   el.appendChild(r3);
   return el;
 }
-function saveItem(id,name,desc,price,active,card){
+function saveItem(id,name,desc,price,active,inputLabel,output,card){
   if(!name){alert("item needs a name");return;}
   if(!(Number(price)>=0)){alert("price must be 0 or more");return;}
-  fetch("/admin/shop/set",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id||"",name:name,desc:desc,price:Number(price),active:active})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshShop();});
+  fetch("/admin/shop/set",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id||"",name:name,desc:desc,price:Number(price),active:active,inputLabel:inputLabel,output:output})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshShop();});
 }
 function deleteItem(id,name){
   if(!confirm("Delete shop item: "+name+" ?"))return;

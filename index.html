@@ -2337,12 +2337,25 @@
         box.appendChild(el("div","price",money(it.price)+" sahurs"));
         var buy=el("button","cbtn","redeem");
         buy.onclick=function(){
+          var input="";
+          if(it.inputLabel){
+            var ans=prompt(it.inputLabel);
+            if(ans===null)return;            /* cancelled */
+            input=ans.trim();
+            if(!input){bad(r,"this one needs a response first");return;}
+          }
           if(!confirm("Redeem "+it.name+" for "+money(it.price)+" sahurs?"))return;
           buy.disabled=true;
-          jpost("/shop/redeem",{itemId:it.id}).then(function(rr){
+          var prev=v.querySelector(".shopout");if(prev)prev.remove();
+          jpost("/shop/redeem",{itemId:it.id,input:input}).then(function(rr){
             buy.disabled=false;
-            if(rr.error){bad(r,rr.error==="insufficient"?"not enough sahurs":rr.error);return;}
+            if(rr.error){bad(r,rr.error==="insufficient"?"not enough sahurs":(rr.error==="input required"?"this one needs a response first":rr.error));return;}
             setBal(rr.balance);ok(r,"redeemed "+rr.item+"! tung has been notified.");
+            if(rr.output){
+              var ob=el("div","shopout",rr.output);
+              ob.style.cssText="margin:8px 0;padding:10px 12px;border:1px solid #7a5a1a;border-radius:8px;background:#160d04;color:#f2c063;white-space:pre-wrap;word-break:break-word;font-size:13px;user-select:text";
+              if(r.nextSibling)v.insertBefore(ob,r.nextSibling);else v.appendChild(ob);
+            }
           }).catch(function(){buy.disabled=false;bad(r,"network error");});
         };
         box.appendChild(buy);
