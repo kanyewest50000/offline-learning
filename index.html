@@ -1629,7 +1629,7 @@
       var now=Date.now();
       if(me.canClaim||!me.nextClaim||now>=me.nextClaim){
         claim.disabled=false;claim.textContent="claim "+(me.faucetAmount||10)+" sahurs";
-        sub.textContent="free sahurs, on the house. every 20 hours.";clearTimer();
+        sub.textContent="free sahurs, on the house. every 4 hours.";clearTimer();
       }else{
         claim.disabled=true;
         var s=Math.max(0,Math.floor((me.nextClaim-now)/1000));
