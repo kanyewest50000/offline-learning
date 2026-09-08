@@ -42,6 +42,14 @@ must(pong.includes("window.__tungHiDPI"), "pong must use the HiDPI backing store
 must(flappy.includes('birdImg.src="../../assets/flappy-tung-bird.png"'), "flappy must use the sahur-filled OG bird");
 must(flappy.includes("var GRAV=0.16, FLAP=-4.0, GAP=168, PW=54, SPEED=1.28, SPAWN=200;"), "flappy gravity must be lighter and pipes further apart");
 must(flappy.includes("window.__tungHiDPI"), "flappy must use the HiDPI backing store");
+must(
+  /state==="dead"\)\{\s*drawBird\(\);\s*overlay\("fallen"/.test(flappy),
+  "fallen overlay must paint after the bird so collision text stays readable",
+);
+must(
+  !/else if\(state==="dead"\) overlay\("fallen"/.test(flappy),
+  "fallen overlay must not be painted before the bird",
+);
 
 must(fit.includes("data-logical-w"), "HiDPI fit must scale from logical size");
 must(fit.includes("clientWidth"), "HiDPI backing store must track the CSS box");

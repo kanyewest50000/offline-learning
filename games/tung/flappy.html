@@ -169,9 +169,15 @@
     ctx.fillText(String(score), W/2, 42);
     ctx.fillStyle="#8a6a3a"; ctx.font="11px system-ui";
     ctx.fillText("best "+best, W/2, 60);
-    if(state==="idle") overlay("Flappy Tung", "the air does not hold him. he holds the air.");
-    else if(state==="dead") overlay("fallen", "he stopped disagreeing. the ground finished the sentence.");
-    drawBird();
+    if(state==="idle"){
+      overlay("Flappy Tung", "the air does not hold him. he holds the air.");
+      drawBird();
+    } else if(state==="dead"){
+      drawBird();
+      overlay("fallen", "he stopped disagreeing. the ground finished the sentence.");
+    } else {
+      drawBird();
+    }
     requestAnimationFrame(tick);
   }
   function onDown(ev){ ev.preventDefault(); flap(); }
