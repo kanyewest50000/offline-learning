@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-net --allow-env
 // Regression: token-only shrine auth still works after POST /login exists.
-// Username is NOT required for /status, /events, or /send.
+// Username is NOT required for /status, /events, /send, or /login.
 //
 // Usage (server already running):
 //   ADMIN_KEY=devadminkey API=http://127.0.0.1:8002 deno run --allow-net --allow-env scripts/test-token-auth.ts
@@ -62,21 +62,29 @@ if (!sent.body?.ok) fail("/send token-only: " + JSON.stringify(sent.body));
 const loginOk = await j("/login", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ username: user, token }),
+  body: JSON.stringify({ token }),
 });
 if (loginOk.body.token !== token) fail("POST /login should return the same token");
 if (loginOk.body.status !== "approved") fail("POST /login status: " + JSON.stringify(loginOk.body));
+if (loginOk.body.username !== user) fail("POST /login username: " + JSON.stringify(loginOk.body));
 
-const loginBad = await j("/login", {
+const loginWithName = await j("/login", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ username: "not-" + user, token }),
 });
-if (loginBad.status !== 401) fail("mismatched username should 401, got " + loginBad.status);
+if (loginWithName.body.token !== token) fail("extra username must not block a valid key");
+
+const loginNoKey = await j("/login", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ username: user }),
+});
+if (loginNoKey.status !== 401) fail("missing key should 401, got " + loginNoKey.status);
 
 const none = await j("/status?token=definitely-not-a-token");
 if (none.body.status !== "none") fail("unknown token should be status none");
 
-console.log("PASS token-only /status /events /send; /login still checks username");
+console.log("PASS token-only /status /events /send /login");
 console.log("user=" + user);
 console.log("token=" + token);

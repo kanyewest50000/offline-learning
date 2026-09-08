@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * UI regression: shrine-token-v1 on the main shrine opens chat (no username+key).
- * Embed without a token still demands username + key via POST /login.
+ * Embed without a token still demands the login key via POST /login.
  *
  * Env:
  *   API          backend origin (default http://127.0.0.1:8010)
@@ -163,7 +163,7 @@ async function main() {
     console.log("approved token restore", JSON.stringify(after, null, 2));
     if (after.chat.display !== "flex") fail("chat not shown for stored token");
     if (after.gate.display === "flex") fail("apply/login gate shown to returning token user");
-    if (after.loginBox.display !== "none") fail("username+key box shown to returning token user");
+    if (after.loginBox.display !== "none") fail("login-key box shown to returning token user");
     if (after.name !== approved.user) fail("chat username expected " + approved.user + " got " + after.name);
     if (after.token !== approved.token) fail("stored token was rotated or cleared");
 
@@ -223,15 +223,15 @@ async function main() {
       return login && getComputedStyle(login).display !== "none" && login.offsetParent !== null;
     });
     if (deadTok !== approved.token) fail("unreachable API cleared the stored token");
-    if (deadLogin) fail("unreachable API showed username+key to a token holder");
+    if (deadLogin) fail("unreachable API showed login-key box to a token holder");
     console.log("dead API left token intact");
 
-    // Embed without token: username+key required.
+    // Embed without token: login key required.
     const embed = await browser.newPage();
     await embed.goto(SITE + "/embed/chat.html?api=" + encodeURIComponent(API), {
       waitUntil: "domcontentloaded",
     });
-    await embed.waitForSelector("#lu, #loginView", { timeout: 10000 });
+    await embed.waitForSelector("#lk, #loginView", { timeout: 10000 });
     const embedGate = await embed.evaluate(() => {
       const login = document.getElementById("loginView");
       const apply = document.getElementById("applyView");
@@ -240,15 +240,16 @@ async function main() {
         login: login ? getComputedStyle(login).display : null,
         apply: apply ? getComputedStyle(apply).display : null,
         chat: chat ? getComputedStyle(chat).display : null,
+        hasUserField: !!document.getElementById("lu"),
       };
     });
     console.log("embed without token", embedGate);
     if (embedGate.chat === "flex") fail("embed opened chat without credentials");
+    if (embedGate.hasUserField) fail("embed login still asks for a username");
 
     const toLogin = await embed.$("#toLogin");
     if (toLogin && embedGate.login !== "block") await toLogin.click();
-    await embed.waitForSelector("#lu", { timeout: 5000 });
-    await embed.type("#lu", approved.user);
+    await embed.waitForSelector("#lk", { timeout: 5000 });
     await embed.type("#lk", approved.token);
     await embed.click("#loginBtn");
     await embed.waitForFunction(() => {
@@ -257,7 +258,7 @@ async function main() {
     }, { timeout: 15000 });
     const embedName = await embed.$eval("#u", (el) => el.value);
     if (embedName !== approved.user) fail("embed login username " + embedName);
-    console.log("embed username+key login OK");
+    console.log("embed key-only login OK");
 
     console.log("PASS shrine token restore; pending restore; no-token apply; embed login");
   } finally {
