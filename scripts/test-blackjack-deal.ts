@@ -29,7 +29,7 @@ function extractFunction(name: string): string {
 if (!src.includes("var BJ_DEAL_MS=400;")) {
   fail("opening deal gap must be 400ms");
 }
-if (!src.includes("window.setTimeout(tick,BJ_DEAL_MS)")) {
+if (!src.includes("t0+n*BJ_DEAL_MS") || !src.includes("window.setTimeout(tick,wait)")) {
   fail("cards must be dealt through a 400ms timeout, not all at once");
 }
 if (!src.includes('q.push({t:"D",c:"??"});')) {

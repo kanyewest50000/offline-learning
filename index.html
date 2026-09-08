@@ -2263,13 +2263,17 @@
     }
     function playQueue(q,done){
       var n=0;
+      var t0=Date.now();
       function tick(){
         dealTimer=null;
         if(!table.isConnected)return;    // left the table part way through a round
         if(n>=q.length){done();return;}
-        bjApplyShown(shown,q[n++]);
+        bjApplyShown(shown,q[n]);
+        n+=1;
         renderShown();
-        dealTimer=window.setTimeout(tick,BJ_DEAL_MS);
+        // schedule from t0 so a slow paint cannot collapse the 0.4s gaps
+        var wait=Math.max(0,(t0+n*BJ_DEAL_MS)-Date.now());
+        dealTimer=window.setTimeout(tick,wait);
       }
       tick();
     }
@@ -2852,15 +2856,17 @@
          face is hidden. Squeezing scaleX through zero and swapping the faces at
          the halfway point reads the same and has no 3D context to lose.
          There is no stagger here: the table deals the cards one at a time, so a
-         card element only ever exists once its turn has come. */
+         card element only ever exists once its turn has come. The flip is the
+         same 0.4s as the gap, so one card finishes landing before the next is
+         created — overlapping 0.5s flips on a 0.4s beat read as one pile. */
       '.pcard{width:98px;height:138px;position:relative;flex:0 0 auto}' +
-      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;animation:dealIn .5s cubic-bezier(.3,.8,.4,1) both}' +
+      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;animation:dealIn .4s cubic-bezier(.3,.8,.4,1) both}' +
       '.pcface{position:absolute;left:0;top:0;right:0;bottom:0;' +
       'border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;box-shadow:0 8px 20px #0008}' +
-      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;opacity:0;animation:faceIn .5s both}' +
+      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;opacity:0;animation:faceIn .4s both}' +
       '.pcfront.red{color:#b3261e}' +
       '.pcback{background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border:1px solid #7a5a1a;font-size:30px;' +
-      'animation:faceOut .5s both}' +
+      'animation:faceOut .4s both}' +
       /* the dealer hole card just drops in and stays face down */
       '.pcard.hole .pcinner{animation-name:dealBack}' +
       '.pcard.hole .pcback{animation:none;opacity:1}' +
