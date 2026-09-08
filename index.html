@@ -2017,10 +2017,8 @@
 
   /* ---------- BLACKJACK ---------- */
   /* a card with a back and a front; the deal animation spins it face-up */
-  function cardEl(c,delay){
+  function cardEl(c){
     var wrap=el("div","pcard"+(c==="??"?" hole":""));
-    // stagger lives on the card so the faces and the squeeze stay in step
-    if(delay)wrap.style.setProperty("--d",delay.toFixed(2)+"s");
     var inner=el("div","pcinner");
     var back=el("div","pcface pcback","♠");
     var front=el("div","pcface pcfront");
@@ -2029,7 +2027,7 @@
       front.textContent=c;
     }
     inner.appendChild(back);inner.appendChild(front);
-    wrap.appendChild(inner);wrap._inner=inner;
+    wrap.appendChild(inner);
     return wrap;
   }
   /* one icon per action so the buttons read at a glance */
@@ -2042,6 +2040,107 @@
     s.appendChild(sv("rect",{x:"11",y:"7",width:"9",height:"13",rx:"2",fill:"none",stroke:"currentColor","stroke-width":"2",opacity:".55"}));return s;}
   function icoSplit(){var s=icoBox();s.appendChild(strokePath("M12 20v-6"));s.appendChild(strokePath("M12 14l-5-5"));s.appendChild(strokePath("M12 14l5-5"));return s;}
   function bjBtn(cls,label,icon){var b=el("button","bjbtn "+cls);b.appendChild(icon);b.appendChild(el("span",null,label));return b;}
+  /* The server only ever reports the total of a finished hand, so a hand that is
+     still being dealt has to be counted here: aces are 11 until that busts, and
+     the hole card is worth nothing while it is still face down. */
+  function bjCardValue(c){
+    var r=c.slice(0,c.length-1);
+    if(r==="A")return 11;
+    if(r==="K"||r==="Q"||r==="J"||r==="10")return 10;
+    return Number(r)||0;
+  }
+  function bjTotal(cards){
+    var total=0,aces=0;
+    cards.forEach(function(c){
+      if(c==="??")return;
+      var v=bjCardValue(c);total+=v;if(v===11)aces++;
+    });
+    while(total>21&&aces>0){total-=10;aces--;}
+    return total;
+  }
+  var BJ_DEAL_MS=400;                  // beat between one card landing and the next
+  function bjCopyShown(shown){
+    return {dealer:shown.dealer.slice(),hands:shown.hands.map(function(h){return h.slice();})};
+  }
+  function bjApplyShown(shown,ev){
+    if(ev.t==="D"){
+      if(typeof ev.at==="number")shown.dealer[ev.at]=ev.c;
+      else shown.dealer.push(ev.c);
+    }else{
+      if(!shown.hands[ev.h])shown.hands[ev.h]=[];
+      if(typeof ev.at==="number")shown.hands[ev.h][ev.at]=ev.c;
+      else shown.hands[ev.h].push(ev.c);
+    }
+  }
+  /* Server order is [upcard, hole, ...hits]. The table deals the hole first, so
+     the face-down card sits on the left and the upcard on the right. */
+  function bjDealerView(d){
+    var src=d.dealer||[];
+    if(!src.length)return [];
+    if(d.state!=="done")return ["??",src[0]];
+    if(src.length===1)return src.slice();
+    return [src[1],src[0]].concat(src.slice(2));
+  }
+  function bjSameCards(a,b){
+    if(!a||!b||a.length!==b.length)return false;
+    for(var i=0;i<a.length;i++)if(a[i]!==b[i])return false;
+    return true;
+  }
+  function bjSyncSplits(shown,d){
+    if(!d.hands)return;
+    while(shown.hands.length<d.hands.length){
+      var k=0;
+      while(k<shown.hands.length&&bjSameCards(shown.hands[k],d.hands[k].cards))k++;
+      var moved=(k<shown.hands.length&&shown.hands[k].length)?shown.hands[k].pop():null;
+      shown.hands.splice(Math.min(k+1,shown.hands.length),0,moved?[moved]:[]);
+    }
+  }
+  function bjIsOpening(shown){
+    return shown.dealer.length===0&&shown.hands.every(function(h){return !h.length;});
+  }
+  function bjPrepareShown(shown,d){
+    var cur=bjCopyShown(shown);
+    if(!bjIsOpening(cur))bjSyncSplits(cur,d);
+    return cur;
+  }
+  /* Opening deal is always you, hole, you, upcard. Anything after that — a hit,
+     the hole turning over, the dealer drawing to 17 — is appended in that order
+     so the renderer can sleep BJ_DEAL_MS between each card. */
+  function bjDealQueue(shown,d){
+    var cur=bjPrepareShown(shown,d);
+    var q=[];
+    if(bjIsOpening(shown)){
+      var p=(d.hands[0]&&d.hands[0].cards)||[];
+      var up=(d.dealer&&d.dealer[0])||"";
+      if(p[0])q.push({t:"P",h:0,c:p[0]});
+      q.push({t:"D",c:"??"});
+      if(p[1])q.push({t:"P",h:0,c:p[1]});
+      if(up)q.push({t:"D",c:up});
+      q.forEach(function(ev){bjApplyShown(cur,ev);});
+    }else{
+      (d.hands||[]).forEach(function(h,i){
+        if(!cur.hands[i])cur.hands[i]=[];
+        (h.cards||[]).forEach(function(c,j){
+          if(cur.hands[i][j]!==c){
+            var ev={t:"P",h:i,c:c};
+            if(cur.hands[i][j]!==undefined)ev.at=j;
+            q.push(ev);
+            bjApplyShown(cur,ev);
+          }
+        });
+      });
+    }
+    bjDealerView(d).forEach(function(c,j){
+      if(cur.dealer[j]!==c){
+        var ev={t:"D",c:c};
+        if(cur.dealer[j]!==undefined)ev.at=j;
+        q.push(ev);
+        bjApplyShown(cur,ev);
+      }
+    });
+    return q;
+  }
+  window.__bj={DEAL_MS:BJ_DEAL_MS,dealerView:bjDealerView,dealQueue:bjDealQueue,apply:bjApplyShown,prepare:bjPrepareShown,total:bjTotal};
   function viewBlackjack(){
     var v=mount("Blackjack",icoBlackjack());
     var bet=betField("1");
@@ -2061,56 +2160,79 @@
     var r=el("div","bjres","");v.appendChild(r);
     function setRes(cls,txt){r.className="bjres"+(cls?" "+cls:"");r.textContent=txt;}
 
-    /* Only cards that actually changed get re-dealt; the rest snap to their
-       final face, so hitting doesn't replay the whole hand's animation. The
-       dealer's hole card still flips when it is finally revealed, and a fresh
-       split hand deals in on its own. */
-    var prevD=[],prevH=[];
-    function paintCards(wrap,cards,prev){
-      wrap.innerHTML="";
-      var n=0;
-      cards.forEach(function(c,i){
-        var fresh=prev[i]!==c;
-        var e=cardEl(c,fresh?(n++*0.13):0);
-        if(!fresh){                       // already on the table: snap to its final face
-          e._inner.style.animation="none";e._inner.style.transform="none";
-          var f=e.querySelector(".pcfront"),b=e.querySelector(".pcback");
-          f.style.animation="none";b.style.animation="none";
-          f.style.opacity=(c==="??")?"0":"1";
-          b.style.opacity=(c==="??")?"1":"0";
-        }
-        wrap.appendChild(e);
+    /* One reply carries everything that just happened — after a stand that is
+       the hole card plus every card the dealer draws on top of it. Laying all of
+       it down at once hands the player the result before they have seen a single
+       card, so only the cards already on the felt are painted. Fresh ones wait
+       BJ_DEAL_MS behind the last. The result line, the balance, the payout toast
+       and the next set of buttons all wait for the last card to land. */
+    var shown={dealer:[],hands:[[]]};
+    var handUI=[];
+    var dealTimer=null;
+    var live=null;                       // server snapshot for the hand in motion
+
+    /* Cards keep their DOM node between paints, because rebuilding one that is
+       already on the table would restart its deal animation. Only positions that
+       actually changed are replaced — which is also what gives the hole card its
+       flip, since "??" turning into a real card counts as a change. */
+    function paintCards(wrap,cards){
+      var keep=0;
+      while(keep<cards.length&&keep<wrap.children.length&&wrap.children[keep]._card===cards[keep])keep++;
+      while(wrap.children.length>keep)wrap.removeChild(wrap.lastChild);
+      for(var i=keep;i<cards.length;i++){
+        var e=cardEl(cards[i]);e._card=cards[i];wrap.appendChild(e);
+      }
+    }
+    function ensureHands(){
+      while(handUI.length<shown.hands.length){
+        var ui={box:el("div","bjhand"),tag:el("div","bjhtag"),val:el("div","bjval","-"),wrap:el("div","bjcards")};
+        ui.box.appendChild(ui.tag);ui.box.appendChild(ui.val);ui.box.appendChild(ui.wrap);
+        phands.appendChild(ui.box);
+        handUI.push(ui);
+      }
+    }
+    function dealerShownValue(){
+      var vis=shown.dealer.some(function(c){return c!=="??";});
+      return vis?String(bjTotal(shown.dealer)):"?";
+    }
+    function renderShown(){
+      ensureHands();
+      var multi=shown.hands.length>1||(live&&live.hands&&live.hands.length>1);
+      paintCards(dcards,shown.dealer);
+      dval.textContent=shown.dealer.length?dealerShownValue():"-";
+      phands.className="bjhands"+(multi?" multi":"");
+      shown.hands.forEach(function(cards,i){
+        var ui=handUI[i];if(!ui)return;
+        ui.tag.style.display=multi?"":"none";
+        ui.tag.className="bjhtag";
+        ui.tag.textContent="hand "+(i+1);
+        ui.val.textContent=cards.length?String(bjTotal(cards)):"-";
+        paintCards(ui.wrap,cards);
       });
+      plab.textContent=multi?("your hands ("+shown.hands.length+")"):"you";
+    }
+    function stopDeal(){if(dealTimer){clearTimeout(dealTimer);dealTimer=null;}}
+    function clearTable(){
+      stopDeal();
+      shown={dealer:[],hands:[[]]};
+      handUI=[];live=null;
+      dcards.innerHTML="";phands.innerHTML="";acts.innerHTML="";
+      dval.textContent="-";plab.textContent="you";
+      table.classList.remove("bjdealing");
     }
     var LABEL={blackjack:"BLACKJACK!",win:"you win!",dealer_bust:"dealer busts - you win!",push:"push - bet returned",lose:"dealer wins",bust:"you bust",dealer_blackjack:"dealer blackjack"};
-    function renderHands(d){
+
+    // every card is down, so the round can now be given away
+    function settle(d){
       var multi=d.hands.length>1;
-      phands.className="bjhands"+(multi?" multi":"");
-      phands.innerHTML="";
-      d.hands.forEach(function(h,i){
-        var live=d.state==="playing"&&i===d.active;
-        var box=el("div","bjhand"+(live?" active":"")+(h.done&&d.state!=="playing"?" settled":""));
-        if(multi){
-          var cls=h.result?((h.payout>h.bet)?"win":(h.result==="push"?"":"lose")):"";
-          var tag=el("div","bjhtag"+(cls?" "+cls:""),h.result?(LABEL[h.result]||h.result):("hand "+(i+1)));
-          box.appendChild(tag);
+      handUI.forEach(function(ui,i){
+        var hd=d.hands[i];if(!hd)return;
+        ui.box.className="bjhand"+(d.state==="playing"&&i===d.active?" active":"")+(hd.done&&d.state!=="playing"?" settled":"");
+        if(multi&&hd.result){
+          ui.tag.className="bjhtag"+((hd.payout>hd.bet)?" win":(hd.result==="push"?"":" lose"));
+          ui.tag.textContent=LABEL[hd.result]||hd.result;
         }
-        box.appendChild(el("div","bjval",String(h.value)));
-        var cw=el("div","bjcards");
-        paintCards(cw,h.cards,prevH[i]||[]);
-        box.appendChild(cw);
-        phands.appendChild(box);
       });
-      prevH=d.hands.map(function(h){return h.cards.slice();});
-    }
-    function paint(d){
-      // the server sends an authoritative balance on every reply — reflect it as
-      // we go, so the stake taken by a split or a double shows up immediately
-      if(typeof d.balance==="number")setBal(d.balance);
-      paintCards(dcards,d.dealer,prevD);prevD=d.dealer.slice();
-      dval.textContent=(d.dealerValue!=null?d.dealerValue:"?");
-      renderHands(d);
-      plab.textContent=d.hands.length>1?("your hands ("+d.hands.length+")"):"you";
       acts.innerHTML="";
       if(d.state==="playing"){
         var hit=bjBtn("hit","hit",icoHit());hit.onclick=function(){act("/cas/bj/hit");};
@@ -2118,23 +2240,51 @@
         acts.appendChild(hit);acts.appendChild(stand);
         if(d.canDouble){var db=bjBtn("dbl","double",icoDouble());db.onclick=function(){act("/cas/bj/double");};acts.appendChild(db);}
         if(d.canSplit){var sp=bjBtn("split","split",icoSplit());sp.onclick=function(){act("/cas/bj/split");};acts.appendChild(sp);}
-        setRes("",d.hands.length>1?("playing hand "+(d.active+1)+" of "+d.hands.length):"");
-      }else{
-        if(d.hands.length>1){
-          // a split round is summarised by what came back versus what was staked
-          var net=Math.round((d.payout-d.bet)*100)/100;
-          setRes(net>0?"win":(net<0?"lose":""),
-            net>0?("you take "+money(d.payout)+" on "+money(d.bet)+" staked"):
-            (net<0?("you lose "+money(-net)):"push - stake returned"));
-        }else{
-          var msg=LABEL[d.result]||d.result;
-          if(d.result==="push")setRes("",msg);
-          else if(d.payout>0)setRes("win",msg);
-          else setRes("lose",msg);
-        }
-        if(d.payout>d.bet)celebrate(d.payout,d.bet?d.payout/d.bet:1);
-        deal.disabled=false;bet.disabled=false;
+        setRes("",multi?("playing hand "+(d.active+1)+" of "+d.hands.length):"");
+        return;
       }
+      // the server sends the new balance with the first reply, but the header and
+      // the win toast have to wait until the dealer has finished taking cards
+      if(typeof d.balance==="number")setBal(d.balance);
+      if(multi){
+        // a split round is summarised by what came back versus what was staked
+        var net=Math.round((d.payout-d.bet)*100)/100;
+        setRes(net>0?"win":(net<0?"lose":""),
+          net>0?("you take "+money(d.payout)+" on "+money(d.bet)+" staked"):
+          (net<0?("you lose "+money(-net)):"push - stake returned"));
+      }else{
+        var msg=LABEL[d.result]||d.result;
+        if(d.result==="push")setRes("",msg);
+        else if(d.payout>0)setRes("win",msg);
+        else setRes("lose",msg);
+      }
+      if(d.payout>d.bet)celebrate(d.payout,d.bet?d.payout/d.bet:1);
+      deal.disabled=false;bet.disabled=false;
+    }
+    function playQueue(q,done){
+      var n=0;
+      function tick(){
+        dealTimer=null;
+        if(!table.isConnected)return;    // left the table part way through a round
+        if(n>=q.length){done();return;}
+        bjApplyShown(shown,q[n++]);
+        renderShown();
+        dealTimer=window.setTimeout(tick,BJ_DEAL_MS);
+      }
+      tick();
+    }
+    function paint(d){
+      stopDeal();
+      live=d;
+      var q=bjDealQueue(shown,d);
+      shown=bjPrepareShown(shown,d);
+      renderShown();
+      table.classList.add("bjdealing");
+      acts.innerHTML="";
+      playQueue(q,function(){
+        table.classList.remove("bjdealing");
+        settle(d);
+      });
     }
     function act(p){
       Array.prototype.forEach.call(acts.querySelectorAll("button"),function(b){b.disabled=true;});
@@ -2143,7 +2293,7 @@
     }
     deal.onclick=function(){
       deal.disabled=true;bet.disabled=true;
-      prevD=[];prevH=[];                 // a new round deals every card fresh
+      clearTable();setRes("","");        // a new round deals every card fresh
       jpost("/cas/bj/start",{bet:Number(bet.value)}).then(function(d){
         if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}
         paint(d);
@@ -2677,6 +2827,7 @@
       '.cards{display:flex;gap:6px;flex-wrap:wrap}' +
       /* ---- blackjack table ---- */
       '.bjtable{display:flex;flex-direction:column;align-items:center;gap:8px;padding:6px 0 2px}' +
+      '.bjtable.bjdealing{pointer-events:none}' +
       '.bjlabel{font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#8a6a3a}' +
       '.bjval{font-size:30px;font-weight:800;color:#f2c063;line-height:1;font-variant-numeric:tabular-nums}' +
       '.bjcards{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;min-height:142px;align-items:center}' +
@@ -2700,15 +2851,16 @@
          preserve-3d context gets flattened here and flattening inverts which
          face is hidden. Squeezing scaleX through zero and swapping the faces at
          the halfway point reads the same and has no 3D context to lose.
-         The per-card stagger rides on --d so faces and card stay in step. */
-      '.pcard{width:98px;height:138px;position:relative;flex:0 0 auto;--d:0s}' +
-      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;animation:dealIn .5s cubic-bezier(.3,.8,.4,1) both;animation-delay:var(--d)}' +
+         There is no stagger here: the table deals the cards one at a time, so a
+         card element only ever exists once its turn has come. */
+      '.pcard{width:98px;height:138px;position:relative;flex:0 0 auto}' +
+      '.pcinner{position:absolute;left:0;top:0;right:0;bottom:0;animation:dealIn .5s cubic-bezier(.3,.8,.4,1) both}' +
       '.pcface{position:absolute;left:0;top:0;right:0;bottom:0;' +
       'border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;box-shadow:0 8px 20px #0008}' +
-      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;opacity:0;animation:faceIn .5s both;animation-delay:var(--d)}' +
+      '.pcfront{background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;opacity:0;animation:faceIn .5s both}' +
       '.pcfront.red{color:#b3261e}' +
       '.pcback{background:linear-gradient(135deg,#3a2410,#241505);color:#7a5a1a;border:1px solid #7a5a1a;font-size:30px;' +
-      'animation:faceOut .5s both;animation-delay:var(--d)}' +
+      'animation:faceOut .5s both}' +
       /* the dealer hole card just drops in and stays face down */
       '.pcard.hole .pcinner{animation-name:dealBack}' +
       '.pcard.hole .pcback{animation:none;opacity:1}' +
