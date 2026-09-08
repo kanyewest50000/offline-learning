@@ -44,7 +44,7 @@
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
   function bounce(p, dir){
     var rel=((ball.y)-(p.y+PH/2))/(PH/2);
-    ball.vx=dir*Math.min(5.6, Math.abs(ball.vx)+0.22);
+    ball.vx=dir*(Math.abs(ball.vx)+0.48);
     ball.vy=rel*4.0;
     spin+=dir*0.4;
   }
