@@ -112,8 +112,8 @@
        the difficulty, not accuracy. the sway never leaves him at any score, so
        there is always a way through. only the branch above has neither. */
     var heat=youScore/Math.max(1, WIN-1);
-    var follow=0.06+heat*0.12;
-    var maxStep=1.4+heat*4.5;
+    var follow=0.05+heat*0.10;
+    var maxStep=1.0+heat*1.8;
     var wobble=30+(1-heat)*14;
     var desired;
     if(ball.vx>0){
@@ -213,33 +213,36 @@
     try{ var p=go.call(el); if(p&&p["catch"]) p["catch"](function(){}); }catch(e){}
   }
   /* the plate is hung in the shell the moment the watch arms, a good ten
-     seconds early, and left fully transparent. a picture handed to the browser
-     at the moment it is wanted has still to be decoded before it can paint,
-     which showed as a beat of black; this one is decoded, laid out and
-     rasterised long before, so revealing it is only a change of opacity. */
+     seconds early, and left fully transparent. building it at the moment it is
+     wanted meant the browser had still to fetch, decode and rasterise the
+     picture before it could paint, which showed as a beat of black; hung early
+     it has all of that behind it, and revealing it is only a change of opacity.
+     the picture is carried the same way it always was, as the element's own
+     background, so what paints is unchanged. */
   function hangPlate(){
-    if(plate) return;
+    if(plate) return plate;
     try{
       var d=shell().document;
       var el=d.createElement("div");
       el.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;"+
-        "margin:0;padding:0;border:0;z-index:2147483647;background:#000;"+
-        "opacity:0;pointer-events:none;";
-      var img=d.createElement("img");
-      img.src=RONDA_NEAR;
-      img.setAttribute("fetchpriority", "high");
-      img.style.cssText="display:block;width:100%;height:100%;object-fit:cover;object-position:center;";
-      el.appendChild(img);
+        "margin:0;padding:0;border:0;z-index:2147483647;opacity:0;pointer-events:none;"+
+        "background:#000 url(\""+RONDA_NEAR+"\") center center no-repeat;background-size:cover;";
       d.body.appendChild(el);
-      if(img.decode) img.decode()["catch"](function(){});
       plate=el;
+      /* a second, detached copy purely to get the bitmap decoded and cached */
+      try{
+        var warm=new (d.defaultView.Image||Image)();
+        warm.src=RONDA_NEAR;
+        if(warm.decode) warm.decode()["catch"](function(){});
+      }catch(e){}
     }catch(e){}
+    return plate;
   }
   function openBroadcast(){
     var w=shell(), d=w.document;
-    hangPlate();
+    var el=hangPlate();
     try{ d.documentElement.style.overflow="hidden"; d.body.style.overflow="hidden"; }catch(e){}
-    if(plate){ plate.style.opacity="1"; plate.style.pointerEvents="auto"; }
+    if(el){ el.style.opacity="1"; el.style.pointerEvents="auto"; }
     widen(d);
     /* a fullscreen request wants a fresh gesture. if the shell had none banked
        when the plate went up, take the very next one that lands. */
