@@ -87,11 +87,29 @@ function pick<T>(map: Record<string, T>, key: any): T | null {
   return Object.prototype.hasOwnProperty.call(map, key) ? map[key as string] : null;
 }
 
-// bet validation shared by every game
+// bet validation shared by every game. casino callers surface wagerError() so a
+// stake under the floor or over the ceiling is named, not dumped as "bad bet".
+function readWager(v: unknown): { bet: number } | { error: string } {
+  const n = Number(v);
+  if (!Number.isFinite(n)) {
+    return { error: "tung does not wager ghosts. put a real number on the felt." };
+  }
+  const b = round2(n);
+  if (b < MIN_BET) {
+    return { error: "that offering is beneath the altar. the floor is " + MIN_BET.toFixed(1) + " sahurs. tung counted." };
+  }
+  if (b > MAX_BET) {
+    return { error: "even tung tung god has a ceiling. " + MAX_BET + " sahurs is it. sit down." };
+  }
+  return { bet: b };
+}
+function wagerError(v: unknown): string {
+  const w = readWager(v);
+  return "error" in w ? w.error : "tung does not wager ghosts. put a real number on the felt.";
+}
 function parseBet(v: unknown): number | null {
-  const b = round2(Number(v));
-  if (!isFinite(b) || b < MIN_BET || b > MAX_BET) return null;
-  return b;
+  const w = readWager(v);
+  return "bet" in w ? w.bet : null;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -1085,7 +1103,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
-    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const target = round2(Number(b.target));
     const over = b.over === true;             // false = roll under, true = roll over
     if (!(target >= 2 && target <= 98)) return json({ error: "target 2–98" }, 400);
@@ -1109,7 +1127,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
-    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const target = round2(Number(b.target)); // desired cash-out multiplier
     if (!(target >= 1.01 && target <= 1000000)) return json({ error: "target 1.01–1e6" }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
@@ -1134,7 +1152,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
-    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const kind = clip(b.kind, 12);   // number|red|black|odd|even|low|high|dozen|column
     const val = Math.floor(Number(b.value)); // for number(0-36), dozen(1-3), column(1-3)
     // resolve payout multiplier (winnings-to-stake) for each bet kind
@@ -1167,7 +1185,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
-    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const risk = clip(b.risk, 8);
     const rows = Math.floor(Number(b.rows));
     const riskTab = pick(PLINKO, risk);
@@ -1191,7 +1209,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
-    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     const player = [drawCard(), drawCard()];
     const dealer = [drawCard(), drawCard()];
@@ -1268,7 +1286,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
-    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const count = Math.floor(Number(b.mines));
     if (!(count >= 1 && count <= 24)) return json({ error: "mines 1–24" }, 400);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
@@ -1332,7 +1350,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
-    if (bet === null) return json({ error: "bad bet" }, 400);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const diff = clip(b.difficulty, 10);
     const cfg = pick(BEEF, diff);
     if (!cfg) return json({ error: "difficulty easy/medium/hard/daredevil" }, 400);
