@@ -35,7 +35,7 @@ must(index.includes("eat. lengthen. forget why."), "originals list must use the 
 must(snake.includes("var STEP=180;"), "snake step must be slower than 120ms");
 must(snake.includes("window.__tungHiDPI"), "snake must use the HiDPI backing store");
 
-must(pong.includes("var PW=28, PH=100, BR=12, WIN=7;"), "pong paddles must be larger rectangles");
+must(pong.includes("var PW=28, PH=100, BR=12, WIN=7,"), "pong paddles must be larger rectangles");
 must(pong.includes("vx:(toHim?2.1:-2.1)"), "pong serve must be slower than 3.2");
 must(pong.includes("ball.vx=dir*(Math.abs(ball.vx)+0.48)"), "pong ball must accelerate faster with no top-speed cap");
 must(!pong.includes("Math.min(5.6"), "pong ball speed must be uncapped");
@@ -60,19 +60,38 @@ must(flappy.includes('ctx.fillStyle="#1d1206"'), "fallen card must be opaque so 
 /* pong difficulty: the climb has to stay winnable up to the sixth point.
    his reach is capped and his sway never reaches zero, so he can always be
    made to miss — except on the rigged point, where he tracks the ball exactly. */
-must(pong.includes("var follow=0.05+heat*0.09;"), "pong AI must chase the ball gently");
-must(pong.includes("var maxStep=2.0+heat*1.9;"), "pong AI reach must stay capped as the score climbs");
-must(pong.includes("var wobble=30+(1-heat)*60;"), "pong AI sway must narrow but never reach zero");
-must(!pong.includes("var wobble=(1-heat)*9;"), "the old sway curve made him perfect from 3 points on");
+must(pong.includes("var follow=0.06+heat*0.12;"), "pong AI must chase the ball hard");
+must(pong.includes("var maxStep=2.4+heat*2.6;"), "pong AI reach must widen as the score climbs");
+must(pong.includes("var wobble=9+(1-heat)*13;"), "pong AI sway must narrow to 9px but never reach zero");
+must(pong.includes("PLACE=2.0"), "he must put the ball away from the player, or a point never settles");
+must(pong.includes("var away=(you.y+PH/2)<H/2 ? 1 : -1;"), "placement must aim at the half the player is not in");
+must(/\} else if\(hitsPad\(him\)\)\{\s*bounce\(him, -1\);\s*place\(\);/.test(pong), "placement must ride on his ordinary return");
+
+/* the rigged point: his whole face is the wall at any speed, so a fast ball
+   cannot slip through the gap between frames, and he returns it flat */
 must(
   /if\(youScore>=WIN-1\)\{\s*him\.y=clamp\(target, minY, maxY\);\s*return;\s*\}/.test(pong),
-  "the rigged point must still track the ball exactly, with no cap and no sway",
+  "the rigged point must track the ball exactly, with no cap and no sway",
 );
+must(
+  /if\(ball\.x\+BR>him\.x\)\{ ball\.x=him\.x-BR; bounce\(him, -1\); \}/.test(pong),
+  "the rigged point must return the ball at any speed, with no gap to tunnel through",
+);
+must(
+  pong.indexOf("if(ball.x+BR>him.x){ ball.x=him.x-BR;") < pong.indexOf("} else if(hitsPad(him)){"),
+  "the wall must take precedence over the ordinary paddle test",
+);
+must(!/if\(ball\.vx>0 && hitsPad\(him\)\) bounce\(him, -1\);/.test(pong), "the old unguarded return would let a fast ball through the rigged point");
 
 /* the night watch: he rises on the court floor, stands down, then the
    broadcast takes the whole shell and the window signs off. */
-must(pong.includes("var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=25000;"), "watch timings must be fade 9s, half opacity, 3s stand-down, 10s on air, 25s dry spell");
-must(pong.includes("youScore>=WIN-1 || (youScore>=4 && vigil.dry>=V_DRY)"), "the watch must arm on the rigged score or a dry spell from 4 points up");
+must(pong.includes("var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=30000, V_LOCK=15000;"), "watch timings must be fade 9s, half opacity, 3s stand-down, 10s on air, 30s dry spell, 15s on the rigged point");
+must(
+  pong.includes("var need=youScore>=WIN-1 ? V_LOCK : (youScore>=5 ? V_DRY : Infinity);") &&
+    pong.includes("if(vigil.dry>=need){ vigil.phase=\"rise\"; vigil.t=0; }"),
+  "the watch must arm only on a stalemate: 30s from five up, 15s on the rigged point, never below five",
+);
+must(!pong.includes("youScore>=WIN-1 || ("), "reaching the rigged score must no longer arm the watch on its own");
 must(pong.includes('if(state==="play"||state==="idle") vigil.dry+=dt;'), "the dry spell must count play and the pause between points, not won or lost boards");
 must(/vigil\.a=V_PEAK\*Math\.min\(1, vigil\.t\/V_FADE\);/.test(pong), "the rise must ramp to half opacity over the fade");
 must(
