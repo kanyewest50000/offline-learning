@@ -40,7 +40,7 @@ must(pong.includes("Math.min(5.6, Math.abs(ball.vx)+0.22)"), "pong max ball spee
 must(pong.includes("window.__tungHiDPI"), "pong must use the HiDPI backing store");
 
 must(flappy.includes('birdImg.src="../../assets/flappy-tung-bird.png"'), "flappy must use the sahur-filled OG bird");
-must(flappy.includes("var GRAV=0.26, FLAP=-5.05, GAP=168, PW=54, SPEED=1.28, SPAWN=132;"), "flappy physics must be slower");
+must(flappy.includes("var GRAV=0.16, FLAP=-4.0, GAP=168, PW=54, SPEED=1.28, SPAWN=200;"), "flappy gravity must be lighter and pipes further apart");
 must(flappy.includes("window.__tungHiDPI"), "flappy must use the HiDPI backing store");
 
 must(fit.includes("data-logical-w"), "HiDPI fit must scale from logical size");
