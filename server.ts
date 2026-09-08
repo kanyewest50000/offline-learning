@@ -16,6 +16,7 @@
 //   POST /tip           {token, to, amount}               -> {ok, amount, fromBalance, toBalance, to}
 //   GET  /admin                                           -> admin page (html)
 //   GET  /admin/pending?key=                              -> {pending:[...]}
+//   GET  /admin/chat?key=                                 -> {messages:[...]} last HISTORY chat lines
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 
 const kv = await Deno.openKv();
@@ -378,6 +379,30 @@ async function appendEvent(ev: Record<string, unknown>) {
   return seq;
 }
 
+// Admin dump of retained chat lines. Public /events?since=0 only ships
+// OPEN_MSGS; this walks the same HISTORY window and returns every msg.
+async function listChatMessages(): Promise<unknown[]> {
+  // deno-lint-ignore no-explicit-any
+  const recent: any[] = [];
+  // deno-lint-ignore no-explicit-any
+  for await (const e of kv.list<any>({ prefix: ["ev"] }, { reverse: true, limit: HISTORY })) {
+    recent.push(e.value);
+  }
+  recent.reverse();
+  const messages: unknown[] = [];
+  for (const ev of recent) {
+    if (!ev || ev.type !== "msg") continue;
+    messages.push({
+      id: ev.id,
+      name: ev.name,
+      text: ev.text,
+      reply: ev.reply ?? null,
+      seq: ev.seq,
+    });
+  }
+  return messages;
+}
+
 // deno-lint-ignore no-explicit-any
 async function authUser(token: string | null): Promise<any | null> {
   if (!token) return null;
@@ -683,6 +708,13 @@ Deno.serve({ port: listenPort }, async (req) => {
     // deno-lint-ignore no-explicit-any
     pending.sort((a: any, b: any) => a.ts - b.ts);
     return json({ pending });
+  }
+
+  // ---------- admin: dump retained chat (not part of the other list loads) ----------
+  if (req.method === "GET" && path === "/admin/chat") {
+    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const messages = await listChatMessages();
+    return json({ messages, count: messages.length });
   }
 
   // ---------- admin: send a follow-up message/question to an applicant ----------
@@ -1424,6 +1456,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn" data-pane="users">Manage users <span class="count" id="count-users"></span></button>
 <button type="button" class="navbtn" data-pane="balances">Casino balances <span class="count" id="count-balances"></span></button>
 <button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
+<button type="button" class="navbtn" data-pane="chat">Chat log <span class="count" id="count-chat"></span></button>
 <button type="button" class="navbtn" data-pane="danger">Wipe data</button>
 </aside>
 <div class="content">
@@ -1452,6 +1485,12 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <div id="shop"><div class="empty">load to manage the shop.</div></div>
 <div class="row" style="margin-top:12px"><button class="load" id="addItem">+ add shop item</button></div>
 </section>
+<section class="pane" id="pane-chat">
+<h2>Chat log</h2>
+<p class="hint">The last 500 retained chat lines. Not loaded with the other lists — dump only when you need it.</p>
+<div class="row" style="margin-bottom:14px"><button class="load" id="dumpChat">dump last 500</button></div>
+<div id="chatlog"><div class="empty">not loaded. click dump last 500.</div></div>
+</section>
 <section class="pane danger" id="pane-danger">
 <h2>Wipe data</h2>
 <p>Delete every application (pending and approved). Usernames and tokens are wiped; everyone must re-apply. Casino balances and shop items are not cleared by this.</p>
@@ -1461,11 +1500,12 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 </div>
 <script>
 var keyEl=document.getElementById("key"),list=document.getElementById("list"),users=document.getElementById("users");
-var balances=document.getElementById("balances"),shop=document.getElementById("shop");
+var balances=document.getElementById("balances"),shop=document.getElementById("shop"),chatlog=document.getElementById("chatlog");
 var pendingCache=null,usersCache=null,balancesCache=null,pendingErr=null,usersErr=null,balancesErr=null;
 try{var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}catch(e){}
 function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();}
 document.getElementById("load").onclick=loadAll;
+document.getElementById("dumpChat").onclick=dumpChat;
 document.getElementById("clear").onclick=function(){
   if(!confirm("Delete ALL applications (pending + approved)? Everyone will have to re-apply."))return;
   fetch("/admin/clear",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim()})}).then(function(r){return r.json();}).then(function(d){alert(d.error?d.error:("cleared "+d.cleared+" entries"));loadAll();});
@@ -1500,6 +1540,27 @@ function bindSearch(id, fn){
 bindSearch("search-pending", function(){renderPending();});
 bindSearch("search-users", function(){renderUsers();});
 bindSearch("search-balances", function(){renderBalances();});
+function dumpChat(){
+  var key=keyEl.value.trim();
+  chatlog.innerHTML='<div class="empty">loading...</div>';
+  fetch("/admin/chat?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+    if(d.error){chatlog.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';setCount("chat","");return;}
+    var msgs=d.messages||[];
+    setCount("chat", msgs.length);
+    if(!msgs.length){chatlog.innerHTML='<div class="empty">no chat messages retained.</div>';return;}
+    chatlog.innerHTML="";
+    msgs.forEach(function(m){
+      var el=document.createElement("div");el.className="app";
+      var h=document.createElement("h3");h.textContent=m.name||"";el.appendChild(h);
+      if(m.reply&&m.reply.text){
+        var rp=document.createElement("small");rp.textContent="reply to "+(m.reply.name||"")+" — "+m.reply.text;el.appendChild(rp);
+      }
+      var p=document.createElement("p");p.textContent=m.text||"";el.appendChild(p);
+      var s=document.createElement("small");s.textContent="seq "+m.seq+" · id "+m.id;el.appendChild(s);
+      chatlog.appendChild(el);
+    });
+  }).catch(function(){chatlog.innerHTML='<div class="empty">network error.</div>';});
+}
 function refresh(){
   var key=keyEl.value.trim();try{localStorage.setItem("shrine-admin-key",key);}catch(e){}
   list.innerHTML='<div class="empty">loading...</div>';
