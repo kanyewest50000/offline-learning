@@ -379,6 +379,27 @@ async function appendEvent(ev: Record<string, unknown>) {
   return seq;
 }
 
+// The public window: the last OPEN_MSGS chat lines plus whatever reacts landed
+// among them, in forward order, with the seq of the oldest event in the window
+// (its `floor`). This is the furthest back a non-admin is allowed to see, on a
+// fresh open and on a reconnect alike. The reverse scan stops the moment it has
+// OPEN_MSGS messages in hand instead of always reading the full HISTORY, so a
+// reopen costs a few dozen KV reads in the common case, not five hundred.
+// deno-lint-ignore no-explicit-any
+async function recentWindow(): Promise<{ events: any[]; floor: number }> {
+  // deno-lint-ignore no-explicit-any
+  const collected: any[] = [];
+  let msgs = 0;
+  // deno-lint-ignore no-explicit-any
+  for await (const e of kv.list<any>({ prefix: ["ev"] }, { reverse: true, limit: HISTORY })) {
+    collected.push(e.value);
+    if (e.value?.type === "msg" && ++msgs >= OPEN_MSGS) break;
+  }
+  collected.reverse();
+  const floor = collected.length && typeof collected[0]?.seq === "number" ? collected[0].seq : 0;
+  return { events: collected, floor };
+}
+
 // Admin dump of retained chat lines. Public /events?since=0 only ships
 // OPEN_MSGS; this walks the same HISTORY window and returns every msg.
 async function listChatMessages(): Promise<unknown[]> {
@@ -434,10 +455,23 @@ function blockState(u: any): { blocked: boolean; reason?: string; until?: number
 type Bucket = { n: number; reset: number };
 const buckets = new Map<string, Bucket>();
 let sweepN = 0;
-function clientIp(req: Request): string {
+// The client-facing edge appends the real peer to x-forwarded-for, so the
+// address we can trust is the LAST hop, not the first. Reading the first entry
+// (as this used to) trusts a header the client writes: anyone can send
+// "x-forwarded-for: <anything>" and mint a fresh rate-limit identity per
+// request, which is the whole "rotate the header in Burp and the IP cap is
+// gone" bypass. The real connecting address from Deno is the ground truth when
+// there is no proxy in front, so fall back to it.
+function clientIp(req: Request, info?: { remoteAddr?: { hostname?: string } }): string {
   const xf = req.headers.get("x-forwarded-for");
-  if (xf) return xf.split(",")[0].trim().slice(0, 80) || "unknown";
-  return (req.headers.get("x-real-ip") || "unknown").slice(0, 80);
+  if (xf) {
+    const hops = xf.split(",").map((h) => h.trim()).filter(Boolean);
+    const last = hops[hops.length - 1];
+    if (last) return last.slice(0, 80);
+  }
+  const real = req.headers.get("x-real-ip");
+  if (real) return real.slice(0, 80);
+  return (info?.remoteAddr?.hostname || "unknown").slice(0, 80);
 }
 // Any issued token (pending or approved) skips the anonymous IP cap.
 async function hasSessionToken(token: string): Promise<boolean> {
@@ -488,13 +522,32 @@ const ADMIN_GATE = `<!doctype html><html lang="en"><meta charset="utf-8"><title>
 <button>open</button></form>
 <script>document.querySelector("form").onsubmit=function(e){e.preventDefault();location="/admin?key="+encodeURIComponent(this.key.value)}</script>`;
 
+// A rate limit that holds across isolates. The in-memory buckets above are
+// per-isolate, so a global backstop for the few genuinely expensive operations
+// lives in KV instead. Coarse per-window counter, CAS so parallel increments
+// do not lose count, fail-open on contention so a legit user is never wrongly
+// blocked. Reserved for rare, costly calls (a full history pull), never the
+// live poll path.
+async function allowGlobal(key: string, limit: number, windowMs: number): Promise<boolean> {
+  const slot = Math.floor(Date.now() / windowMs);
+  const k = ["rl", key, slot];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const cur = await kv.get<number>(k);
+    const n = cur.value ?? 0;
+    if (n >= limit) return false;
+    const res = await kv.atomic().check(cur).set(k, n + 1, { expireIn: windowMs * 3 }).commit();
+    if (res.ok) return true;
+  }
+  return true;
+}
+
 const listenPort = Number(Deno.env.get("PORT") || "8000") || 8000;
-Deno.serve({ port: listenPort }, async (req) => {
+Deno.serve({ port: listenPort }, async (req, info) => {
   const url = new URL(req.url);
   const path = url.pathname;
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
-  const ip = clientIp(req);
+  const ip = clientIp(req, info);
   if (!(await requestIsAuthed(req, url)) && !allow("ip:" + ip, 90, 60_000)) return tooMany(60);
 
   // One token cannot dump HISTORY every few ms. Shared-IP classrooms each
@@ -611,34 +664,43 @@ Deno.serve({ port: listenPort }, async (req) => {
     // banned / timed-out users get a blocked payload so the client shows the ban screen
     const bs = blockState(user);
     if (bs.blocked) return json({ blocked: true, reason: bs.reason, until: bs.until, events: [], cursor: Number(url.searchParams.get("since") || "0") || 0 });
-    const since = Number(url.searchParams.get("since") || "0") || 0;
+    let since = Number(url.searchParams.get("since") || "0") || 0;
+    // The admin dashboard (and its exports) may walk the whole retained log;
+    // it proves itself with the admin key. Everyone else is held to the public
+    // window, however they ask for it.
+    const isAdmin = ADMIN_KEY !== "" && url.searchParams.get("key") === ADMIN_KEY;
     const events: unknown[] = [];
     let cursor = since;
-    // deno-lint-ignore no-explicit-any
     if (since <= 0) {
-      // Reopening chat used to dump the whole retained log (up to HISTORY).
-      // That is the bulk of shrine egress. A fresh cursor only gets the last
-      // OPEN_MSGS chat lines plus reacts that landed in that same window.
-      // deno-lint-ignore no-explicit-any
-      const recent: any[] = [];
-      // deno-lint-ignore no-explicit-any
-      for await (const e of kv.list<any>({ prefix: ["ev"] }, { reverse: true, limit: HISTORY })) {
-        recent.push(e.value);
-      }
-      recent.reverse();
-      let msgs = 0;
-      let start = 0;
-      for (let i = recent.length - 1; i >= 0; i--) {
-        if (recent[i]?.type === "msg") {
-          msgs++;
-          if (msgs >= OPEN_MSGS) { start = i; break; }
-        }
-      }
-      for (let i = start; i < recent.length; i++) {
-        events.push(recent[i]);
-        if (typeof recent[i]?.seq === "number") cursor = recent[i].seq;
+      // A fresh open gets exactly the public window: the last OPEN_MSGS lines
+      // plus the reacts among them. No full-log dump.
+      const win = await recentWindow();
+      for (const ev of win.events) {
+        events.push(ev);
+        if (typeof ev?.seq === "number") cursor = ev.seq;
       }
     } else {
+      // Incremental poll. A live client is only a few events behind newest, so
+      // the common case serves straight from `since` with no extra work. Only
+      // when a non-admin asks to reach much further back — a reconnect after
+      // being away, or someone hand-editing since=1 to scrape the backlog — do
+      // we pull it up to the public window's floor. That both enforces "no
+      // further than the last OPEN_MSGS messages without admin" and defuses the
+      // replay-from-1 read amplification, since the reach-back can no longer
+      // return the whole log. The bounded catch-up scan is itself capped in KV
+      // so it cannot be spun across isolates.
+      if (!isAdmin) {
+        const seqTip = await kv.get<number>(["seq"]);
+        const newest = seqTip.value ?? 0;
+        if (since < newest - 60) {
+          if (!await allowGlobal("hist:" + user.id, 10, 60_000)) return tooMany(30);
+          const win = await recentWindow();
+          if (win.floor > 0 && since < win.floor - 1) {
+            since = win.floor - 1;
+            cursor = since;
+          }
+        }
+      }
       // deno-lint-ignore no-explicit-any
       for await (const e of kv.list<any>({ prefix: ["ev"], start: ["ev", since + 1] }, { limit: 200 })) {
         events.push(e.value);
