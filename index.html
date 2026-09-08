@@ -2072,14 +2072,12 @@
       else shown.hands[ev.h].push(ev.c);
     }
   }
-  /* Server order is [upcard, hole, ...hits]. The table deals the hole first, so
-     the face-down card sits on the left and the upcard on the right. */
+  /* Server order is already [upcard, hole, ...hits] — the hole sits to the
+     right of the card you can see, same as a real shoe. During play the hole
+     is still "??". Do not swap them: putting the hole on the left made a
+     stand wipe the upcard and deal it again. */
   function bjDealerView(d){
-    var src=d.dealer||[];
-    if(!src.length)return [];
-    if(d.state!=="done")return ["??",src[0]];
-    if(src.length===1)return src.slice();
-    return [src[1],src[0]].concat(src.slice(2));
+    return (d.dealer||[]).slice();
   }
   function bjSameCards(a,b){
     if(!a||!b||a.length!==b.length)return false;
@@ -2103,9 +2101,10 @@
     if(!bjIsOpening(cur))bjSyncSplits(cur,d);
     return cur;
   }
-  /* Opening deal is always you, hole, you, upcard. Anything after that — a hit,
-     the hole turning over, the dealer drawing to 17 — is appended in that order
-     so the renderer can sleep BJ_DEAL_MS between each card. */
+  /* Opening deal is you, upcard, you, hole — so the hole lands on the right
+     of the card you can already see. Anything after that — a hit, the hole
+     turning over, the dealer drawing to 17 — is appended in that order so
+     the renderer can sleep BJ_DEAL_MS between each card. */
   function bjDealQueue(shown,d){
     var cur=bjPrepareShown(shown,d);
     var q=[];
@@ -2113,9 +2112,9 @@
       var p=(d.hands[0]&&d.hands[0].cards)||[];
       var up=(d.dealer&&d.dealer[0])||"";
       if(p[0])q.push({t:"P",h:0,c:p[0]});
-      q.push({t:"D",c:"??"});
-      if(p[1])q.push({t:"P",h:0,c:p[1]});
       if(up)q.push({t:"D",c:up});
+      if(p[1])q.push({t:"P",h:0,c:p[1]});
+      q.push({t:"D",c:"??"});
       q.forEach(function(ev){bjApplyShown(cur,ev);});
     }else{
       (d.hands||[]).forEach(function(h,i){
@@ -2172,15 +2171,18 @@
     var live=null;                       // server snapshot for the hand in motion
 
     /* Cards keep their DOM node between paints, because rebuilding one that is
-       already on the table would restart its deal animation. Only positions that
-       actually changed are replaced — which is also what gives the hole card its
-       flip, since "??" turning into a real card counts as a change. */
+       already on the table would restart its deal animation. Only the index that
+       actually changed is replaced — a prefix wipe used to throw away the
+       upcard when the hole flipped, so stand looked like the dealer was dealt
+       twice. "??" turning into a real card is still a change, and that is the
+       hole's flip. */
     function paintCards(wrap,cards){
-      var keep=0;
-      while(keep<cards.length&&keep<wrap.children.length&&wrap.children[keep]._card===cards[keep])keep++;
-      while(wrap.children.length>keep)wrap.removeChild(wrap.lastChild);
-      for(var i=keep;i<cards.length;i++){
-        var e=cardEl(cards[i]);e._card=cards[i];wrap.appendChild(e);
+      while(wrap.children.length>cards.length)wrap.removeChild(wrap.lastChild);
+      for(var i=0;i<cards.length;i++){
+        if(i<wrap.children.length&&wrap.children[i]._card===cards[i])continue;
+        var e=cardEl(cards[i]);e._card=cards[i];
+        if(i<wrap.children.length)wrap.replaceChild(e,wrap.children[i]);
+        else wrap.appendChild(e);
       }
     }
     function ensureHands(){

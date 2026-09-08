@@ -32,8 +32,11 @@ if (!src.includes("var BJ_DEAL_MS=400;")) {
 if (!src.includes("t0+n*BJ_DEAL_MS") || !src.includes("window.setTimeout(tick,wait)")) {
   fail("cards must be dealt through a 400ms timeout, not all at once");
 }
-if (!src.includes('q.push({t:"D",c:"??"});')) {
-  fail("opening deal must put the hole card down before the upcard");
+if (!src.includes('if(up)q.push({t:"D",c:up});') || !src.includes('q.push({t:"D",c:"??"});')) {
+  fail("opening deal must put the upcard down before the hole");
+}
+if (src.indexOf('if(up)q.push({t:"D",c:up});') > src.indexOf('q.push({t:"D",c:"??"});')) {
+  fail("the hole must be queued after the upcard so it sits on the right");
 }
 
 const settleAt = src.indexOf("function settle(d){");
@@ -51,6 +54,9 @@ if (setBalAt < 0 || setBalAt > celebrateAt) {
 }
 if (!(playingReturn < setBalAt)) {
   fail("balance must stay put until the dealer is finished");
+}
+if (!src.includes("wrap.replaceChild(e,wrap.children[i])")) {
+  fail("paintCards must replace one slot so a hole flip cannot redeal the upcard");
 }
 
 const fns = [
@@ -102,11 +108,11 @@ function codes(q: Event[]): string[] {
     hands: [{ cards: ["10♥", "9♣"] }],
   };
   const q = bjDealQueue(empty(), d);
-  if (codes(q).join(",") !== "P:10♥,D:??,P:9♣,D:A♠") {
-    fail("opening deal must be player, hole, player, upcard, got " + codes(q).join(","));
+  if (codes(q).join(",") !== "P:10♥,D:A♠,P:9♣,D:??") {
+    fail("opening deal must be player, upcard, player, hole, got " + codes(q).join(","));
   }
-  if (bjDealerView(d).join(",") !== "??,A♠") {
-    fail("during play the hole sits left of the upcard");
+  if (bjDealerView(d).join(",") !== "A♠,??") {
+    fail("during play the hole sits right of the upcard");
   }
 }
 
@@ -117,26 +123,29 @@ function codes(q: Event[]): string[] {
     hands: [{ cards: ["A♣", "10♦"] }],
   };
   const q = bjDealQueue(empty(), d);
-  if (codes(q).join(",") !== "P:A♣,D:??,P:10♦,D:K♠,D:A♥@0") {
+  if (codes(q).join(",") !== "P:A♣,D:K♠,P:10♦,D:??,D:A♥@1") {
     fail("a natural must deal four cards then flip the hole, got " + codes(q).join(","));
   }
 }
 
 {
-  const shown: Shown = { dealer: ["??", "6♦"], hands: [["10♥", "8♣"]] };
+  const shown: Shown = { dealer: ["6♦", "??"], hands: [["10♥", "8♣"]] };
   const d: Server = {
     state: "done",
     dealer: ["6♦", "K♠", "5♥"],
     hands: [{ cards: ["10♥", "8♣"] }],
   };
   const q = bjDealQueue(shown, d);
-  if (codes(q).join(",") !== "D:K♠@0,D:5♥") {
+  if (codes(q).join(",") !== "D:K♠@1,D:5♥") {
     fail("dealer play must flip the hole then draw, got " + codes(q).join(","));
+  }
+  if (q.some((ev) => ev.t === "D" && ev.c === "6♦")) {
+    fail("stand must not queue the upcard again: " + codes(q).join(","));
   }
 }
 
 {
-  const shown: Shown = { dealer: ["??", "6♦"], hands: [["10♥", "8♣"]] };
+  const shown: Shown = { dealer: ["6♦", "??"], hands: [["10♥", "8♣"]] };
   const d: Server = {
     state: "playing",
     dealer: ["6♦", "??"],
@@ -149,7 +158,7 @@ function codes(q: Event[]): string[] {
 }
 
 {
-  const shown: Shown = { dealer: ["??", "9♠"], hands: [["8♥", "8♦"]] };
+  const shown: Shown = { dealer: ["9♠", "??"], hands: [["8♥", "8♦"]] };
   const d: Server = {
     state: "playing",
     dealer: ["9♠", "??"],

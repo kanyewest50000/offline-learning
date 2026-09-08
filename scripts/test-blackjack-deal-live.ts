@@ -101,23 +101,23 @@ function play(shown: Shown, d: Server) {
   if (frames[0].t !== 0 || frames[0].cards !== 1 || frames[0].player[0] !== "A♣") {
     fail("t=0 must be the first player card only: " + JSON.stringify(frames[0]));
   }
-  if (frames[1].t !== 400 || frames[1].holes !== 1 || frames[1].dealer[0] !== "??") {
-    fail("t=400 must be the face-down hole: " + JSON.stringify(frames[1]));
+  if (frames[1].t !== 400 || frames[1].holes !== 0 || frames[1].dealer[0] !== "K♠") {
+    fail("t=400 must be the dealer upcard: " + JSON.stringify(frames[1]));
   }
   if (frames[2].t !== 800 || frames[2].player.length !== 2) {
     fail("t=800 must add the second player card: " + JSON.stringify(frames[2]));
   }
-  if (frames[3].t !== 1200 || frames[3].dealer[1] !== "K♠" || frames[3].holes !== 1) {
-    fail("t=1200 must be the dealer upcard, hole still down: " + JSON.stringify(frames[3]));
+  if (frames[3].t !== 1200 || frames[3].dealer[1] !== "??" || frames[3].holes !== 1) {
+    fail("t=1200 must be the hole, to the right of the upcard: " + JSON.stringify(frames[3]));
   }
-  if (frames[4].t !== 1600 || frames[4].dealer[0] !== "A♥" || frames[4].holes !== 0) {
-    fail("t=1600 must flip the hole: " + JSON.stringify(frames[4]));
+  if (frames[4].t !== 1600 || frames[4].dealer[1] !== "A♥" || frames[4].dealer[0] !== "K♠" || frames[4].holes !== 0) {
+    fail("t=1600 must flip the hole in place, not redeal the upcard: " + JSON.stringify(frames[4]));
   }
   if (settleAt !== 2000) fail("toast/balance wait until 400ms after the last card, got " + settleAt);
 }
 
 {
-  const shown: Shown = { dealer: ["??", "6♦"], hands: [["10♥", "8♣"]] };
+  const shown: Shown = { dealer: ["6♦", "??"], hands: [["10♥", "8♣"]] };
   const d: Server = {
     state: "done",
     dealer: ["6♦", "K♠", "5♥"],
@@ -127,10 +127,10 @@ function play(shown: Shown, d: Server) {
   if (frames.map((f) => f.t).join(",") !== "0,400") {
     fail("dealer play is hole-flip then one draw, beats " + frames.map((f) => f.t).join(","));
   }
-  if (frames[0].dealer[0] !== "K♠" || frames[0].dealer[1] !== "6♦") {
-    fail("first dealer beat flips the hole, got " + frames[0].dealer.join(","));
+  if (frames[0].dealer[0] !== "6♦" || frames[0].dealer[1] !== "K♠") {
+    fail("first dealer beat flips the hole on the right, got " + frames[0].dealer.join(","));
   }
-  if (frames[1].dealer.join(",") !== "K♠,6♦,5♥") {
+  if (frames[1].dealer.join(",") !== "6♦,K♠,5♥") {
     fail("second dealer beat is the hit, got " + frames[1].dealer.join(","));
   }
   if (settleAt !== 800) fail("payout waits for the last dealer card plus one beat, got " + settleAt);
