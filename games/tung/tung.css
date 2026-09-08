@@ -68,3 +68,19 @@ canvas {
   color: #8a6a3a;
   text-align: center;
 }
+/* the code line under the court: it only ever names a code the speakers
+   already said out loud, so the room has a reason to bring the volume up. */
+.ledger {
+  margin: -8px 0 0;
+  padding: 0 16px 12px;
+  font-size: 11px;
+  font-style: italic;
+  color: #7d6033;
+  text-align: center;
+  opacity: 0.85;
+  transition: color 0.25s ease, opacity 0.25s ease;
+}
+.ledger.live {
+  color: #f2c063;
+  opacity: 1;
+}

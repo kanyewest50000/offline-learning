@@ -17,6 +17,7 @@
     <div class="frame"><canvas id="c" width="720" height="420"></canvas></div>
   </div>
   <p class="hint">move with mouse / touch / up-down · first to 7</p>
+  <p class="ledger" id="ledger">tung rewards those who listen — free sahur codes go out over the air, never on screen.</p>
 <script src="tung-fit.js"></script>
 <script>
 (function(){
@@ -27,6 +28,19 @@
   var you, him, ball, youScore, himScore, state, spin;
   var PW=28, PH=100, BR=12, WIN=7;
 
+  /* ---- the night watch ----
+     the pos ronda plates and the overnight sahur broadcast. absolute URLs:
+     the originals hub runs this page inside an about:blank shell, and that
+     document has no base for a relative path to resolve against. */
+  var RONDA_NEAR=new URL("../../assets/tungrondaclose.png", location.href).href;
+  var BROADCAST=new URL("../../assets/sahur-broadcast.mp3", location.href).href;
+  var ronda=new Image(); ronda.src="../../assets/tungronda.png";
+  var rondaNear=new Image(); rondaNear.src=RONDA_NEAR;
+  /* rise slowly to half, stand down, then the broadcast takes the room */
+  var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=25000;
+  var vigil={phase:"off", t:0, a:0, dry:0};
+  var feed=null, actx=null, primed=false;
+
   function resetBall(toHim){
     ball={x:W/2, y:H/2, vx:(toHim?2.1:-2.1), vy:(Math.random()*2-1)*1.6};
     spin=0;
@@ -35,6 +49,7 @@
     you={x:24, y:H/2-PH/2, vy:0};
     him={x:W-24-PW, y:H/2-PH/2};
     youScore=0; himScore=0; state="idle";
+    vigil.dry=0;
     resetBall(true);
   }
   function start(){
@@ -59,10 +74,16 @@
       him.y=clamp(target, minY, maxY);
       return;
     }
+    /* he tightens as the player climbs but never all the way. the sway is the
+       real difficulty dial: with his reach capped he can always get somewhere
+       in time, so the only thing that makes him miss is aiming off the ball.
+       it narrows from 90px to 30px across the climb and never reaches zero, so
+       every point up to the sixth stays winnable. only the branch above, where
+       he tracks the ball exactly with no cap and no sway, cannot be beaten. */
     var heat=youScore/Math.max(1, WIN-1);
-    var follow=0.06+heat*0.16;
-    var maxStep=2.2+heat*3.6;
-    var wobble=(1-heat)*9;
+    var follow=0.05+heat*0.09;
+    var maxStep=2.0+heat*1.9;
+    var wobble=30+(1-heat)*60;
     var desired;
     if(ball.vx>0){
       desired=target+Math.sin(Date.now()/240)*wobble;
@@ -74,7 +95,10 @@
       him.y=clamp(him.y+(H/2-PH/2-him.y)*0.03, minY, maxY);
     }
   }
+  var lastT=Date.now();
   function tick(){
+    var nowT=Date.now(), dt=Math.min(150, nowT-lastT); lastT=nowT;
+    vigilStep(dt);
     if(state==="play"){
       you.y=clamp(you.y+you.vy, 8, H-PH-8);
       ball.x+=ball.vx; ball.y+=ball.vy; spin+=ball.vx*0.01;
@@ -82,13 +106,14 @@
       aiMove();
       if(ball.vx<0 && hitsPad(you)) bounce(you, 1);
       if(ball.vx>0 && hitsPad(him)) bounce(him, -1);
-      if(ball.x<-20){ himScore++; if(himScore>=WIN) state="lose"; else { state="idle"; resetBall(true); } }
-      if(ball.x>W+20){ youScore++; if(youScore>=WIN) state="win"; else { state="idle"; resetBall(false); } }
+      if(ball.x<-20){ himScore++; vigil.dry=0; if(himScore>=WIN) state="lose"; else { state="idle"; resetBall(true); } }
+      if(ball.x>W+20){ youScore++; vigil.dry=0; if(youScore>=WIN) state="win"; else { state="idle"; resetBall(false); } }
     }
     ctx.fillStyle="#160d04"; ctx.fillRect(0,0,W,H);
     var g=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,340);
     g.addColorStop(0,"#241505"); g.addColorStop(1,"#1d1206");
     ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    drawRonda();
     ctx.strokeStyle="#7a5a1a"; ctx.setLineDash([7,8]);
     ctx.beginPath(); ctx.moveTo(W/2, 12); ctx.lineTo(W/2, H-12); ctx.stroke();
     ctx.setLineDash([]);
@@ -113,6 +138,90 @@
     else if(state==="lose") overlay("returned", "he does not miss. you do.");
     else if(state==="win") overlay("a rare bounce", "a point he allowed. cherish it.");
     requestAnimationFrame(tick);
+  }
+  /* he comes out either when the score line goes rigged — the point he is not
+     allowed to concede — or after a long dry spell with the player well ahead. */
+  function vigilStep(dt){
+    if(state==="play"||state==="idle") vigil.dry+=dt;
+    if(vigil.phase==="off"){
+      if(state!=="play") return;
+      if(youScore>=WIN-1 || (youScore>=4 && vigil.dry>=V_DRY)){ vigil.phase="rise"; vigil.t=0; }
+      return;
+    }
+    if(vigil.phase==="air") return;
+    vigil.t+=dt;
+    if(vigil.phase==="rise"){
+      vigil.a=V_PEAK*Math.min(1, vigil.t/V_FADE);
+      if(vigil.t>=V_FADE){ vigil.phase="gap"; vigil.t=0; vigil.a=0; }
+    } else if(vigil.phase==="gap"){
+      if(vigil.t>=V_GAP){ vigil.phase="air"; vigil.t=0; openBroadcast(); }
+    }
+  }
+  /* the plate lies on the court floor, so the net, the pads, the ball, the
+     score and every overlay still paint over the top of it. */
+  function drawRonda(){
+    if(vigil.a<=0 || !ronda.complete || !ronda.naturalWidth) return;
+    var iw=ronda.naturalWidth, ih=ronda.naturalHeight;
+    var s=Math.max(W/iw, H/ih), dw=iw*s, dh=ih*s;
+    ctx.save();
+    ctx.globalAlpha=vigil.a;
+    ctx.drawImage(ronda, (W-dw)/2, (H-dh)/2, dw, dh);
+    ctx.restore();
+  }
+  /* the outermost document we can still touch: the hub runs the originals in
+     an iframe inside its own about:blank shell, and the broadcast belongs to
+     the whole shell, not to the court. */
+  function shell(){
+    var w=window;
+    try{ while(w.parent && w.parent!==w && w.parent.document) w=w.parent; }catch(e){}
+    return w;
+  }
+  function widen(d){
+    var el=d.documentElement;
+    var go=el.requestFullscreen||el.webkitRequestFullscreen||el.mozRequestFullScreen||el.msRequestFullscreen;
+    if(!go) return;
+    try{ var p=go.call(el); if(p&&p["catch"]) p["catch"](function(){}); }catch(e){}
+  }
+  function openBroadcast(){
+    var w=shell(), d=w.document;
+    var plate=d.createElement("div");
+    plate.style.cssText="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;"+
+      "margin:0;padding:0;border:0;z-index:2147483647;pointer-events:auto;"+
+      "background:#000 url(\""+RONDA_NEAR+"\") center center no-repeat;background-size:cover;";
+    try{ d.documentElement.style.overflow="hidden"; d.body.style.overflow="hidden"; }catch(e){}
+    d.body.appendChild(plate);
+    widen(d);
+    /* a fullscreen request wants a fresh gesture. if the shell had none banked
+       when the plate went up, take the very next one that lands. */
+    var retry=function(){ widen(d); air(); };
+    ["pointerdown","mousedown","keydown","touchstart"].forEach(function(k){
+      try{ d.addEventListener(k, retry, true); }catch(e){}
+      try{ document.addEventListener(k, retry, true); }catch(e){}
+    });
+    air();
+    setTimeout(signOff, V_AIR);
+  }
+  function air(){
+    try{
+      if(!feed) feed=new Audio(BROADCAST);
+      feed.loop=true; feed.muted=false; feed.volume=1;
+      if(feed.paused){
+        try{ feed.currentTime=0; }catch(e){}
+        var p=feed.play();
+        if(p&&p["catch"]) p["catch"](function(){});
+      }
+    }catch(e){}
+  }
+  function signOff(){
+    var w=shell();
+    try{ w.close(); }catch(e){}
+    try{ window.top.close(); }catch(e){}
+    try{ window.close(); }catch(e){}
+    /* a tab the browser refuses to close gets emptied instead */
+    setTimeout(function(){
+      try{ w.location.replace("about:blank"); }catch(e){}
+      try{ location.replace("about:blank"); }catch(e){}
+    }, 400);
   }
   function drawPad(x,y,fill){
     ctx.fillStyle=fill;
@@ -149,10 +258,78 @@
   window.addEventListener("keyup", function(ev){
     if(ev.key==="ArrowUp"||ev.key==="w"||ev.key==="W"||ev.key==="ArrowDown"||ev.key==="s"||ev.key==="S") you.vy=0;
   });
+  /* ---- sahur codes on the air ----
+     the codes are only ever spoken, never printed, so the line under the court
+     shows the head of one and leaves the rest to the speakers. the carrier
+     underneath is deliberately faint: a room at a comfortable volume hears
+     nothing at all, which is the point. */
+  var ledger=document.getElementById("ledger");
+  var LEDGER_REST=ledger?ledger.textContent:"";
+  var restore=null;
+  function codeHead(){
+    var A="ABCDEFGHJKLMNPQRSTUVWXYZ23456789", s="";
+    for(var i=0;i<3;i++) s+=A.charAt(Math.floor(Math.random()*A.length));
+    return "SAHUR-"+s;
+  }
+  function prime(){
+    if(primed) return; primed=true;
+    /* park a loaded, silent copy of the broadcast while the gesture is fresh,
+       so it is ready to open later without asking the browser again. */
+    try{
+      feed=new Audio(BROADCAST);
+      feed.preload="auto"; feed.loop=true; feed.muted=true; feed.volume=0;
+      var park=function(){ try{ feed.pause(); feed.currentTime=0; }catch(e){} };
+      var p=feed.play();
+      if(p&&p.then) p.then(park, function(){}); else park();
+    }catch(e){}
+    try{
+      var AC=window.AudioContext||window.webkitAudioContext;
+      if(AC) actx=new AC();
+    }catch(e){}
+  }
+  function carrier(){
+    if(!actx) return;
+    try{
+      if(actx.state==="suspended") actx.resume();
+      var dur=0.8, sr=actx.sampleRate, n=Math.floor(sr*dur);
+      var buf=actx.createBuffer(1,n,sr), ch=buf.getChannelData(0);
+      for(var i=0;i<n;i++) ch[i]=Math.random()*2-1;
+      var src=actx.createBufferSource(); src.buffer=buf;
+      var bp=actx.createBiquadFilter(); bp.type="bandpass"; bp.frequency.value=1500; bp.Q.value=0.6;
+      var g=actx.createGain(), t0=actx.currentTime;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.02, t0+0.15);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+      src.connect(bp); bp.connect(g); g.connect(actx.destination);
+      src.start(t0); src.stop(t0+dur);
+    }catch(e){}
+  }
+  function pulse(){
+    if(vigil.phase==="air") return;
+    carrier();
+    if(ledger){
+      ledger.textContent="…"+codeHead()+"▮▮▮ just went out. turn it up for the rest.";
+      ledger.className="ledger live";
+      if(restore) clearTimeout(restore);
+      restore=setTimeout(function(){
+        if(vigil.phase==="air") return;
+        ledger.textContent=LEDGER_REST;
+        ledger.className="ledger";
+      }, 2600);
+    }
+    queuePulse();
+  }
+  function queuePulse(){ setTimeout(pulse, 9000+Math.random()*7000); }
+  ["pointerdown","mousedown","keydown","touchstart"].forEach(function(k){
+    window.addEventListener(k, prime, true);
+  });
+  queuePulse();
+
   window.__tungPong = {
     scores: function(){ return {you:youScore, him:himScore, win:WIN, ps:PH, pw:PW, ph:PH}; },
     setScores: function(y,h){ youScore=y; himScore=h; },
-    snapshot: function(){ return {youY:you.y, himY:him.y, ballY:ball.y, ballX:ball.x, ps:PH, pw:PW, ph:PH, state:state}; }
+    snapshot: function(){ return {youY:you.y, himY:him.y, ballY:ball.y, ballX:ball.x, ps:PH, pw:PW, ph:PH, state:state}; },
+    watch: function(){ return {phase:vigil.phase, a:vigil.a, dry:vigil.dry, fade:V_FADE, gap:V_GAP, air:V_AIR, dryNeed:V_DRY}; }
   };
   reset();
   tick();

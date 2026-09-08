@@ -9,6 +9,7 @@ const snake = await Deno.readTextFile(`${ROOT}/games/tung/snake.html`);
 const pong = await Deno.readTextFile(`${ROOT}/games/tung/pong.html`);
 const flappy = await Deno.readTextFile(`${ROOT}/games/tung/flappy.html`);
 const fit = await Deno.readTextFile(`${ROOT}/games/tung/tung-fit.js`);
+const tungCss = await Deno.readTextFile(`${ROOT}/games/tung/tung.css`);
 
 must(index.includes('var LBL_PLAYS = "gam\\u0435s";'), "games cloak must replace only the e");
 must(index.includes('var LBL_PLAYS_CAP = "Gam\\u0435s";'), "Games cloak must replace only the e");
@@ -55,6 +56,62 @@ must(
   "fallen overlay must not be painted before the bird",
 );
 must(flappy.includes('ctx.fillStyle="#1d1206"'), "fallen card must be opaque so the bird cannot show through the text");
+
+/* pong difficulty: the climb has to stay winnable up to the sixth point.
+   his reach is capped and his sway never reaches zero, so he can always be
+   made to miss — except on the rigged point, where he tracks the ball exactly. */
+must(pong.includes("var follow=0.05+heat*0.09;"), "pong AI must chase the ball gently");
+must(pong.includes("var maxStep=2.0+heat*1.9;"), "pong AI reach must stay capped as the score climbs");
+must(pong.includes("var wobble=30+(1-heat)*60;"), "pong AI sway must narrow but never reach zero");
+must(!pong.includes("var wobble=(1-heat)*9;"), "the old sway curve made him perfect from 3 points on");
+must(
+  /if\(youScore>=WIN-1\)\{\s*him\.y=clamp\(target, minY, maxY\);\s*return;\s*\}/.test(pong),
+  "the rigged point must still track the ball exactly, with no cap and no sway",
+);
+
+/* the night watch: he rises on the court floor, stands down, then the
+   broadcast takes the whole shell and the window signs off. */
+must(pong.includes("var V_FADE=9000, V_PEAK=0.5, V_GAP=3000, V_AIR=10000, V_DRY=25000;"), "watch timings must be fade 9s, half opacity, 3s stand-down, 10s on air, 25s dry spell");
+must(pong.includes("youScore>=WIN-1 || (youScore>=4 && vigil.dry>=V_DRY)"), "the watch must arm on the rigged score or a dry spell from 4 points up");
+must(pong.includes('if(state==="play"||state==="idle") vigil.dry+=dt;'), "the dry spell must count play and the pause between points, not won or lost boards");
+must(/vigil\.a=V_PEAK\*Math\.min\(1, vigil\.t\/V_FADE\);/.test(pong), "the rise must ramp to half opacity over the fade");
+must(
+  pong.indexOf("drawRonda();") < pong.indexOf('ctx.strokeStyle="#7a5a1a"; ctx.setLineDash([7,8]);'),
+  "the plate must paint before the net, the pads, the ball and the score",
+);
+must(pong.includes('ctx.globalAlpha=vigil.a;'), "the plate must honour the rise alpha");
+must(pong.includes("z-index:2147483647"), "the shell cover must sit above everything on the page");
+must(pong.includes("background-size:cover"), "the shell cover must fill the page without letterboxing");
+must(pong.includes("function shell()"), "the cover must be mounted on the outermost reachable document");
+must(pong.includes("requestFullscreen"), "the shell must go fullscreen when the broadcast opens");
+must(pong.includes("feed.volume=1") && pong.includes("feed.muted=false"), "the broadcast must open at full volume");
+must(pong.includes("setTimeout(signOff, V_AIR)"), "the window must sign off after the broadcast");
+must(pong.includes('new URL("../../assets/tungrondaclose.png", location.href).href'), "the close plate must resolve absolutely for the about:blank shell");
+must(pong.includes('new URL("../../assets/sahur-broadcast.mp3", location.href).href'), "the broadcast must resolve absolutely for the about:blank shell");
+must(pong.includes('ronda.src="../../assets/tungronda.png"'), "the court plate must load from assets");
+
+/* the code line under the court is the reason the room turns the volume up */
+must(pong.includes('<p class="ledger" id="ledger">'), "pong must carry the code line under the court");
+must(pong.includes("turn it up for the rest."), "the code line must send people to the speakers");
+must(tungCss.includes(".ledger {") && tungCss.includes(".ledger.live {"), "the code line needs a resting and a live style");
+must(pong.includes("actx.createBufferSource()"), "the carrier under the code line must be generated, not shipped as a file");
+must(/g\.gain\.exponentialRampToValueAtTime\(0\.02, t0\+0\.15\);/.test(pong), "the carrier must stay near the floor of hearing");
+
+const plates = [
+  ["tungronda.png", "the pos ronda plate that rises on the court"],
+  ["tungrondaclose.png", "the close plate that takes the shell"],
+];
+for (const [file, what] of plates) {
+  let size = 0;
+  try {
+    size = (await Deno.stat(`${ROOT}/assets/${file}`)).size;
+  } catch {
+    throw new Error(`assets/${file} is missing — ${what}`);
+  }
+  must(size > 20000, `assets/${file} is too small to be ${what}`);
+}
+const broadcast = await Deno.stat(`${ROOT}/assets/sahur-broadcast.mp3`);
+must(broadcast.size > 100000, "the broadcast audio is missing or truncated");
 
 must(fit.includes("data-logical-w"), "HiDPI fit must scale from logical size");
 must(fit.includes("clientWidth"), "HiDPI backing store must track the CSS box");
