@@ -50,6 +50,7 @@ must(
   !/else if\(state==="dead"\) overlay\("fallen"/.test(flappy),
   "fallen overlay must not be painted before the bird",
 );
+must(flappy.includes('ctx.fillStyle="#1d1206"'), "fallen card must be opaque so the bird cannot show through the text");
 
 must(fit.includes("data-logical-w"), "HiDPI fit must scale from logical size");
 must(fit.includes("clientWidth"), "HiDPI backing store must track the CSS box");
