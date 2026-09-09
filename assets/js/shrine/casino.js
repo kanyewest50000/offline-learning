@@ -21,7 +21,7 @@
   var API=SHRINE_API, TKEY="shrine-token-v1";
   function tok(){try{return localStorage.getItem(TKEY)||"";}catch(e){return "";}}
   function jget(p){return fetch(API+p).then(function(r){return r.json().catch(function(){return{};});});}
-  function jpost(p,b){b=b||{};b.token=tok();return fetch(API+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}).then(function(r){return r.json().catch(function(){return{};});});}
+  function jpost(p,b){b=b||{};b.token=tok();return fetch(API+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}).then(function(r){if(refused(r)){refusedGate();return;}return r.json().catch(function(){return{};});});}
   function el(t,c,txt){var e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;}
   function sv(t,a){var e=document.createElementNS("http://www.w3.org/2000/svg",t);for(var k in a)e.setAttribute(k,a[k]);return e;}
 
@@ -123,23 +123,100 @@
 
   window.__casinoOpen=function(){
     clearTimer();hideWin();
+    if(DEAD_KEY&&!tok()){deadKeyGate();return;}
     var lw=column();
     var l=el("div","casgate");l.appendChild(el("p",null,"loading the tables..."));lw.appendChild(l);
     jget("/cas/me?token="+encodeURIComponent(tok())).then(function(d){
+      if(refused(d)){refusedGate();return;}
       if(!d||d.error){showGate();return;}
       setBal(d.balance);
       renderLobby(d);
-    }).catch(showGate);
+    }).catch(netGate);
   };
 
-  function showGate(){
+  /* Every gate screen is the same shape: a heading and some lines, painted over
+     whatever was on the table. Going through here means no screen can be left
+     showing a half-finished "loading..." when a request comes back refused. */
+  function gate(title,lines){
     clearTimer();
     var gw=column();
     var g=el("div","casgate");
-    g.appendChild(el("h3",null,"members only"));
-    g.appendChild(el("p",null,"Tung's Casino is for approved members of the Shrine of Tung. You need chat access to play."));
-    g.appendChild(el("p",null,"Head back and open the Shrine of Tung to apply. Once tung approves you, your sahurs live under that same username."));
+    g.appendChild(el("h3",null,title));
+    for(var i=0;i<lines.length;i++)g.appendChild(el("p",null,lines[i]));
     gw.appendChild(g);
+  }
+
+  function showGate(){
+    gate("members only",[
+      "Tung's Casino is for approved members of the Shrine of Tung. You need chat access to play.",
+      "Head back and open the Shrine of Tung to apply. Once tung approves you, your sahurs live under that same username."
+    ]);
+  }
+
+  /* Set once we have dropped a key the server disowned. Without it the next
+     screen would fall back to the generic "members only" gate, because by then
+     there is genuinely no key left to explain — and the reason they are looking
+     at a gate would quietly change out from under them. */
+  var DEAD_KEY=false;
+  function clearTok(){DEAD_KEY=true;try{localStorage.removeItem(TKEY);}catch(e){}}
+
+  function deadKeyGate(){
+    gate("this key is no longer valid",[
+      "the account it belonged to is gone. tung may have removed it, or it was never his to begin with.",
+      "head back and open the Shrine of Tung to apply again. you will be given a new key."
+    ]);
+  }
+
+  /* did the server refuse our key? casUser() collapses deleted, unapproved and
+     banned all into one "unauthorized", so this only tells us it said no. */
+  function refused(d){return !!(d&&d.error==="unauthorized");}
+
+  /* The key was refused. /cas/me cannot say why, so ask /status — the same
+     endpoint the chat believes — and name the actual reason. A key the server
+     has disowned is dropped here rather than retried forever, which is what the
+     chat does too; a key that is merely blocked or pending is kept. */
+  function refusedGate(){
+    var t=tok();
+    if(!t){if(DEAD_KEY){deadKeyGate();}else{showGate();}return;}
+    gate("checking your key\u2026",["one moment."]);
+    jget("/status?token="+encodeURIComponent(t)).then(function(s){
+      var st=s&&s.status;
+      if(st==="approved"){
+        if(s.blocked){
+          gate("you are blocked",[
+            s.reason==="banned"
+              ? "tung has barred you from the shrine. the tables are shut to you."
+              : "you are timed out. the tables reopen when it lifts.",
+            "nothing you had is gone. it waits."
+          ]);
+        }else{
+          showGate();
+        }
+        return;
+      }
+      if(st==="pending"){
+        gate("still pending",[
+          "tung has not finished reading your application.",
+          "the tables open the moment he approves you."
+        ]);
+        return;
+      }
+      /* "none" (deleted, or never existed) and "rejected": this key is spent */
+      clearTok();setBal(0);deadKeyGate();
+    }).catch(function(){
+      gate("the shrine did not answer",[
+        "could not reach the shrine to check your key.",
+        "check your connection and try again."
+      ]);
+    });
+  }
+
+  /* a request died in transit — never clear a key over a network blip */
+  function netGate(){
+    gate("the shrine did not answer",[
+      "the tables could not be reached.",
+      "check your connection and try again."
+    ]);
   }
 
   /* ---------- the Shrine of Tung Tung God (the faucet), its own page ---------- */
@@ -174,15 +251,19 @@
     }
     claim.disabled=true;claim.textContent="consulting the shrine...";
     jget("/cas/me?token="+encodeURIComponent(tok())).then(function(d){
-      if(!d||d.error){bad(r,"members only");return;}
+      /* these two paint a whole new screen, which is the point: leaving the
+         claim button sitting on "consulting the shrine..." is how this page
+         used to hang forever on a key the server had already refused. */
+      if(refused(d)){refusedGate();return;}
+      if(!d||d.error){showGate();return;}
       setBal(d.balance);
       me.canClaim=d.canClaim;me.nextClaim=d.nextClaim;me.faucetAmount=d.faucetAmount||10;
       paintClaim();clearTimer();claimTimer=setInterval(paintClaim,1000);
-    }).catch(function(){bad(r,"network error");});
+    }).catch(netGate);
 
     claim.onclick=function(){
       claim.disabled=true;
-      jpost("/cas/claim",{}).then(function(d){
+      jpost("/cas/claim",{}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d&&d.ok){
           setBal(d.balance);me.canClaim=false;me.nextClaim=d.nextClaim;
           celebrate(d.claimed,1);ok(r,"tung tung god provides.");
@@ -318,7 +399,7 @@
 
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="";
-      jpost("/cas/dice",{bet:Number(bet.value),target:TARGET,over:OVER}).then(function(d){
+      jpost("/cas/dice",{bet:Number(bet.value),target:TARGET,over:OVER}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;bad(r,d.error);return;}
         // slide the marker to the rolled spot while the number counts up to it
         var from=parseFloat(mark.style.left)||0, to=d.roll, t0=Date.now(), dur=520;
@@ -358,7 +439,7 @@
     var go=el("button","cbtn go","play");v.appendChild(go);
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="";
-      jpost("/cas/limbo",{bet:Number(bet.value),target:Number(tgt.value)}).then(function(d){
+      jpost("/cas/limbo",{bet:Number(bet.value),target:Number(tgt.value)}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;bad(r,d.error);return;}
         setBal(d.balance);
         var target=d.crash,t0=Date.now(),dur=750;
@@ -453,7 +534,7 @@
     var rot=0, brot=0;
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="spinning...";
-      jpost("/cas/roulette",{bet:Number(bet.value),kind:SEL.kind,value:SEL.value}).then(function(d){
+      jpost("/cas/roulette",{bet:Number(bet.value),kind:SEL.kind,value:SEL.value}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;bad(r,d.error);return;}
         var idx=WHEEL.indexOf(d.spin);
         // wheel forward so the winning pocket ends at the top, under the ball
@@ -526,7 +607,7 @@
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="";
       Array.prototype.forEach.call(buckets.children,function(b){b.classList.remove("hit");});
-      jpost("/cas/plinko",{bet:Number(bet.value),risk:risk.value,rows:R}).then(function(d){
+      jpost("/cas/plinko",{bet:Number(bet.value),risk:risk.value,rows:R}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;bad(r,d.error);return;}
         var rights=0,k=0;
         ball.setAttribute("cx",cx);ball.setAttribute("cy",6);
@@ -828,13 +909,13 @@
     }
     function act(p){
       Array.prototype.forEach.call(acts.querySelectorAll("button"),function(b){b.disabled=true;});
-      jpost(p,{}).then(function(d){if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
+      jpost(p,{}).then(function(d){if(refused(d)){refusedGate();return;}if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
         .catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     }
     deal.onclick=function(){
       deal.disabled=true;bet.disabled=true;
       clearTable();setRes("","");        // a new round deals every card fresh
-      jpost("/cas/bj/start",{bet:Number(bet.value)}).then(function(d){
+      jpost("/cas/bj/start",{bet:Number(bet.value)}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}
         paint(d);
       }).catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
@@ -880,7 +961,7 @@
       cells.forEach(function(c){c.classList.add("dis");});}
     function pick(idx,c){
       live=false;cells.forEach(function(x){x.classList.add("dis");});
-      jpost("/cas/mines/pick",{tile:idx}).then(function(d){
+      jpost("/cas/mines/pick",{tile:idx}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){bad(r,d.error);live=true;enableHidden();return;}
         if(d.state==="boom"){
           c.className="cell mine";c.textContent="💣";
@@ -896,7 +977,7 @@
     }
     start.onclick=function(){
       start.disabled=true;
-      jpost("/cas/mines/start",{bet:Number(bet.value),mines:Number(mn.value)}).then(function(d){
+      jpost("/cas/mines/start",{bet:Number(bet.value),mines:Number(mn.value)}).then(function(d){if(refused(d)){refusedGate();return;}
         start.disabled=false;
         if(d.error){bad(r,d.error);return;}
         setBal(BAL-Number(bet.value));
@@ -909,7 +990,7 @@
     };
     cash.onclick=function(){
       cash.disabled=true;
-      jpost("/cas/mines/cashout",{}).then(function(d){
+      jpost("/cas/mines/cashout",{}).then(function(d){if(refused(d)){refusedGate();return;}
         cash.disabled=false;
         if(d.error){bad(r,d.error);return;}
         setBal(d.balance);(d.mines||[]).forEach(function(m){if(cells[m]&&!cells[m].classList.contains("safe")){cells[m].className="cell mine";cells[m].textContent="💣";}});
@@ -966,7 +1047,7 @@
     function running(on){start.style.display=on?"none":"";step.style.display=on?"":"none";cash.style.display=on?"":"none";bet.disabled=on;diff.disabled=on;}
     start.onclick=function(){
       start.disabled=true;
-      jpost("/cas/beef/start",{bet:Number(bet.value),difficulty:diff.value}).then(function(d){
+      jpost("/cas/beef/start",{bet:Number(bet.value),difficulty:diff.value}).then(function(d){if(refused(d)){refusedGate();return;}
         start.disabled=false;
         if(d.error){bad(r,d.error);return;}
         setBal(BAL-Number(bet.value));
@@ -977,7 +1058,7 @@
     };
     step.onclick=function(){
       step.disabled=true;
-      jpost("/cas/beef/step",{}).then(function(d){
+      jpost("/cas/beef/step",{}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){step.disabled=false;bad(r,d.error);return;}
         if(d.state==="dead"){
           // walk into the lane, let a car flatten him, THEN report it
@@ -1002,7 +1083,7 @@
     };
     cash.onclick=function(){
       cash.disabled=true;
-      jpost("/cas/beef/cashout",{}).then(function(d){
+      jpost("/cas/beef/cashout",{}).then(function(d){if(refused(d)){refusedGate();return;}
         cash.disabled=false;
         if(d.error){bad(r,d.error);return;}
         setBal(d.balance);ok(r,"cashed out "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);
@@ -1020,6 +1101,7 @@
       listWrap.appendChild(el("div","casnote","loading shop..."));
       jget("/shop/list?token="+encodeURIComponent(tok())).then(function(d){
         listWrap.innerHTML="";
+        if(refused(d)){refusedGate();return;}
         if(d.error){bad(r,d.error);return;}
         setBal(d.balance);
         var pending=d.pending||[];
@@ -1068,7 +1150,7 @@
     }
     function shopRedeem(it,buy,done){
       buy.disabled=true;
-      jpost("/shop/redeem",{itemId:it.id}).then(function(rr){
+      jpost("/shop/redeem",{itemId:it.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
         buy.disabled=false;
         if(rr.error){done(rr);return;}
         setBal(rr.balance);ok(r,"redeemed "+rr.item+". tung has been notified. he did not smile.");
@@ -1134,7 +1216,7 @@
         yes:"answer him",
         onYes:function(input,api){
           api.busy(true);
-          jpost("/shop/tell",{redeemId:p.id,itemId:p.itemId,input:input}).then(function(rr){
+          jpost("/shop/tell",{redeemId:p.id,itemId:p.itemId,input:input}).then(function(rr){if(refused(rr)){refusedGate();return;}
             if(rr.error){api.err(rr.error==="nothing to add"?"tung already heard you. or he never will.":rr.error);api.busy(false);return;}
             api.close();
             ok(r,"tung wrote it down. he did not smile.");
