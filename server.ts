@@ -20,6 +20,7 @@
 //   GET  /admin                                           -> admin page (html)
 //   GET  /admin/pending?key=                              -> {pending:[...]}
 //   GET  /admin/chat?key=                                 -> {messages:[...]} last HISTORY chat lines
+//   POST /admin/clearchat {key}                           -> {ok, cleared}
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 //   GET  /veil?token=                                     -> {live, allowed, url?}
 //   GET  /admin/veil?key=                                 -> {live, configured}
@@ -983,6 +984,25 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ messages, count: messages.length });
   }
 
+  // ---------- admin: wipe the chat log ----------
+  // Drops every retained event — messages and the reactions on them alike.
+  // The ["seq"] counter deliberately survives: it is what every connected
+  // client is holding as its cursor, and winding it back would make the next
+  // messages reuse seq numbers those clients have already passed, so they would
+  // never see them. Leaving it be means an open chat simply goes quiet until
+  // someone speaks again. Accounts, balances and shop items are untouched.
+  if (req.method === "POST" && path === "/admin/clearchat") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    let cleared = 0;
+    for await (const e of kv.list({ prefix: ["ev"] })) {
+      await kv.delete(e.key);
+      cleared++;
+    }
+    return json({ ok: true, cleared });
+  }
+
   // ---------- admin: read / flip the web veil ----------
   // `configured` tells the dashboard whether PROXY_URL is set at all, without
   // ever handing the URL itself to the page.
@@ -1862,8 +1882,8 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 </section>
 <section class="pane" id="pane-chat">
 <h2>Chat log</h2>
-<p class="hint">The last 500 retained chat lines. Not loaded with the other lists — dump only when you need it.</p>
-<div class="row" style="margin-bottom:14px"><button class="load" id="dumpChat">dump last 500</button></div>
+<p class="hint">The last 500 retained chat lines. Not loaded with the other lists — dump only when you need it. Clearing wipes every retained message and reaction; accounts, balances and shop items are untouched.</p>
+<div class="row" style="margin-bottom:14px"><button class="load" id="dumpChat">dump last 500</button><button class="no" id="clearChat">clear chat log</button></div>
 <div id="chatlog"><div class="empty">not loaded. click dump last 500.</div></div>
 </section>
 <section class="pane" id="pane-veil">
@@ -1886,6 +1906,21 @@ try{var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;
 function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();refreshVeil();}
 document.getElementById("load").onclick=loadAll;
 document.getElementById("dumpChat").onclick=dumpChat;
+document.getElementById("clearChat").onclick=function(){
+  var key=keyEl.value.trim();
+  if(!key){alert("enter your admin key first");return;}
+  if(!confirm("Delete the whole chat log? Every retained message and reaction goes. Accounts, balances and shop items are not touched."))return;
+  var btn=this;btn.disabled=true;
+  fetch("/admin/clearchat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:key})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      btn.disabled=false;
+      if(d.error){alert(d.error);return;}
+      chatlog.innerHTML='<div class="empty">chat log cleared ('+d.cleared+' events).</div>';
+      setCount("chat",0);
+    })
+    .catch(function(){btn.disabled=false;alert("could not reach the server.");});
+};
 var veilbox=document.getElementById("veilbox"),veilCount=document.getElementById("count-veil");
 function paintVeil(st){
   veilbox.innerHTML="";
