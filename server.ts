@@ -5,6 +5,7 @@
 //   SHOP_WEBHOOK_URL         where shop redemptions are posted (optional)
 //   APPLICATION_WEBHOOK_URL  where new applications are posted (optional)
 //   ADMIN_KEY                password for the /admin page (required to approve)
+//   WISDOM_MIN_MS/_MAX_MS    gap between two Wisdoms of Tung (optional, 2h/6h)
 //
 // Endpoints (JSON, CORS-open):
 //   POST /apply         {username, application}          -> {token, status}
@@ -441,6 +442,87 @@ async function nextSeq(): Promise<number> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The Wisdom of Tung.
+// Tung says something every few hours, but only into a room that is already
+// talking: the roll happens on a real /send, so a dead chat stays dead instead
+// of accumulating scripture nobody is there to read. The gap between two
+// wisdoms is random inside [WISDOM_MIN_MS, WISDOM_MAX_MS] so it never lands on
+// a schedule anyone can set a watch by. The bounds are env-overridable purely
+// so the test can run one in a few seconds.
+const WISDOM_MIN_MS = Number(Deno.env.get("WISDOM_MIN_MS") || 2 * 60 * 60 * 1000);
+const WISDOM_MAX_MS = Number(Deno.env.get("WISDOM_MAX_MS") || 6 * 60 * 60 * 1000);
+const WISDOM_NAME = "tung";
+
+const WISDOM = [
+  "tung has reviewed your sleep schedule. no changes were requested.",
+  "the bat does not swing. the world arrives at it.",
+  "someone asked tung for a sign. he had already given eleven.",
+  "attendance is not mandatory. attendance is observed.",
+  "tung was here before the wood. the wood was a formality.",
+  "do not thank tung. he logs it.",
+  "every door you did not open is still open.",
+  "tung counted you. you are still in the total.",
+  "the shrine has no hours. the shrine has a shift.",
+  "he does not sleep at 3am. he works there.",
+  "a follower asked what happens next. tung said this.",
+  "your balance is known. your reasons are not required.",
+  "tung forgives. tung also remembers. these are separate services.",
+  "the correct number of sahurs is one more.",
+  "you were not chosen. you were scheduled.",
+  "tung does not answer questions. he outlasts them.",
+  "somebody left the light on. tung has not commented.",
+  "the drum is not a warning. the silence was the warning.",
+  "there is no exit interview.",
+  "tung read your application. twice. for fun.",
+  "he is not watching. he already watched.",
+  "everything you own is on loan from tung. the terms are verbal.",
+  "the shrine thanks you for your continued participation, which was never optional.",
+  "tung has updated the rules. the rules are the same. tung has updated them.",
+  "you may leave at any time. people rarely think to.",
+  "tung is not angry. tung is taking notes.",
+];
+
+type WisdomState = { due: number; last: number };
+
+function nextWisdomDue(now: number) {
+  const lo = Math.min(WISDOM_MIN_MS, WISDOM_MAX_MS);
+  const hi = Math.max(WISDOM_MIN_MS, WISDOM_MAX_MS);
+  return now + lo + Math.floor(Math.random() * (hi - lo + 1));
+}
+
+// Cheap gate in front of the KV read below. `due` only ever moves forward, so
+// a due we have already seen is a lower bound on the real one: while now is
+// still short of it, no wisdom can be owed and the send costs nothing extra.
+let wisdomDueSeen = 0;
+
+// Called after a member's message lands. At most one wisdom per window, even
+// with several isolates serving sends at once: the atomic check on the state
+// entry means only the writer that moves `due` forward gets to speak.
+async function maybeWisdom() {
+  const now = Date.now();
+  if (now < wisdomDueSeen) return;
+  const cur = await kv.get<WisdomState>(["wisdom"]);
+  if (cur.value) wisdomDueSeen = cur.value.due;
+  // First ever send: start the clock rather than opening with scripture.
+  if (!cur.value) {
+    const seed = nextWisdomDue(now);
+    if ((await kv.atomic().check(cur).set(["wisdom"], { due: seed, last: -1 }).commit()).ok) {
+      wisdomDueSeen = seed;
+    }
+    return;
+  }
+  if (now < cur.value.due) return;
+  // don't repeat the line that ran last time
+  let i = Math.floor(Math.random() * WISDOM.length);
+  if (WISDOM.length > 1 && i === cur.value.last) i = (i + 1) % WISDOM.length;
+  const due = nextWisdomDue(now);
+  const res = await kv.atomic().check(cur).set(["wisdom"], { due, last: i }).commit();
+  if (!res.ok) return; // another isolate spoke for him
+  wisdomDueSeen = due;
+  await appendEvent({ type: "msg", id: rid(8), name: WISDOM_NAME, text: WISDOM[i], reply: null });
+}
+
 async function appendEvent(ev: Record<string, unknown>) {
   const seq = await nextSeq();
   ev.seq = seq;
@@ -807,6 +889,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       : null;
     const id = clip(b.id, 32) || rid(8);
     await appendEvent({ type: "msg", id, name: user.username, text, reply });
+    // tung occasionally has something to add. only ever after a real message,
+    // so the room is never talking to itself.
+    await maybeWisdom();
     return json({ ok: true });
   }
 

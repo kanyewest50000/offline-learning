@@ -53,9 +53,15 @@
   var LBL_SEARCH = "search " + LBL_PLAYS;
   var LBL_POPUP = "allow popups to play " + LBL_PLAYS;
 
+  /* the web veil is a destination now, not a "coming soon" page: the chooser
+     button opens it in its own tab through the same opener the catalog uses, so
+     it gets the same cloaked title, the same header and the same egg lines. */
+  var VEIL_URL = "https://thecontrolhub.pages.dev";
+
   Shrine.API = SHRINE_API;
   Shrine.TUNG_IMG = TUNG_IMG;
   Shrine.TUNGGOD_IMG = TUNGGOD_IMG;
+  Shrine.VEIL_URL = VEIL_URL;
   Shrine.esc = esc;
   Shrine.SPADE = SPADE;
   Shrine.LBL = {

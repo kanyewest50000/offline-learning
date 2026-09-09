@@ -10,11 +10,14 @@
   "use strict";
   var Shrine = (window.Shrine = window.Shrine || {});
 
-  /* the two cloaked labels this client bakes in. every other capitalised name
-     below (SHRINE_API, GAMES, TUNG_IMG, ORIGINALS, ...) is literal text inside
-     the string and resolves against the globals window.js injects. */
+  /* the cloaked labels and the veil destination this client bakes in. every
+     other capitalised name below (SHRINE_API, GAMES, TUNG_IMG, ORIGINALS, ...)
+     is literal text inside the string and resolves against the globals
+     window.js injects. */
   var LBL_POPUP = Shrine.LBL.POPUP;
   var LBL_ORIGINALS = Shrine.LBL.ORIGINALS;
+  var LBL_WEB_VEIL = Shrine.LBL.WEB_VEIL;
+  var VEIL_URL = Shrine.VEIL_URL;
 
   /* the chat client that gets written into the about:blank window. only uses
      double quotes and backticks so it survives inside this single-quoted blob. */
@@ -70,9 +73,7 @@
     'var chooseOriginals=document.getElementById("chooseOriginals");' +
     'var chooseVeil=document.getElementById("chooseVeil");' +
     'var originalsEl=document.getElementById("originals");' +
-    'var veilEl=document.getElementById("veil");' +
     'var oback=document.getElementById("oback");' +
-    'var pback=document.getElementById("pback");' +
     'var orighub=document.getElementById("orighub");' +
     'var origplay=document.getElementById("origplay");' +
     'var origframe=document.getElementById("origframe");' +
@@ -95,7 +96,7 @@
     /* ---- the chooser + tung curated catalog ---- */
     /* the main header swaps identity with the view: shrine title everywhere, a
        full casino header (back / title / balance / shop) once inside the casino. */
-    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";veilEl.style.display=v==="veil"?"flex":"none";' +
+    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";' +
     /* casino is a chooser destination; the header swaps identity once you are in it */
     'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";if(v!=="originals")hideOrigPlay();}' +
     /* clicking a game opens it in its OWN about:blank tab. we write a tiny self-
@@ -264,9 +265,10 @@
     'chooseShrine.addEventListener("click",function(){topShow("shrine");refreshGate();});' +
     'choosePlay.addEventListener("click",function(){topShow("play");});' +
     'chooseOriginals.addEventListener("click",function(){topShow("originals");});' +
-    'chooseVeil.addEventListener("click",function(){topShow("veil");});' +
+    /* same opener as the catalog: same cloaked tab title and favicon, same
+       header bar, same hidden nested-iframe lines. */
+    'chooseVeil.addEventListener("click",function(){openPlay({n:' + JSON.stringify(LBL_WEB_VEIL) + ',u:' + JSON.stringify(VEIL_URL) + '});});' +
     'oback.addEventListener("click",function(){if(origplay.style.display==="flex"){hideOrigPlay();}else{topShow("choose");}});' +
-    'pback.addEventListener("click",function(){topShow("choose");});' +
     'chooseCasino.addEventListener("click",function(){topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the catalog grid to the chooser screen */
     'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("choose");});' +   /* casino "← back" returns to the chooser */

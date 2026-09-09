@@ -2,7 +2,7 @@
    Shrine of Tung — window stylesheet
    The whole stylesheet for the about:blank shrine window, held as a string
    because that window is written with document.write and cannot reliably load
-   a relative <link>. Covers every view: gate, chat, catalog, originals, veil,
+   a relative <link>. Covers every view: gate, chat, catalog, originals,
    casino tables, shop and the overlays.
    ========================================================================== */
 (function () {
@@ -122,12 +122,6 @@
       '.origtile span{font-size:12px;color:#c8823c;font-style:italic;font-weight:400}' +
       '#origplay{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#origframe{display:block;flex:1;width:100%;border:0;background:#160d04}' +
-      '#veil{flex:1;display:none;flex-direction:column;min-height:0;background:radial-gradient(120% 80% at 50% 0%,#241505 0%,#160d04 60%)}' +
-      '#veilbar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:linear-gradient(180deg,#32200c,#2b1a0a);border-bottom:1px solid #3a2410}' +
-      '#veilTitle{font-weight:700;color:#f2c063}' +
-      '#veilbody{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:28px 24px;text-align:center}' +
-      '#veilbody h2{margin:0;font-size:28px;color:#f2c063;letter-spacing:.04em}' +
-      '#veilbody p{margin:0;max-width:420px;font-size:15px;color:#c8823c;font-style:italic;line-height:1.45}' +
       /* ---- casino ---- */
       '.casbtn{display:flex;align-items:center;gap:6px;padding:8px 12px;background:#241505;border:1px solid #7a5a1a;color:#f2c063;font-weight:700;border-radius:10px;cursor:pointer;flex:0 0 auto}' +
       '.casbtn:hover{background:#3a2410;border-color:#c8823c}' +

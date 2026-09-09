@@ -70,6 +70,11 @@ goes quiet.
 | `SHOP_WEBHOOK_URL` | shop redemptions, including anything the buyer typed |
 | `APPLICATION_WEBHOOK_URL` | new applications |
 
+`WISDOM_MIN_MS` and `WISDOM_MAX_MS` (default 2h / 6h) bound the gap between two
+Wisdoms of Tung — the lines he drops into the chat on his own. He only speaks
+into a room that is already talking, so the roll happens on a real message and
+a dead chat stays dead. Set both to a couple of seconds to watch one happen.
+
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a
 chunk moves file. `scripts/refresh-games.sh` re-vendors the gn-math loader
