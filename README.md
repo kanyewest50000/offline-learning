@@ -58,6 +58,18 @@ deno run --allow-net --allow-read --allow-sys \
   jsr:@std/http/file-server -p 8080 .                           # static site
 ```
 
+The backend reads four environment variables, set on Deno Deploy under
+Settings -> Environment Variables. `ADMIN_KEY` is required to approve anyone.
+The two webhooks are optional and independent — shop redemptions and new
+applications post to their own Discord channel, and whichever is unset simply
+goes quiet.
+
+| variable | what posts there |
+| --- | --- |
+| `ADMIN_KEY` | — (password for `/admin`) |
+| `SHOP_WEBHOOK_URL` | shop redemptions, including anything the buyer typed |
+| `APPLICATION_WEBHOOK_URL` | new applications |
+
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a
 chunk moves file. `scripts/refresh-games.sh` re-vendors the gn-math loader

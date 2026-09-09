@@ -3,7 +3,7 @@
 // can show them something back after redeeming. The question field waits
 // until they have already paid. Output is held back from the public list.
 //
-// Usage (app running with ADMIN_KEY, and DISCORD_WEBHOOK_URL pointed at the
+// Usage (app running with ADMIN_KEY, and SHOP_WEBHOOK_URL pointed at the
 // capture server whose GET side is CAPTURE):
 //   ADMIN_KEY=devadminkey API=... CAPTURE=... deno run --allow-net --allow-env scripts/test-shop-input-output.ts
 

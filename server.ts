@@ -2,8 +2,9 @@
 // Storage: Deno KV (persistent, free on Deno Deploy). No WebSockets.
 //
 // Set these in the Deno Deploy dashboard (Settings -> Environment Variables):
-//   DISCORD_WEBHOOK_URL  where applications are posted (optional)
-//   ADMIN_KEY            password for the /admin page (required to approve)
+//   SHOP_WEBHOOK_URL         where shop redemptions are posted (optional)
+//   APPLICATION_WEBHOOK_URL  where new applications are posted (optional)
+//   ADMIN_KEY                password for the /admin page (required to approve)
 //
 // Endpoints (JSON, CORS-open):
 //   POST /apply         {username, application}          -> {token, status}
@@ -20,7 +21,10 @@
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 
 const kv = await Deno.openKv();
-const WEBHOOK = Deno.env.get("DISCORD_WEBHOOK_URL") || "";
+// Two separate Discord webhooks so redemptions and applications land in their
+// own channels. Either can be unset; that kind of notification just goes quiet.
+const SHOP_WEBHOOK = Deno.env.get("SHOP_WEBHOOK_URL") || "";
+const APPLICATION_WEBHOOK = Deno.env.get("APPLICATION_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
 const OPEN_MSGS = 30; // a fresh /events?since=0 only ships this many chat lines
@@ -217,20 +221,27 @@ async function casUser(token: unknown): Promise<any | null> {
   return u;
 }
 
-// post a shop redemption to the chat webhook (best-effort, never blocks the reply)
+// Best-effort webhook post: never blocks the reply, never throws, and no-ops
+// when that webhook is unset. Every message we send carries text typed by the
+// public, so allowed_mentions is always empty — nothing from here can ping.
+function postWebhook(url: string, content: string) {
+  if (!url) return;
+  fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+  }).catch(() => {});
+}
+
+// post a shop redemption to the shop webhook
 function notifyRedeem(username: string, item: { name: string; price: number }, input?: string) {
-  if (!WEBHOOK) return;
+  if (!SHOP_WEBHOOK) return;
   let content = "🛒 **shop redemption**\nuser: **" + username + "**\nitem: **" +
     item.name + "**\ncost: **" + item.price + " sahurs**";
   // whatever the buyer typed rides along verbatim, fenced so its own markdown
   // cannot reshape the message.
   if (input) content += "\ninput:\n```\n" + input.replace(/```/g, "ʼʼʼ") + "\n```";
-  fetch(WEBHOOK, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    // the input is untrusted text from a public kiosk: never let it ping.
-    body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
-  }).catch(() => {});
+  postWebhook(SHOP_WEBHOOK, content);
 }
 
 type ShopPending = {
@@ -641,16 +652,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       .set(["tok", token], id)
       .commit();
     if (!res.ok) return json({ error: "username taken" }, 409);
-    if (WEBHOOK) {
-      fetch(WEBHOOK, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          content: "**new Shrine of Tung application**\nusername: " + username +
-            "\napplication: " + application + "\nid: `" + id + "`",
-        }),
-      }).catch(() => {});
-    }
+    postWebhook(
+      APPLICATION_WEBHOOK,
+      "**new Shrine of Tung application**\nusername: " + username +
+        "\napplication: " + application + "\nid: `" + id + "`",
+    );
     return json({ token, status: "pending", username });
   }
 
