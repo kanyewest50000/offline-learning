@@ -6,6 +6,7 @@
 //   APPLICATION_WEBHOOK_URL  where new applications are posted (optional)
 //   ADMIN_KEY                password for the /admin page (required to approve)
 //   WISDOM_MIN_MS/_MAX_MS    gap between two Wisdoms of Tung (optional, 2h/6h)
+//   PROXY_URL                where the web veil actually goes (optional)
 //
 // Endpoints (JSON, CORS-open):
 //   POST /apply         {username, application}          -> {token, status}
@@ -20,6 +21,10 @@
 //   GET  /admin/pending?key=                              -> {pending:[...]}
 //   GET  /admin/chat?key=                                 -> {messages:[...]} last HISTORY chat lines
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
+//   GET  /veil?token=                                     -> {live, allowed, url?}
+//   GET  /admin/veil?key=                                 -> {live, configured}
+//   POST /admin/veil    {key, live}                       -> {ok, live, configured}
+//   POST /admin/veiluser {key, id, allowed}               -> {ok, veil}
 
 const kv = await Deno.openKv();
 // Two separate Discord webhooks so redemptions and applications land in their
@@ -27,6 +32,11 @@ const kv = await Deno.openKv();
 const SHOP_WEBHOOK = Deno.env.get("SHOP_WEBHOOK_URL") || "";
 const APPLICATION_WEBHOOK = Deno.env.get("APPLICATION_WEBHOOK_URL") || "";
 const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
+// Where the web veil goes once it is opened. Kept in the environment rather
+// than in the static repo so the destination is not sitting in public source,
+// and handed to a member only when the global switch AND that member's own
+// veil flag are both on.
+const PROXY_URL = Deno.env.get("PROXY_URL") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
 const OPEN_MSGS = 30; // a fresh /events?since=0 only ships this many chat lines
 const MSG_MAX = 3; // chat messages one account may post
@@ -523,6 +533,18 @@ async function maybeWisdom() {
   await appendEvent({ type: "msg", id: rid(8), name: WISDOM_NAME, text: WISDOM[i], reply: null });
 }
 
+// ---------------------------------------------------------------------------
+// The global half of the web veil. This says the veil is open at all; whether
+// it is open to a given member is their own per-account flag (see /veil). Both
+// halves live outside the deploy — the flag in KV, flipped from /admin, so the
+// change is instant. Open also requires a configured PROXY_URL: flipping the
+// flag with no destination set would just open a blank tab, so that reads shut.
+async function veilLive(): Promise<boolean> {
+  if (!PROXY_URL) return false;
+  const f = await kv.get<boolean>(["veil", "live"]);
+  return f.value === true;
+}
+
 async function appendEvent(ev: Record<string, unknown>) {
   const seq = await nextSeq();
   ev.seq = seq;
@@ -910,6 +932,21 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true });
   }
 
+  // ---------- web veil: is it open, and where does it go? ----------
+  // Approved members only, and the URL ships only when the veil is actually
+  // open — a closed veil never discloses the destination.
+  if (req.method === "GET" && path === "/veil") {
+    const user = await authUser(url.searchParams.get("token"));
+    if (!user || user.status !== "approved") return json({ error: "unauthorized" }, 401);
+    if (blockState(user).blocked) return json({ error: "blocked" }, 403);
+    if (!await veilLive()) return json({ live: false, allowed: false });
+    // The veil being open is not the same as it being open to you. Membership of
+    // the whitelist is per-account and off by default, and the destination
+    // travels only to someone who is on it.
+    if (user.veil !== true) return json({ live: true, allowed: false });
+    return json({ live: true, allowed: true, url: PROXY_URL });
+  }
+
   // ---------- admin ----------
   if (req.method === "GET" && path === "/admin") {
     // Full admin HTML is ~20KB. Serving it to every scanner was free egress.
@@ -944,6 +981,23 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
     const messages = await listChatMessages();
     return json({ messages, count: messages.length });
+  }
+
+  // ---------- admin: read / flip the web veil ----------
+  // `configured` tells the dashboard whether PROXY_URL is set at all, without
+  // ever handing the URL itself to the page.
+  if (req.method === "GET" && path === "/admin/veil") {
+    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const f = await kv.get<boolean>(["veil", "live"]);
+    return json({ live: f.value === true, configured: PROXY_URL !== "" });
+  }
+  if (req.method === "POST" && path === "/admin/veil") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const live = b.live === true;
+    await kv.set(["veil", "live"], live);
+    return json({ ok: true, live, configured: PROXY_URL !== "" });
   }
 
   // ---------- admin: send a follow-up message/question to an applicant ----------
@@ -999,7 +1053,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         users.push({
           id: e.value.id, username: e.value.username, ts: e.value.ts,
           banned: !!e.value.banned, timeoutUntil: e.value.timeoutUntil || 0,
-          note: e.value.note || "",
+          note: e.value.note || "", veil: e.value.veil === true,
         });
       }
     }
@@ -1059,6 +1113,21 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const note = clip(b.note, 500); // admin-only; never sent to the user
     await kv.set(["app", app.value.id], { ...app.value, note });
     return json({ ok: true, note });
+  }
+
+  // ---------- admin: let one user through the web veil ----------
+  // Off by default and independent of the global switch: both have to be on
+  // before anyone reaches the destination.
+  if (req.method === "POST" && path === "/admin/veiluser") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", clip(b.id, 32)]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const veil = b.allowed === true;
+    await kv.set(["app", app.value.id], { ...app.value, veil });
+    return json({ ok: true, veil });
   }
 
   // ---------- admin: time a user out until a timestamp (ms epoch) ----------
@@ -1739,6 +1808,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .app h3{margin:0 0 4px;font-size:16px}
 .app p{margin:0 0 12px;color:#e9d9c2;white-space:pre-wrap;word-break:break-word}
 .app small{color:#c8823c}
+.vlab{flex:1;min-width:150px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .row+.row{margin-top:8px}
 .ok{background:#2e7d32;color:#fff}
@@ -1761,6 +1831,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn" data-pane="balances">Casino balances <span class="count" id="count-balances"></span></button>
 <button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
 <button type="button" class="navbtn" data-pane="chat">Chat log <span class="count" id="count-chat"></span></button>
+<button type="button" class="navbtn" data-pane="veil">Web veil <span class="count" id="count-veil"></span></button>
 <button type="button" class="navbtn" data-pane="danger">Wipe data</button>
 </aside>
 <div class="content">
@@ -1773,7 +1844,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 </section>
 <section class="pane" id="pane-users">
 <h2>Manage users</h2>
-<p class="hint">Approved users: rename, ban, timeout, note, re-review, or delete.</p>
+<p class="hint">Approved users: rename, ban, timeout, web-veil access, note, re-review, or delete.</p>
 <input class="search" id="search-users" placeholder="search approved users…" autocomplete="off">
 <div id="users"><div class="empty">load to see approved users.</div></div>
 </section>
@@ -1795,6 +1866,11 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <div class="row" style="margin-bottom:14px"><button class="load" id="dumpChat">dump last 500</button></div>
 <div id="chatlog"><div class="empty">not loaded. click dump last 500.</div></div>
 </section>
+<section class="pane" id="pane-veil">
+<h2>Web veil</h2>
+<p class="hint">The global half of the veil. "Coming Soon" shows the holding page to everyone; "Live" opens it — but only for members you have also approved individually, on the web-veil line of their card under Manage users. Takes effect immediately — no redeploy.</p>
+<div id="veilbox"><div class="empty">enter your admin key and hit load.</div></div>
+</section>
 <section class="pane danger" id="pane-danger">
 <h2>Wipe data</h2>
 <p>Delete every application (pending and approved). Usernames and tokens are wiped; everyone must re-apply. Casino balances and shop items are not cleared by this.</p>
@@ -1807,9 +1883,41 @@ var keyEl=document.getElementById("key"),list=document.getElementById("list"),us
 var balances=document.getElementById("balances"),shop=document.getElementById("shop"),chatlog=document.getElementById("chatlog");
 var pendingCache=null,usersCache=null,balancesCache=null,pendingErr=null,usersErr=null,balancesErr=null;
 try{var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}catch(e){}
-function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();}
+function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();refreshVeil();}
 document.getElementById("load").onclick=loadAll;
 document.getElementById("dumpChat").onclick=dumpChat;
+var veilbox=document.getElementById("veilbox"),veilCount=document.getElementById("count-veil");
+function paintVeil(st){
+  veilbox.innerHTML="";
+  if(st.error){veilbox.innerHTML='<div class="empty">'+st.error+'</div>';veilCount.textContent="";return;}
+  var live=st.live===true, ready=st.configured===true;
+  veilCount.textContent=live?"live":"off";
+  var card=document.createElement("div");card.className="card";
+  var h=document.createElement("b");h.textContent=live?"Live — the veil is open":"Coming Soon — the veil is closed";
+  card.appendChild(h);
+  var sub=document.createElement("p");sub.className="hint";
+  sub.textContent=ready
+    ? (live?"Approved members get the destination in a tab; everyone else still gets a holding page.":"Everyone gets the holding page, approved or not.")
+    : "PROXY_URL is not set in the environment, so the veil stays closed whatever this says. Set it in the Deploy dashboard first.";
+  card.appendChild(sub);
+  var row=document.createElement("div");row.className="row";
+  var on=document.createElement("button");on.textContent="open the veil";on.className=live?"":"load";on.disabled=live||!ready;
+  var off=document.createElement("button");off.textContent="close the veil";off.className="no";off.disabled=!live;
+  on.onclick=function(){setVeil(true);};off.onclick=function(){setVeil(false);};
+  row.appendChild(on);row.appendChild(off);card.appendChild(row);
+  veilbox.appendChild(card);
+}
+function refreshVeil(){
+  var k=keyEl.value.trim();if(!k)return;
+  fetch("/admin/veil?key="+encodeURIComponent(k)).then(function(r){return r.json();})
+    .then(paintVeil).catch(function(){paintVeil({error:"could not reach the server."});});
+}
+function setVeil(live){
+  var k=keyEl.value.trim();if(!k)return;
+  fetch("/admin/veil",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:k,live:live})})
+    .then(function(r){return r.json();}).then(paintVeil)
+    .catch(function(){paintVeil({error:"could not reach the server."});});
+}
 document.getElementById("clear").onclick=function(){
   if(!confirm("Delete ALL applications (pending + approved)? Everyone will have to re-apply."))return;
   fetch("/admin/clear",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim()})}).then(function(r){return r.json();}).then(function(d){alert(d.error?d.error:("cleared "+d.cleared+" entries"));loadAll();});
@@ -1934,7 +2042,7 @@ function renderUsers(){
   var q=qOf("search-users");
   var shown=usersCache.filter(function(u){
     var st=u.banned?"banned":(u.timeoutUntil&&u.timeoutUntil>Date.now()?"timeout timed out":"active");
-    return matches(q, [u.username, u.id, u.note||"", st]);
+    return matches(q, [u.username, u.id, u.note||"", st, u.veil?"veil approved":"veil not approved"]);
   });
   if(!usersCache.length){users.innerHTML='<div class="empty">no approved users yet.</div>';return;}
   if(!shown.length){users.innerHTML='<div class="empty">no matching users.</div>';return;}
@@ -1963,6 +2071,15 @@ function renderUsers(){
     clr.onclick=function(){setTimeoutUntil(u.id,0);};
     trow.appendChild(dt);trow.appendChild(apply);trow.appendChild(clr);
     el.appendChild(trow);
+    var vrow=document.createElement("div");vrow.className="row";
+    var vlab=document.createElement("small");vlab.className="vlab";
+    vlab.textContent=u.veil?"web veil: approved":"web veil: not approved";
+    if(!u.veil)vlab.className="vlab rev";
+    var vbtn=document.createElement("button");
+    if(u.veil){vbtn.className="no";vbtn.textContent="revoke veil access";vbtn.onclick=function(){setVeilUser(u.id,false);};}
+    else{vbtn.className="ok";vbtn.textContent="approve for veil";vbtn.onclick=function(){setVeilUser(u.id,true);};}
+    vrow.appendChild(vlab);vrow.appendChild(vbtn);
+    el.appendChild(vrow);
     var nrow=document.createElement("div");nrow.className="row";
     var note=document.createElement("input");note.className="uname";note.placeholder="private note (admin only)";note.value=u.note||"";note.maxLength=500;
     var nsave=document.createElement("button");nsave.className="load";nsave.textContent="save note";
@@ -1987,6 +2104,9 @@ function setBan(id,banned){
 }
 function setTimeoutUntil(id,until){
   fetch("/admin/timeout",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,until:until})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function setVeilUser(id,allowed){
+  fetch("/admin/veiluser",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,allowed:allowed})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 function saveNote(id,note){
   fetch("/admin/note",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,note:note})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});

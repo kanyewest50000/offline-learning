@@ -10,14 +10,14 @@
   "use strict";
   var Shrine = (window.Shrine = window.Shrine || {});
 
-  /* the cloaked labels and the veil destination this client bakes in. every
-     other capitalised name below (SHRINE_API, GAMES, TUNG_IMG, ORIGINALS, ...)
-     is literal text inside the string and resolves against the globals
-     window.js injects. */
+  /* the cloaked labels this client bakes in. every other capitalised name
+     below (SHRINE_API, GAMES, TUNG_IMG, ORIGINALS, ...) is literal text inside
+     the string and resolves against the globals window.js injects. The veil's
+     destination is deliberately NOT among them — it is a server secret the
+     backend hands out, and only while the veil is open. */
   var LBL_POPUP = Shrine.LBL.POPUP;
   var LBL_ORIGINALS = Shrine.LBL.ORIGINALS;
   var LBL_WEB_VEIL = Shrine.LBL.WEB_VEIL;
-  var VEIL_URL = Shrine.VEIL_URL;
 
   /* the chat client that gets written into the about:blank window. only uses
      double quotes and backticks so it survives inside this single-quoted blob. */
@@ -73,7 +73,12 @@
     'var chooseOriginals=document.getElementById("chooseOriginals");' +
     'var chooseVeil=document.getElementById("chooseVeil");' +
     'var originalsEl=document.getElementById("originals");' +
+    'var veilEl=document.getElementById("veil");' +
+    'var veilH=document.getElementById("veilH");' +
+    'var veilP1=document.getElementById("veilP1");' +
+    'var veilP2=document.getElementById("veilP2");' +
     'var oback=document.getElementById("oback");' +
+    'var pback=document.getElementById("pback");' +
     'var orighub=document.getElementById("orighub");' +
     'var origplay=document.getElementById("origplay");' +
     'var origframe=document.getElementById("origframe");' +
@@ -96,9 +101,14 @@
     /* ---- the chooser + tung curated catalog ---- */
     /* the main header swaps identity with the view: shrine title everywhere, a
        full casino header (back / title / balance / shop) once inside the casino. */
-    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";' +
+    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";veilEl.style.display=v==="veil"?"flex":"none";' +
     /* casino is a chooser destination; the header swaps identity once you are in it */
     'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";if(v!=="originals")hideOrigPlay();}' +
+    /* the holding page wears one of two faces: the veil is shut, or the veil is
+       open and you are not on tung's list. same page, different words. */
+    'var VEIL_SHUT=["Coming Soon","the veil is thin. the path is not yet for you.","tung walks it already. he will open the gate when the hour is his."];' +
+    'var VEIL_DENIED=["The Gate Knows You","the veil is open tonight. it did not open for you.","tung keeps a list. your name is on a different one."];' +
+    'function showVeil(words){var w=words||VEIL_SHUT;veilH.textContent=w[0];veilP1.textContent=w[1];veilP2.textContent=w[2];topShow("veil");}' +
     /* clicking a game opens it in its OWN about:blank tab. we write a tiny self-
        contained document into that tab: a header bar (styled to match the shrine
        chrome) holding an X that closes the tab and a fullscreen button, plus an
@@ -265,10 +275,27 @@
     'chooseShrine.addEventListener("click",function(){topShow("shrine");refreshGate();});' +
     'choosePlay.addEventListener("click",function(){topShow("play");});' +
     'chooseOriginals.addEventListener("click",function(){topShow("originals");});' +
-    /* same opener as the catalog: same cloaked tab title and favicon, same
-       header bar, same hidden nested-iframe lines. */
-    'chooseVeil.addEventListener("click",function(){openPlay({n:' + JSON.stringify(LBL_WEB_VEIL) + ',u:' + JSON.stringify(VEIL_URL) + '});});' +
+    /* the veil has two faces and the server picks: tung flips it from /admin.
+       open -> the destination in its own tab, through the same opener the
+       catalog uses (same cloaked title and favicon, same header, same hidden
+       nested-iframe lines). closed, or unreachable -> the holding page. */
+    'chooseVeil.addEventListener("click",function(){' +
+    /* loadToken(), not the cached TOKEN: TOKEN is only filled in once you have
+       entered the shrine view, and the veil is reachable straight from the
+       chooser. the saved key is the real source either way. */
+    'var t=loadToken();' +
+    'if(!t){showVeil(VEIL_SHUT);return;}' +
+    'api("/veil?token="+encodeURIComponent(t)).then(function(r){' +
+    /* open AND you are on the list -> the destination in its own tab.
+       open but you are not -> the same page, different words.
+       shut, or anything went wrong -> the shut-veil page. */
+    'if(r&&r.live&&r.allowed&&r.url){openPlay({n:' + JSON.stringify(LBL_WEB_VEIL) + ',u:r.url});}' +
+    'else if(r&&r.live){showVeil(VEIL_DENIED);}' +
+    'else{showVeil(VEIL_SHUT);}' +
+    '}).catch(function(){showVeil(VEIL_SHUT);});' +
+    '});' +
     'oback.addEventListener("click",function(){if(origplay.style.display==="flex"){hideOrigPlay();}else{topShow("choose");}});' +
+    'pback.addEventListener("click",function(){topShow("choose");});' +
     'chooseCasino.addEventListener("click",function(){topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the catalog grid to the chooser screen */
     'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("choose");});' +   /* casino "← back" returns to the chooser */

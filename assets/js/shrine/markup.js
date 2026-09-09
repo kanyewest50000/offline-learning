@@ -2,9 +2,9 @@
    Shrine of Tung — window markup
    The <body> of the about:blank shrine window. Every view ships in the document
    at once and the chat/casino clients show and hide them: the chooser, the
-   shrine chat, the catalog, the originals hub, the casino and the profile /
-   tip / login-key overlays. The web veil is not among them: that button opens
-   its destination in a tab of its own, the same way a catalog item does.
+   shrine chat, the catalog, the originals hub, the web veil, the casino and the
+   profile / tip / login-key overlays. Whether the veil button shows the veil or
+   opens the real destination in a tab is the server's call — see chat.js.
    ========================================================================== */
 (function () {
   "use strict";
@@ -98,6 +98,16 @@
       '<div id="orighub"></div>' +
       '<div id="origplay"><iframe id="origframe" allow="autoplay; fullscreen; gamepad" allowfullscreen></iframe></div>' +
       '</div>' +
+      '<div id="veil">' +
+      '<div id="veilbar"><button id="pback" class="ghost" type="button">← back</button><span id="veilTitle">' + LBL_WEB_VEIL + '</span></div>' +
+      /* one holding page, two sets of words: the veil being shut, and the veil
+         being open but not to you. chat.js swaps the copy; the markup ships the
+         shut-veil wording as the default. */
+      '<div id="veilbody">' +
+      '<h2 id="veilH">Coming Soon</h2>' +
+      '<p id="veilP1">the veil is thin. the path is not yet for you.</p>' +
+      '<p id="veilP2">tung walks it already. he will open the gate when the hour is his.</p>' +
+      '</div></div>' +
       /* ---- Tung’s Casino: top-level view; its chrome lives in the main header ---- */
       '<div id="casino"><div id="casscreen"></div></div>' +
       '<div id="rpal"></div>' +

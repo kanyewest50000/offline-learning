@@ -70,6 +70,22 @@ goes quiet.
 | `SHOP_WEBHOOK_URL` | shop redemptions, including anything the buyer typed |
 | `APPLICATION_WEBHOOK_URL` | new applications |
 
+`PROXY_URL` is where the shrine's web veil actually goes. It lives in the
+environment rather than in this repo so the destination is not sitting in public
+source, and the server hands it out only to someone entitled to it.
+
+Reaching it takes two separate yeses, and the URL travels only when both are
+given:
+
+1. the global switch on the **Web veil** pane of `/admin`, and
+2. that member being approved on the **Manage users** pane, on the web-veil line
+   under their timeout controls.
+
+Both take effect immediately, with no redeploy. Miss either and the member gets
+a holding page instead — the same page in two wordings, one for a shut veil and
+one for a veil that is open but not to them. With `PROXY_URL` unset the veil
+stays shut whatever the switch says, so it can never open a blank tab.
+
 `WISDOM_MIN_MS` and `WISDOM_MAX_MS` (default 2h / 6h) bound the gap between two
 Wisdoms of Tung — the lines he drops into the chat on his own. He only speaks
 into a room that is already talking, so the roll happens on a real message and

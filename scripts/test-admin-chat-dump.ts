@@ -63,12 +63,18 @@ const decide = await j("/admin/decide", {
 });
 if (!decide.body?.ok) fail("approve failed: " + JSON.stringify(decide.body));
 
+// Seeding 41 lines is not a flood test. The per-account cap is MSG_MAX per
+// MSG_WINDOW_MS on /send, and the server exempts admin-key posts precisely so a
+// moderator (or a fixture like this one) can seed without tripping it — the
+// line still lands under the sender's own username. What this file is actually
+// about is the *receiving* side: what /events and /admin/chat hand back.
+// scripts/test-send-ratelimit.ts is where the send cap itself is tested.
 const tag = "d" + Date.now().toString(36);
 for (let i = 1; i <= 40; i++) {
   const sent = await j("/send", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ token, id: tag + "-" + i, text: "dump " + i }),
+    body: JSON.stringify({ key: ADMIN, token, id: tag + "-" + i, text: "dump " + i }),
   });
   if (!sent.body?.ok) fail("send " + i + " failed: " + JSON.stringify(sent.body));
 }
@@ -76,6 +82,7 @@ const reply = await j("/send", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({
+    key: ADMIN,
     token,
     id: tag + "-reply",
     text: "dump reply",
