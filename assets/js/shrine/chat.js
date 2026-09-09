@@ -161,7 +161,9 @@
     'function makeSahurSvg(){var i=document.createElement("img");i.className="isvg";i.alt=":sahur:";i.title=":sahur:";i.src=SAHUR_IMG;return i;}' +
     'function makeGodCombo(){var i=document.createElement("img");i.className="embed god";i.alt="tung tung tung god";i.loading="lazy";i.src=TUNGGOD_IMG;return i;}' +
     'function renderInline(el,seg){var re=/:([a-z0-9_+-]+):/g,last=0,m;while((m=re.exec(seg))){if(m.index>last)el.appendChild(document.createTextNode(seg.slice(last,m.index)));var code=m[1];if(code==="sahur")el.appendChild(makeSahurSvg());else if(EMOJI[code])el.appendChild(document.createTextNode(EMOJI[code]));else el.appendChild(document.createTextNode(m[0]));last=re.lastIndex;}if(last<seg.length)el.appendChild(document.createTextNode(seg.slice(last)));}' +
-    'function renderBody(el,text){el.textContent="";var re=/:tung:\\s*:tung:\\s*:tung:\\s*:sahur:/g;var last=0,m;while((m=re.exec(text))){renderInline(el,text.slice(last,m.index));el.appendChild(makeGodCombo());last=re.lastIndex;}renderInline(el,text.slice(last));}' +
+    /* one god embed per message, no matter how many combos are in it. the first
+       combo becomes the portrait; any after it just render as bats + sahur. */
+    'function renderBody(el,text){el.textContent="";var re=/:tung:\\s*:tung:\\s*:tung:\\s*:sahur:/g;var m=re.exec(text);if(!m){renderInline(el,text);return;}renderInline(el,text.slice(0,m.index));el.appendChild(makeGodCombo());renderInline(el,text.slice(re.lastIndex));}' +
     /* ---- message replies + reactions (live-only, over the same relay) ---- */
     'var MSGS={};' +
     'var REACTS=["❤️","👍","👎","😂","😮","😢","🔥","🤡","🙏","💀"];' +

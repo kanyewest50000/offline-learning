@@ -215,16 +215,16 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     }
     if (last < seg.length) el.appendChild(document.createTextNode(seg.slice(last)));
   }
+  /* one god embed per message, no matter how many combos are in it. the first
+     combo becomes the portrait; any after it just render as bats + sahur. */
   function renderBody(el, text){
     el.textContent = "";
     var re = /:tung:\s*:tung:\s*:tung:\s*:sahur:/g;
-    var last = 0, m;
-    while ((m = re.exec(text))) {
-      renderInline(el, text.slice(last, m.index));
-      el.appendChild(makeGodCombo());
-      last = re.lastIndex;
-    }
-    renderInline(el, text.slice(last));
+    var m = re.exec(text);
+    if (!m) { renderInline(el, text); return; }
+    renderInline(el, text.slice(0, m.index));
+    el.appendChild(makeGodCombo());
+    renderInline(el, text.slice(re.lastIndex));
   }
 
   var MSGS = {};
