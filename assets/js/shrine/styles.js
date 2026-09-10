@@ -56,6 +56,13 @@
       '.who.tung:hover{color:#fff}' +
       '.tungmark{font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#1d1206;background:#f2c063;border-radius:4px;padding:1px 5px;line-height:1.5}' +
       '.tungimg{width:15px;height:15px;border-radius:3px;object-fit:cover;flex:0 0 auto}' +
+      /* the giveaway button under one of his lines in five */
+      '.giftbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}' +
+      '.giftbtn{background:#f2c063;color:#1d1206;font-weight:800;letter-spacing:.02em;padding:8px 14px;border-radius:9px;border:1px solid #f2c063;cursor:pointer}' +
+      '.giftbtn:hover:not(:disabled){background:#fff;border-color:#fff}' +
+      '.giftbtn:disabled{cursor:default;opacity:.85}' +
+      '.giftbtn.taken{background:transparent;color:#8a6a3a;border:1px solid #3a2410;font-weight:600}' +
+      '.giftnote{font-size:12px;color:#c8823c;font-style:italic}' +
       /* his profile card: no join date, no balance, so the ordinary rows go */
       '#profExtra{display:none}' +
       '.ovcard.tung h3{display:flex;align-items:center;gap:7px}' +

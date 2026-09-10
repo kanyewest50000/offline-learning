@@ -86,10 +86,18 @@ a holding page instead — the same page in two wordings, one for a shut veil an
 one for a veil that is open but not to them. With `PROXY_URL` unset the veil
 stays shut whatever the switch says, so it can never open a blank tab.
 
-`WISDOM_MIN_MS` and `WISDOM_MAX_MS` (default 2h / 6h) bound the gap between two
+`WISDOM_MIN_MS` and `WISDOM_MAX_MS` (default 45m / 3h) bound the gap between two
 Wisdoms of Tung — the lines he drops into the chat on his own. He only speaks
 into a room that is already talking, so the roll happens on a real message and
 a dead chat stays dead. Set both to a couple of seconds to watch one happen.
+
+One line in five is a giveaway instead: the same voice, but with a button under
+it worth `WISDOM_GIFT_AMOUNT` sahurs (default 50) to whoever reaches it first.
+`WISDOM_GIFT_CHANCE` (default 0.2) sets the odds; 1 makes every line a giveaway,
+which is how the tests force one. The claim and the payout land in a single
+atomic commit, so exactly one person can ever win a given gift and the winner is
+paid exactly once — `scripts/test-gift-claim.ts` throws a dozen simultaneous
+claims at one gift and counts the money.
 
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a

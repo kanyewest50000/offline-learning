@@ -250,6 +250,22 @@
        so this never has to guess from the name — which also means a member who
        somehow holds that name still renders as the ordinary member they are. */
     'function isTung(m){return !!(m&&m.from==="tung");}' +
+    /* one in five of his lines carries a giveaway: a button worth some sahurs to
+       whoever reaches it first. the server decides the winner — this only draws
+       the button and retires it once somebody has. */
+    'var GIFTS={};' +
+    'function retireGift(id,by,mine){var g=GIFTS[id];if(!g)return;g.btn.disabled=true;g.btn.classList.add("taken");' +
+    'g.btn.textContent=mine?("you took "+g.amount+" sahurs"):"taken";' +
+    'g.note.textContent=mine?"tung noticed.":(by?("claimed by "+by):"claimed");}' +
+    'function claimGift(id){var g=GIFTS[id];if(!g||!TOKEN)return;' +
+    'g.btn.disabled=true;g.btn.textContent="reaching\u2026";g.note.textContent="";' +
+    'apiPost("/gift/claim",{token:TOKEN,id:id}).then(function(r){' +
+    'if(r&&r.ok){retireGift(id,r.by,true);return;}' +
+    'if(r&&r.error==="claimed"){retireGift(id,r.by,false);return;}' +
+    'if(r&&r.error==="gone"){retireGift(id,null,false);g.note.textContent="nothing is there. it never was.";return;}' +
+    'g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";' +
+    'g.note.textContent=(r&&r.error==="blocked")?"not you.":"the shrine did not answer. try again.";' +
+    '}).catch(function(){g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";g.note.textContent="the shrine did not answer. try again.";});}' +
     'function add(m){var isT=isTung(m);var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(isT)row.classList.add("tung");if(m.id)row.setAttribute("data-id",m.id);' +
     'var w=document.createElement("button");w.type="button";w.className="who";w.textContent=m.name;w.title="view profile";' +
     /* his name gets his portrait and a mark, so the line reads as the shrine
@@ -259,6 +275,12 @@
     'if(m.reply){var q=document.createElement("div");q.className="quote";var qn=document.createElement("b");qn.textContent=m.reply.name+": ";q.appendChild(qn);q.appendChild(document.createTextNode(emojify(m.reply.text)));q.addEventListener("click",function(){var t=document.querySelector("[data-id="+m.reply.id+"]");if(t){t.scrollIntoView({block:"center"});t.className+=" flash";setTimeout(function(){t.className=t.className.replace(" flash","");},700);}});row.appendChild(q);}' +
     'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
     'var acts=document.createElement("div");acts.className="acts";var rb=document.createElement("button");rb.type="button";rb.className="act";rb.textContent="😀";rb.title="react";rb.addEventListener("click",function(ev){ev.stopPropagation();openPalette(m.id,rb);});var pb=document.createElement("button");pb.type="button";pb.className="act";pb.textContent="↩";pb.title="reply";pb.addEventListener("click",function(ev){ev.stopPropagation();setReply(m);});acts.appendChild(rb);acts.appendChild(pb);row.appendChild(acts);' +
+    'if(m.gift&&m.gift.id){var gw=document.createElement("div");gw.className="giftbox";' +
+    'var gb=document.createElement("button");gb.type="button";gb.className="giftbtn";gb.textContent="claim "+m.gift.amount+" sahurs";' +
+    'var gn=document.createElement("span");gn.className="giftnote";' +
+    'GIFTS[m.gift.id]={btn:gb,note:gn,amount:m.gift.amount};' +
+    'gb.addEventListener("click",function(ev){ev.stopPropagation();claimGift(m.gift.id);});' +
+    'gw.appendChild(gb);gw.appendChild(gn);row.appendChild(gw);}' +
     'var rc=document.createElement("div");rc.className="reacts";row.appendChild(rc);' +
     'MSGS[m.id]={reactEl:rc,counts:{},mine:{}};' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
@@ -270,7 +292,7 @@
     'function pageHidden(){return !!document.hidden;}' +
     'function showBan(info){polling=false;var isTo=info&&info.reason==="timeout";banTitle.textContent=isTo?"you are timed out":"you are banned";if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}else{banUntil.style.display="none";}show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}if(isTo&&!pageHidden())statusT=setTimeout(refreshGate,5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
-    'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null});}}' +
+    'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null});}}' +
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 8s. */
     'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,8000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +

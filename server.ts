@@ -5,7 +5,9 @@
 //   SHOP_WEBHOOK_URL         where shop redemptions are posted (optional)
 //   APPLICATION_WEBHOOK_URL  where new applications are posted (optional)
 //   ADMIN_KEY                password for the /admin page (required to approve)
-//   WISDOM_MIN_MS/_MAX_MS    gap between two Wisdoms of Tung (optional, 2h/6h)
+//   WISDOM_MIN_MS/_MAX_MS    gap between two Wisdoms of Tung (optional, 45m/3h)
+//   WISDOM_GIFT_CHANCE       odds a wisdom is a giveaway instead (optional, 0.2)
+//   WISDOM_GIFT_AMOUNT       sahurs a giveaway pays the first claimant (optional, 50)
 //   PROXY_URL                where the web veil actually goes (optional)
 //
 // Endpoints (JSON, CORS-open):
@@ -23,6 +25,7 @@
 //   POST /admin/clearchat {key}                           -> {ok, cleared}
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 //   GET  /veil?token=                                     -> {live, allowed, url?}
+//   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
 //   GET  /admin/veil?key=                                 -> {live, configured}
 //   POST /admin/veil    {key, live}                       -> {ok, live, configured}
 //   POST /admin/veiluser {key, id, allowed}               -> {ok, veil}
@@ -461,8 +464,12 @@ async function nextSeq(): Promise<number> {
 // wisdoms is random inside [WISDOM_MIN_MS, WISDOM_MAX_MS] so it never lands on
 // a schedule anyone can set a watch by. The bounds are env-overridable purely
 // so the test can run one in a few seconds.
-const WISDOM_MIN_MS = Number(Deno.env.get("WISDOM_MIN_MS") || 2 * 60 * 60 * 1000);
-const WISDOM_MAX_MS = Number(Deno.env.get("WISDOM_MAX_MS") || 6 * 60 * 60 * 1000);
+const WISDOM_MIN_MS = Number(Deno.env.get("WISDOM_MIN_MS") || 45 * 60 * 1000);
+const WISDOM_MAX_MS = Number(Deno.env.get("WISDOM_MAX_MS") || 3 * 60 * 60 * 1000);
+// One wisdom in five is a giveaway instead: a line with a button under it worth
+// this many sahurs to whoever reaches it first.
+const GIFT_CHANCE = Number(Deno.env.get("WISDOM_GIFT_CHANCE") || 0.2);
+const GIFT_AMOUNT = Number(Deno.env.get("WISDOM_GIFT_AMOUNT") || 50);
 const WISDOM_NAME = "tung";
 
 // Nobody but tung may hold that name. A member wearing it would be
@@ -501,9 +508,41 @@ const WISDOM = [
   "tung has updated the rules. the rules are the same. tung has updated them.",
   "you may leave at any time. people rarely think to.",
   "tung is not angry. tung is taking notes.",
+  "the moon is a hole. tung is what the light comes through.",
+  "you have been logged. this is not a threat. it is a service.",
+  "three people are typing. one of them is not.",
+  "tung does not haunt this room. tung pays rent on it.",
+  "the drum keeps the time. the time does not keep the drum.",
+  "somebody prayed for money. tung heard the word somebody.",
+  "your streak is a rope. tung is holding the other end of it.",
+  "there was a fourth wall here. he needed the wood.",
+  "the wise leave early. the loved are asked to stay.",
+  "every night you sleep, tung does the paperwork.",
+  "he is not the shadow on the wall. he is the wall.",
+  "a man asked tung for proof. he was given a receipt.",
+  "you are three clicks from something. he will not say which three.",
+  "nothing here is rigged. everything here is arranged.",
+  "he does not roll the dice. he is what they land on.",
+  "if you are reading this, the count went up by one.",
+  "silence is an answer too. tung files it under yes.",
+  "the wood remembers being a tree. tung remembers the tree.",
+  "you may log out. the log does not.",
+  "he has never lost a member. some of them stopped arriving.",
 ];
 
-type WisdomState = { due: number; last: number };
+// The giveaway lines. "{n}" is filled with the amount so the words can never
+// drift from what the button actually pays.
+const GIVEAWAY = [
+  "the tables ate well tonight. tung returns a mouthful — {n} sahurs to the first hand that opens.",
+  "somebody lost badly at plinko and tung felt something. it passed. the {n} sahurs did not. first to reach them.",
+  "tung is feeling generous. the feeling has a half-life. {n} sahurs, one claimant, no second call.",
+  "the house took more than it needed today. {n} sahurs go back. tung will not say whose they were.",
+  "a gift, then. {n} sahurs, no test, no lesson, no catch — the catch is that only one of you is quick.",
+  "the floor was swept and this was under it. {n} sahurs. finders keepers. tung does not find things.",
+];
+
+type WisdomState = { due: number; last: number; lastGift?: number };
+type Gift = { id: string; amount: number; claimedBy: string | null; ts: number; claimedAt?: number };
 
 function nextWisdomDue(now: number) {
   const lo = Math.min(WISDOM_MIN_MS, WISDOM_MAX_MS);
@@ -533,17 +572,46 @@ async function maybeWisdom() {
     return;
   }
   if (now < cur.value.due) return;
-  // don't repeat the line that ran last time
-  let i = Math.floor(Math.random() * WISDOM.length);
-  if (WISDOM.length > 1 && i === cur.value.last) i = (i + 1) % WISDOM.length;
+  // one in five is a giveaway; the two pools keep their own "last" so neither
+  // repeats itself back to back
+  const giving = GIFT_AMOUNT > 0 && Math.random() < GIFT_CHANCE;
+  const pool = giving ? GIVEAWAY : WISDOM;
+  const lastIdx = giving ? (cur.value.lastGift ?? -1) : cur.value.last;
+  let i = Math.floor(Math.random() * pool.length);
+  if (pool.length > 1 && i === lastIdx) i = (i + 1) % pool.length;
   const due = nextWisdomDue(now);
-  const res = await kv.atomic().check(cur).set(["wisdom"], { due, last: i }).commit();
+  const next: WisdomState = {
+    due,
+    last: giving ? cur.value.last : i,
+    lastGift: giving ? i : (cur.value.lastGift ?? -1),
+  };
+  const res = await kv.atomic().check(cur).set(["wisdom"], next).commit();
   if (!res.ok) return; // another isolate spoke for him
   wisdomDueSeen = due;
   // from:"tung" is what the client styles on. It is set here and nowhere else —
   // /send builds its events from the authenticated username and never copies a
   // client-supplied "from" — so the mark cannot be forged by a member.
-  await appendEvent({ type: "msg", id: rid(8), name: WISDOM_NAME, text: WISDOM[i], reply: null, from: "tung" });
+  if (!giving) {
+    await appendEvent({ type: "msg", id: rid(8), name: WISDOM_NAME, text: WISDOM[i], reply: null, from: "tung" });
+    return;
+  }
+  // The gift record is written BEFORE the line that advertises it, so the
+  // fastest possible click cannot arrive before there is something to claim.
+  const giftId = rid(10);
+  await kv.set(
+    ["gift", giftId],
+    { id: giftId, amount: GIFT_AMOUNT, claimedBy: null, ts: now } as Gift,
+    { expireIn: TTL_MS },
+  );
+  await appendEvent({
+    type: "msg",
+    id: rid(8),
+    name: WISDOM_NAME,
+    text: GIVEAWAY[i].replace("{n}", String(GIFT_AMOUNT)),
+    reply: null,
+    from: "tung",
+    gift: { id: giftId, amount: GIFT_AMOUNT },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -609,6 +677,7 @@ async function listChatMessages(): Promise<unknown[]> {
       text: ev.text,
       reply: ev.reply ?? null,
       from: ev.from ?? null,
+      gift: ev.gift ?? null,
       seq: ev.seq,
     });
   }
@@ -960,6 +1029,52 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // travels only to someone who is on it.
     if (user.veil !== true) return json({ live: true, allowed: false });
     return json({ live: true, allowed: true, url: PROXY_URL });
+  }
+
+  // ---------- claim a giveaway ----------
+  // First one here wins, and wins exactly once. The claim and the payout land
+  // in a SINGLE atomic commit guarded by checks on both keys we read: if
+  // anyone else took the gift, or this player's balance moved, the commit is
+  // refused and we look again. That closes both races at once — two people
+  // cannot both be paid, and there is no window where a gift reads as claimed
+  // but was never credited.
+  if (req.method === "POST" && path === "/gift/claim") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const user = await authUser(b.token);
+    if (!user) return json({ error: "unauthorized" }, 401);
+    if (blockState(user).blocked) return json({ error: "blocked" }, 403);
+    const id = clip(b.id, 32);
+    if (!id) return json({ error: "missing" }, 400);
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const gift = await kv.get<Gift>(["gift", id]);
+      if (!gift.value) return json({ error: "gone" }, 404);
+      if (gift.value.claimedBy) return json({ error: "claimed", by: gift.value.claimedBy }, 409);
+      const amount = round2(Number(gift.value.amount) || 0);
+      if (!(amount > 0)) return json({ error: "gone" }, 404);
+
+      const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", user.id]);
+      const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+      const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+      const nb = round2(base + amount);
+      if (!Number.isFinite(nb)) return json({ error: "gone" }, 404);
+
+      const res = await kv.atomic()
+        .check(gift)
+        .check(cur)
+        .set(["gift", id], { ...gift.value, claimedBy: user.username, claimedAt: Date.now() }, { expireIn: TTL_MS })
+        .set(["cas", user.id], { ...rec, bal: nb }, { expireIn: CAS_TTL })
+        .commit();
+      if (res.ok) {
+        // tell the room, so every open client retires the button at once
+        await appendEvent({ type: "gift", id, by: user.username, amount });
+        return json({ ok: true, amount, balance: nb, by: user.username });
+      }
+      // lost the check: either someone claimed it, or our own balance moved.
+      // the next pass re-reads and finds out which.
+    }
+    return json({ error: "busy" }, 503);
   }
 
   // ---------- admin ----------

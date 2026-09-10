@@ -32,6 +32,18 @@ must(LINES.length >= 12, `expected a decent scripture, got ${LINES.length} lines
 must(new Set(LINES).size === LINES.length, "the wisdom list has duplicates");
 must(LINES.every((l) => l.length > 8 && l.length < 200), "a wisdom is the wrong length");
 
+// A share of his lines are giveaways drawn from a second pool, so anything he
+// says may come from either. This test is about the cadence — one per window,
+// never into an empty room — not about which pool the line came from, so accept
+// both. The giveaway lines carry {n}, filled with the amount at post time.
+const gblock = src.match(/const GIVEAWAY = \[([\s\S]*?)\n\];/);
+must(!!gblock, "GIVEAWAY list not found in server.ts");
+const GLINES = [...gblock![1].matchAll(/^\s*"((?:[^"\\]|\\.)*)",$/gm)].map((m) => m[1]);
+const GIFT_RE = GLINES.map((l) =>
+  new RegExp("^" + l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\{n\\\}/g, "\\d+") + "$")
+);
+const canon = (t: string) => LINES.includes(t) || GIFT_RE.some((re) => re.test(t));
+
 async function member(name: string) {
   const a = await post("/apply", { username: name, application: "wisdom test" });
   const token = a.body?.token as string;
@@ -73,7 +85,7 @@ must((await since()).length === 0, "tung spoke into an empty room");
 await post("/send", { token: bob, text: "still here" });
 let spoken = await since();
 must(spoken.length === 1, `expected exactly one wisdom after the window, got ${spoken.length}`);
-must(LINES.includes(spoken[0]), "tung said something that is not in the canon: " + spoken[0]);
+must(canon(spoken[0]), "tung said something that is not in either pool: " + spoken[0]);
 
 // 4. and then he is done until the next window
 for (let i = 0; i < 3; i++) await post("/send", { token: alice, text: "more chatter " + i });
@@ -84,10 +96,10 @@ await sleep(WINDOW_MS + 400);
 await post("/send", { token: bob, text: "and again" });
 spoken = await since();
 must(spoken.length === 2, `expected a second wisdom, got ${spoken.length}`);
-must(LINES.includes(spoken[1]), "second wisdom is not in the canon: " + spoken[1]);
+must(canon(spoken[1]), "second wisdom is not in either pool: " + spoken[1]);
 must(spoken[0] !== spoken[1], "tung repeated himself back to back");
 
 console.log(
-  `wisdom of tung: ${LINES.length} lines; quiet inside his window and in an ` +
+  `wisdom of tung: ${LINES.length} lines + ${GLINES.length} giveaways; quiet inside his window and in an ` +
     `empty room, one per window, no back-to-back repeat (${JSON.stringify(spoken[0])})`,
 );
