@@ -196,7 +196,30 @@
     'function copyKey(btn){if(!TOKEN)return;if(!keyEl){doCopyKey(btn);return;}pendingCopyBtn=btn;keyEl.style.display="flex";}' +
     'function confirmCopyKey(){if(keyEl)keyEl.style.display="none";doCopyKey(pendingCopyBtn);pendingCopyBtn=null;}' +
     'function tipErrMsg(e){return e==="insufficient"?"the shrine rejects empty hands.":e==="self"?"tung does not tip himself. neither should you.":e==="not_found"?"that name is not known to the shrine.":e==="invalid"?"that offering is not accepted.":e==="unauthorized"?"the shrine does not recognize you.":"the offering failed. try again.";}' +
-    'function openProfile(name){if(!name||!TOKEN||!profEl)return;tipTo=name;' +
+    /* One card, two faces. The ordinary one asks the server who this member is;
+       tung's is written here, because he has no join date, no balance and no
+       server record to ask about — he is not a member. */
+    'function tungProfile(){' +
+    'var card=profEl.querySelector(".ovcard");if(card)card.classList.add("tung");' +
+    'var std=document.getElementById("profStd");if(std)std.style.display="none";' +
+    'var sub=document.getElementById("profSub");if(sub)sub.textContent="not a member. the shrine itself, wearing a name so it can be addressed.";' +
+    'document.getElementById("profName").textContent="tung";' +
+    'document.getElementById("profErr").textContent="";' +
+    'var tipBtn=document.getElementById("profTip");if(tipBtn)tipBtn.style.display="none";' +
+    'var ex=document.getElementById("profExtra");' +
+    'if(ex){ex.style.display="block";ex.innerHTML="";' +
+    'var rows=[["first seen","before the wood"],["sahurs","all of them"],["answers to","no one"],["last seen","he did not leave"],["status","watching"]];' +
+    'rows.forEach(function(r){var d=document.createElement("div");d.className="ovrow";var b=document.createElement("b");b.textContent=r[0];var v=document.createElement("span");v.textContent=r[1];d.appendChild(b);d.appendChild(v);ex.appendChild(d);});' +
+    'var note=document.createElement("p");note.className="ovsub";note.style.margin="12px 0 0";note.textContent="he does not take offerings. he takes note.";ex.appendChild(note);}' +
+    'profEl.style.display="flex";}' +
+    'function openProfile(name,isT){if(!name||!TOKEN||!profEl)return;' +
+    'if(isT){tipTo=null;tungProfile();return;}' +
+    /* put the card back to its ordinary shape — it is shared with tung's */
+    'var card0=profEl.querySelector(".ovcard");if(card0)card0.classList.remove("tung");' +
+    'var std0=document.getElementById("profStd");if(std0)std0.style.display="";' +
+    'var ex0=document.getElementById("profExtra");if(ex0){ex0.style.display="none";ex0.innerHTML="";}' +
+    'var sub0=document.getElementById("profSub");if(sub0)sub0.textContent="a pilgrim of the shrine.";' +
+    'tipTo=name;' +
     'document.getElementById("profName").textContent=name;' +
     'document.getElementById("profJoined").textContent="…";' +
     'document.getElementById("profBal").textContent="…";' +
@@ -223,8 +246,16 @@
     'function buildRpal(){rpal.innerHTML="";REACTS.forEach(function(e){var b=document.createElement("button");b.type="button";b.textContent=e;b.addEventListener("click",function(ev){ev.stopPropagation();if(rTarget)toggleReact(rTarget,e);rpal.style.display="none";});rpal.appendChild(b);});}' +
     'function setReply(m){replyTo={id:m.id,name:m.name,text:m.text.slice(0,140)};replybar.innerHTML="";var s=document.createElement("span");s.textContent="replying to ";var bb=document.createElement("b");bb.textContent=m.name;s.appendChild(bb);replybar.appendChild(s);var x=document.createElement("span");x.className="x";x.textContent="cancel";x.addEventListener("click",cancelReply);replybar.appendChild(x);replybar.style.display="flex";input.focus();}' +
     'function cancelReply(){replyTo=null;replybar.style.display="none";}' +
-    'function add(m){var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(m.id)row.setAttribute("data-id",m.id);' +
-    'var w=document.createElement("button");w.type="button";w.className="who";w.textContent=m.name;w.title="view profile";w.addEventListener("click",function(ev){ev.stopPropagation();openProfile(m.name);});row.appendChild(w);' +
+    /* from:"tung" is stamped by the server on his own posts and on nothing else,
+       so this never has to guess from the name — which also means a member who
+       somehow holds that name still renders as the ordinary member they are. */
+    'function isTung(m){return !!(m&&m.from==="tung");}' +
+    'function add(m){var isT=isTung(m);var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(isT)row.classList.add("tung");if(m.id)row.setAttribute("data-id",m.id);' +
+    'var w=document.createElement("button");w.type="button";w.className="who";w.textContent=m.name;w.title="view profile";' +
+    /* his name gets his portrait and a mark, so the line reads as the shrine
+       speaking rather than as somebody in the room */
+    'if(isT){w.classList.add("tung");w.textContent="";var ti=document.createElement("img");ti.className="tungimg";ti.src=TUNG_IMG;ti.alt="";ti.onerror=function(){ti.style.display="none";};w.appendChild(ti);var tn=document.createElement("span");tn.textContent=m.name;w.appendChild(tn);var tb=document.createElement("span");tb.className="tungmark";tb.textContent="the shrine";w.appendChild(tb);w.title="who is this";}' +
+    'w.addEventListener("click",function(ev){ev.stopPropagation();openProfile(m.name,isT);});row.appendChild(w);' +
     'if(m.reply){var q=document.createElement("div");q.className="quote";var qn=document.createElement("b");qn.textContent=m.reply.name+": ";q.appendChild(qn);q.appendChild(document.createTextNode(emojify(m.reply.text)));q.addEventListener("click",function(){var t=document.querySelector("[data-id="+m.reply.id+"]");if(t){t.scrollIntoView({block:"center"});t.className+=" flash";setTimeout(function(){t.className=t.className.replace(" flash","");},700);}});row.appendChild(q);}' +
     'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
     'var acts=document.createElement("div");acts.className="acts";var rb=document.createElement("button");rb.type="button";rb.className="act";rb.textContent="😀";rb.title="react";rb.addEventListener("click",function(ev){ev.stopPropagation();openPalette(m.id,rb);});var pb=document.createElement("button");pb.type="button";pb.className="act";pb.textContent="↩";pb.title="reply";pb.addEventListener("click",function(ev){ev.stopPropagation();setReply(m);});acts.appendChild(rb);acts.appendChild(pb);row.appendChild(acts);' +
@@ -239,7 +270,7 @@
     'function pageHidden(){return !!document.hidden;}' +
     'function showBan(info){polling=false;var isTo=info&&info.reason==="timeout";banTitle.textContent=isTo?"you are timed out":"you are banned";if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}else{banUntil.style.display="none";}show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}if(isTo&&!pageHidden())statusT=setTimeout(refreshGate,5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
-    'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null});}}' +
+    'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null});}}' +
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 8s. */
     'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,8000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +

@@ -47,6 +47,20 @@
       '.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px;background:transparent;border:0;padding:0;cursor:pointer;font-family:inherit;font-weight:600;text-align:left;line-height:1.2}' +
       '.who:hover{color:#f2c063;text-decoration:underline}' +
       '.msg.me .who{color:#f2c063}' +
+      /* tung does not post as a member and should not read as one: his line runs
+         the full width of the log as a notice rather than sitting in the left
+         column with everyone else, and carries a mark next to the name. */
+      '.msg.tung{align-self:stretch;max-width:100%;background:linear-gradient(160deg,#2e1c08,#1d1206);border:1px solid #7a5a1a;border-left:3px solid #f2c063}' +
+      '.msg.tung .body{color:#f5efe0;font-style:italic;line-height:1.5}' +
+      '.who.tung{display:flex;align-items:center;gap:6px;color:#f2c063;font-weight:800;letter-spacing:.02em}' +
+      '.who.tung:hover{color:#fff}' +
+      '.tungmark{font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#1d1206;background:#f2c063;border-radius:4px;padding:1px 5px;line-height:1.5}' +
+      '.tungimg{width:15px;height:15px;border-radius:3px;object-fit:cover;flex:0 0 auto}' +
+      /* his profile card: no join date, no balance, so the ordinary rows go */
+      '#profExtra{display:none}' +
+      '.ovcard.tung h3{display:flex;align-items:center;gap:7px}' +
+      '.ovcard.tung .ovrow b{color:#c8823c}' +
+      '.ovcard.tung .ovrow span{color:#f2c063;font-style:italic}' +
       /* profile / tip / login-key overlays — shrine-native chrome, not marketing page */
       '.ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#000a;z-index:50;padding:16px}' +
       '.ovcard{width:100%;max-width:320px;background:linear-gradient(160deg,#2e1c08,#1d1206);border:1px solid #7a5a1a;border-radius:14px;padding:16px;box-shadow:0 12px 40px #000a}' +

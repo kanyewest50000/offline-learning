@@ -465,6 +465,15 @@ const WISDOM_MIN_MS = Number(Deno.env.get("WISDOM_MIN_MS") || 2 * 60 * 60 * 1000
 const WISDOM_MAX_MS = Number(Deno.env.get("WISDOM_MAX_MS") || 6 * 60 * 60 * 1000);
 const WISDOM_NAME = "tung";
 
+// Nobody but tung may hold that name. A member wearing it would be
+// indistinguishable from him in the log, could be tipped in his place, and
+// would make every "is this tung?" check downstream a lie. Collapsing case,
+// spacing and punctuation first means "T U N G", "t.u.n.g" and "_Tung_" are
+// refused too; "tung99" and "tungsten" are not, since they do not reduce to it.
+function impersonatesTung(username: string): boolean {
+  return username.toLowerCase().replace(/[^a-z0-9]+/g, "") === WISDOM_NAME;
+}
+
 const WISDOM = [
   "tung has reviewed your sleep schedule. no changes were requested.",
   "the bat does not swing. the world arrives at it.",
@@ -531,7 +540,10 @@ async function maybeWisdom() {
   const res = await kv.atomic().check(cur).set(["wisdom"], { due, last: i }).commit();
   if (!res.ok) return; // another isolate spoke for him
   wisdomDueSeen = due;
-  await appendEvent({ type: "msg", id: rid(8), name: WISDOM_NAME, text: WISDOM[i], reply: null });
+  // from:"tung" is what the client styles on. It is set here and nowhere else —
+  // /send builds its events from the authenticated username and never copies a
+  // client-supplied "from" — so the mark cannot be forged by a member.
+  await appendEvent({ type: "msg", id: rid(8), name: WISDOM_NAME, text: WISDOM[i], reply: null, from: "tung" });
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +608,7 @@ async function listChatMessages(): Promise<unknown[]> {
       name: ev.name,
       text: ev.text,
       reply: ev.reply ?? null,
+      from: ev.from ?? null,
       seq: ev.seq,
     });
   }
@@ -747,6 +760,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const username = clip(b.username, 24);
     const application = clip(b.application, 500);
     if (!username || !application) return json({ error: "missing" }, 400);
+    if (impersonatesTung(username)) return json({ error: "that name is his. pick another." }, 409);
     const lower = username.toLowerCase();
     const id = rid(8), token = rid(24);
     const app = { id, username, application, status: "pending", ts: Date.now() };
@@ -1173,6 +1187,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const id = clip(b.id, 32);
     const username = clip(b.username, 24);
     if (!id || !username) return json({ error: "missing" }, 400);
+    if (impersonatesTung(username)) return json({ error: "that name is his. pick another." }, 409);
     // deno-lint-ignore no-explicit-any
     const app = await kv.get<any>(["app", id]);
     if (!app.value) return json({ error: "not found" }, 404);
@@ -1828,6 +1843,8 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .app h3{margin:0 0 4px;font-size:16px}
 .app p{margin:0 0 12px;color:#e9d9c2;white-space:pre-wrap;word-break:break-word}
 .app small{color:#c8823c}
+.app.tungline{border-left:3px solid #f2c063}
+.tungtag{margin-left:8px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#1d1206;background:#f2c063;border-radius:4px;padding:1px 6px;vertical-align:middle}
 .vlab{flex:1;min-width:150px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .row+.row{margin-top:8px}
@@ -1998,7 +2015,9 @@ function dumpChat(){
     chatlog.innerHTML="";
     msgs.forEach(function(m){
       var el=document.createElement("div");el.className="app";
-      var h=document.createElement("h3");h.textContent=m.name||"";el.appendChild(h);
+      var h=document.createElement("h3");h.textContent=m.name||"";
+      if(m.from==="tung"){var tg=document.createElement("span");tg.className="tungtag";tg.textContent="the shrine";h.appendChild(tg);el.classList.add("tungline");}
+      el.appendChild(h);
       if(m.reply&&m.reply.text){
         var rp=document.createElement("small");rp.textContent="reply to "+(m.reply.name||"")+" — "+m.reply.text;el.appendChild(rp);
       }

@@ -115,9 +115,15 @@
       '<div id="profOverlay" class="ov" role="dialog" aria-modal="true">' +
       '<div class="ovcard">' +
       '<h3 id="profName">member</h3>' +
-      '<p class="ovsub">a pilgrim of the shrine.</p>' +
+      '<p class="ovsub" id="profSub">a pilgrim of the shrine.</p>' +
+      /* the ordinary member rows; hidden when the card is showing tung, who has
+         neither a join date nor a balance worth quoting */
+      '<div id="profStd">' +
       '<div class="ovrow"><b>joined</b><span id="profJoined">—</span></div>' +
       '<div class="ovrow"><b>sahurs</b><span id="profBal">—</span></div>' +
+      '</div>' +
+      /* filled in only for tung */
+      '<div id="profExtra"></div>' +
       '<p id="profErr" class="overr"></p>' +
       '<div class="ovacts"><button id="profTip" type="button">offer sahurs</button><button id="profClose" class="ghost" type="button">close</button></div>' +
       '</div></div>' +
