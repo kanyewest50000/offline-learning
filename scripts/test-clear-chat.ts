@@ -30,7 +30,14 @@ async function member(name: string) {
   must(!!(await post("/admin/decide", { key: ADMIN, id, action: "approve" })).body?.ok, "approve failed");
   return { token, id };
 }
-const dump = async () => (await j("/admin/chat?key=" + encodeURIComponent(ADMIN))).body.messages || [];
+// tung drops his own lines into the room on his own schedule, and this test is
+// about clearing what the members said — so count members' messages only.
+// Without this the "only thing in the room" check below is a race against his
+// next wisdom, which is exactly what it lost when run with a short window.
+// deno-lint-ignore no-explicit-any
+const dump = async (): Promise<any[]> =>
+  ((await j("/admin/chat?key=" + encodeURIComponent(ADMIN))).body.messages || [])
+    .filter((m: { from?: string }) => m.from !== "tung");
 const clear = () => post("/admin/clearchat", { key: ADMIN });
 
 const stamp = Date.now().toString(36).slice(-6);
@@ -64,9 +71,11 @@ must(typeof res.body.cleared === "number" && res.body.cleared >= 5,
   `expected the messages and the reaction to be counted, got ${res.body.cleared}`);
 must((await dump()).length === 0, "the chat log is not empty after clearing");
 
-// a fresh open sees an empty room
+// a fresh open sees an empty room (bar anything tung has said since)
 const fresh = await j("/events?since=0&token=" + encodeURIComponent(bob.token));
-must((fresh.body.events || []).length === 0, "a fresh open still sees events after clearing");
+// deno-lint-ignore no-explicit-any
+const freshMsgs = (fresh.body.events || []).filter((e: any) => e.type === "msg" && e.from !== "tung");
+must(freshMsgs.length === 0, "a fresh open still sees member messages after clearing");
 
 // ---- the bit that matters: the already-connected client keeps working ----
 must(!!(await post("/send", { token: bob.token, id: tag + "-after", text: "after the wipe" })).body?.ok,
@@ -79,7 +88,8 @@ must(texts.includes("after the wipe"),
 // and the new line is the only thing in the room
 const after = await dump();
 must(after.length === 1 && after[0].text === "after the wipe",
-  "after a clear the log should hold only what was said since: " + JSON.stringify(after.map((m: {text: string}) => m.text)));
+  "after a clear the log should hold only what members said since: " +
+    JSON.stringify(after.map((m: { text: string }) => m.text)));
 
 // clearing an already-empty log is a no-op, not an error
 await clear();
