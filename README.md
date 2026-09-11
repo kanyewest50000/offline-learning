@@ -70,8 +70,9 @@ with it for three full seconds while theirs shivers under a sheen before it
 turns. The result is held behind the second card, because knowing it early is
 the one thing that would make the pause worthless.
 
-A table nobody has joined can be taken down from the pit at any time and the
-stake comes straight back — once. Both stakes are debited the moment a player
+Opening a table takes you to its own page, and the way to take it down is on
+that page: a countdown to when it closes itself and a button that hands the
+stake straight back — once. Both stakes are debited the moment a player
 commits and from then on the sahurs live in the duel record, not in anybody's
 balance. Every way out — a win, a
 cancel, a table nobody joined inside ten minutes, a confirm nobody gave inside
@@ -135,15 +136,28 @@ atomic commit, so exactly one person can ever win a given gift and the winner is
 paid exactly once — `scripts/test-gift-claim.ts` throws a dozen simultaneous
 claims at one gift and counts the money.
 
-## settings
+## settings and skins
 
 A boxed gear in the top-left of the main menu opens the settings page: the
-**theme** (Tung's Wood, which is the base stylesheet, and Dark Mode, which
-overrides only colours) and the **tab disguise** — the title and favicon this
-window and every game tab opened from it wear, which used to sit as a bar over
-the catalog. The chosen theme is stamped on `<html data-theme>` as the document
-is written, so a dark window never flashes the wood first. Adding a theme is a
-row in `config.js` plus a block in `styles.js`; the layout is never touched.
+**theme**, and the **tab disguise** — the title and favicon this window and
+every game tab opened from it wear, which used to sit as a bar over the catalog.
+The chosen theme is stamped on `<html data-theme>` as the document is written,
+so a dark window never flashes the wood first.
+
+Skins are property. Only Tung's Wood is free, and it is also the base
+stylesheet, so it overrides nothing. **Every other theme is locked to every
+member until tung puts it in the shop and that member buys it** — and that is
+the default on purpose: adding a row to `SHRINE_THEMES` in `server.ts` (plus its
+block in `styles.js`) ships a skin nobody can wear yet rather than quietly
+handing it to the whole shrine. The shop editor on `/admin` scans that registry,
+so a new theme appears in its dropdown by itself and only needs a price.
+
+Ownership is per member, lives in KV, and is the server's to state: the settings
+page asks `/themes` what it may wear and draws a padlock over anything else, so
+a locked skin cannot be selected by editing the client — it simply is not in the
+stylesheet that was served. Buying charges once, re-buying is refused rather
+than taken as a donation, and taking an item off the shelves does not repossess
+what people already bought. `scripts/test-themes.ts` covers all of it.
 
 ## admin
 

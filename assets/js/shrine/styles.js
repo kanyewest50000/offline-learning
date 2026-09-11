@@ -545,7 +545,15 @@
       '.themecard strong{font-size:13px;color:#f2c063;font-weight:700}' +
       '.themecard .tnote{font-size:11px;color:#8a6a3a;font-style:italic;line-height:1.4}' +
       /* each swatch paints its own theme, so the choice is visible before it is made */
-      '.swatch{width:100%;height:34px;border-radius:8px;border:1px solid #00000055;display:block}' +
+      '.swatch{position:relative;width:100%;height:34px;border-radius:8px;border:1px solid #00000055;display:block}' +
+      /* a locked skin still shows its colours — you can see what you are not
+         wearing — but it is dimmed and carries the padlock */
+      '.themecard.locked{opacity:.72;cursor:pointer}' +
+      '.themecard.locked .swatch{filter:grayscale(.55) brightness(.7)}' +
+      '.themecard.locked strong{color:#8a6a3a}' +
+      '.themecard.locked:hover{opacity:.9;border-color:#4a3316}' +
+      '.swlock{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:17px;' +
+      'text-shadow:0 1px 3px #000a}' +
       '.swatch.sw-wood{background:linear-gradient(120deg,#2b1a0a 0%,#3a2410 45%,#c8823c 100%)}' +
       '.swatch.sw-dark{background:linear-gradient(120deg,#161618 0%,#232328 45%,#8b8b96 100%)}' +
       /* =====================================================================

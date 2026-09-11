@@ -126,25 +126,59 @@
     'var CLOAK_TKEY="shrine-cloak-title",CLOAK_FKEY="shrine-cloak-fav";' +
     'function cloakTitle(){try{return localStorage.getItem(CLOAK_TKEY)||"Assignments";}catch(e){return "Assignments";}}' +
     'function cloakFav(){try{return localStorage.getItem(CLOAK_FKEY)||"https://cuhsd.instructure.com/favicon.ico";}catch(e){return "https://cuhsd.instructure.com/favicon.ico";}}' +
-    /* ---- themes. the id rides on <html data-theme>, which is all the
-       stylesheet needs; the wood is the base sheet, so it overrides nothing.
-       An unknown or unreadable saved value falls back to the wood rather than
-       leaving the page unpainted. ---- */
+    /* ---- themes ----
+       The id rides on <html data-theme>, which is all the stylesheet needs.
+       WHICH themes this member may wear is the server's business, not this
+       client's: /themes says what is owned and what the shop wants for the
+       rest, so a locked skin cannot be selected by editing anything here —
+       and a theme added to the shrine is locked for everybody by default
+       until it is put in the shop and bought. The wood is free and is also
+       the base stylesheet, so it overrides nothing. ---- */
     'var THEMES=' + JSON.stringify(Shrine.THEMES) + ';' +
     'var THEME_KEY="shrine-theme",THEME_DEF=' + JSON.stringify(Shrine.THEME_DEFAULT) + ';' +
+    'var THEME_STATE=null;' +
     'function themeOk(id){for(var i=0;i<THEMES.length;i++)if(THEMES[i].id===id)return true;return false;}' +
+    'function themeOwned(id){' +
+    'if(id===THEME_DEF)return true;' +
+    'if(!THEME_STATE)return false;' +
+    'for(var i=0;i<THEME_STATE.length;i++)if(THEME_STATE[i].id===id)return !!THEME_STATE[i].owned;' +
+    'return false;}' +
     'function loadTheme(){try{var t=localStorage.getItem(THEME_KEY);if(t&&themeOk(t))return t;}catch(e){}return THEME_DEF;}' +
     'function applyTheme(id){if(!themeOk(id))id=THEME_DEF;document.documentElement.setAttribute("data-theme",id);}' +
     'function saveTheme(id){try{localStorage.setItem(THEME_KEY,id);}catch(e){}applyTheme(id);paintThemes();}' +
-    'function paintThemes(){if(!themegrid)return;var cur=loadTheme();Array.prototype.forEach.call(themegrid.children,function(c){if(c.getAttribute("data-theme")===cur)c.classList.add("on");else c.classList.remove("on");});}' +
+    /* a skin that is no longer yours must not keep being worn */
+    'function reconcileTheme(){var cur=loadTheme();if(cur!==THEME_DEF&&!themeOwned(cur))saveTheme(THEME_DEF);}' +
+    'function paintThemes(){if(!themegrid)return;var cur=loadTheme();' +
+    'Array.prototype.forEach.call(themegrid.children,function(c){' +
+    'if(c.getAttribute("data-theme")===cur)c.classList.add("on");else c.classList.remove("on");});}' +
+    /* the grid is drawn from whatever the server last told us; before it has
+       answered, only the free default is offered rather than guessing */
     'function buildThemes(){if(!themegrid)return;themegrid.innerHTML="";' +
-    'THEMES.forEach(function(t){' +
-    'var b=document.createElement("button");b.type="button";b.className="themecard";b.setAttribute("data-theme",t.id);' +
-    'var sw=document.createElement("span");sw.className="swatch sw-"+t.id;b.appendChild(sw);' +
+    'var rows=THEME_STATE||THEMES.map(function(t){return {id:t.id,name:t.name,note:t.note,owned:t.id===THEME_DEF,price:null};});' +
+    'rows.forEach(function(t){' +
+    'var owned=t.owned||t.id===THEME_DEF;' +
+    'var b=document.createElement("button");b.type="button";b.className="themecard"+(owned?"":" locked");b.setAttribute("data-theme",t.id);' +
+    'var sw=document.createElement("span");sw.className="swatch sw-"+t.id;' +
+    'if(!owned){var lk=document.createElement("span");lk.className="swlock";lk.textContent="\uD83D\uDD12";sw.appendChild(lk);}' +
+    'b.appendChild(sw);' +
     'var n=document.createElement("strong");n.textContent=t.name;b.appendChild(n);' +
-    'var d=document.createElement("span");d.className="tnote";d.textContent=t.note;b.appendChild(d);' +
-    'b.addEventListener("click",function(){saveTheme(t.id);});' +
+    'var d=document.createElement("span");d.className="tnote";' +
+    'd.textContent=owned?t.note:(t.price!=null?("in the shop \u2014 "+t.price+" sahurs"):"not for sale yet.");' +
+    'b.appendChild(d);' +
+    'b.addEventListener("click",function(){' +
+    'if(owned){saveTheme(t.id);return;}' +
+    'var msg=document.getElementById("themeMsg");' +
+    'if(msg)msg.textContent=t.price!=null' +
+    '?("locked. tung sells it in the casino shop for "+t.price+" sahurs.")' +
+    ':"locked. tung has not put this one on the shelves.";});' +
     'themegrid.appendChild(b);});paintThemes();}' +
+    /* ask the shrine what is ours, then redraw */
+    'function refreshThemes(){' +
+    'var t=loadToken();if(!t){buildThemes();return;}' +
+    'api("/themes?token="+encodeURIComponent(t)).then(function(r){' +
+    'if(r&&r.themes){THEME_STATE=r.themes;reconcileTheme();}' +
+    'buildThemes();' +
+    '}).catch(function(){buildThemes();});}' +
     'function openPlay(g){' +
     'var w=window.open("about:blank","_blank");' +
     'if(!w){alert(' + JSON.stringify(LBL_POPUP) + ');return;}' +
@@ -386,9 +420,9 @@
     'shrineBtn.addEventListener("click",function(){if(window.__casinoShrine)window.__casinoShrine();});' +   /* so does the shrine (the faucet) */
     'sback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the shrine/chat to the chooser screen */
     'gsearch.addEventListener("input",filterCatalog);' +
-    'if(openSettingsBtn)openSettingsBtn.addEventListener("click",function(){topShow("settings");});' +
+    'if(openSettingsBtn)openSettingsBtn.addEventListener("click",function(){topShow("settings");refreshThemes();});' +
     'if(setbackBtn)setbackBtn.addEventListener("click",function(){topShow("choose");});' +
-    'applyTheme(loadTheme());buildThemes();' +
+    'applyTheme(loadTheme());refreshThemes();' +
     'cloakTitleEl.value=cloakTitle();cloakFavEl.value=cloakFav();' +
     'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}document.title=cloakTitle();});' +
     'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}var fl=document.getElementById("cloakfav");if(fl)fl.href=cloakFav();});' +

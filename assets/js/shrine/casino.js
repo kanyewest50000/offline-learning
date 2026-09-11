@@ -1185,6 +1185,13 @@
   function pitSkew(d){if(d&&typeof d.now==="number")PIT.skew=d.now-Date.now();}
   function pitLeft(deadline){return Math.max(0,(Number(deadline)||0)-(Date.now()+PIT.skew));}
   function pitSecs(ms){return String(Math.ceil(ms/1000));}
+  /* the confirm and move clocks are seconds; an open table runs for ten
+     minutes, and "600s" is not something anybody reads as time */
+  function pitClockText(ms){
+    var t=Math.ceil(ms/1000);
+    if(t<60)return t+"s";
+    return Math.floor(t/60)+"m "+(t%60<10?"0":"")+(t%60)+"s";
+  }
   function moveIcon(m){
     if(m==="tung"){var i=el("img","pmimg");i.src=(typeof TUNG_IMG!=="undefined")?TUNG_IMG:"";i.alt="tung";i.onerror=function(){i.style.display="none";};return i;}
     return el("span","pmemoji",m==="wood"?"🪵":"🔥");
@@ -1221,9 +1228,13 @@
     };
 
     function paintList(d){
-      var mineRow=null,rows=(d.open||[]).filter(function(t){return t.game===game;});
+      /* a table of your own is never in this list: you are taken to its page */
+      var rows=(d.open||[]).filter(function(t){return t.game===game&&!t.mine;});
       list.innerHTML="";
-      if(!rows.length){list.appendChild(el("div","casnote","nobody is waiting. put a table up and someone will find it."));return;}
+      if(!rows.length){
+        list.appendChild(el("div","casnote","nobody is waiting. put a table up and someone will find it."));
+        return;
+      }
       rows.forEach(function(t){
         var box=el("div","pitrow"+(t.mine?" mine":""));
         var g=el("div","grow");
@@ -1232,33 +1243,18 @@
         g.appendChild(el("p",null,t.mine?("waiting for someone — "+pitSecs(lf)+"s left"):("waiting — "+pitSecs(lf)+"s left")));
         box.appendChild(g);
         box.appendChild(el("div","price",money(t.bet)+" sahurs"));
-        if(t.mine){
-          var x=el("button","cbtn stop","take it down");
-          x.onclick=function(){
-            x.disabled=true;
-            jpost("/duel/cancel",{id:t.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
-              x.disabled=false;
-              if(!rr||rr.error){bad(r,rr&&rr.error==="someone is at the table"?"too late — someone just sat down.":"could not cancel");pitRefresh();return;}
-              setBal(rr.balance);ok(r,"table taken down. "+money(rr.refunded)+" sahurs returned.");pitRefresh();
-            }).catch(function(){x.disabled=false;bad(r,"network error");});
-          };
-          box.appendChild(x);
-          mineRow=box;
-        }else{
-          var s=el("button","cbtn go","sit down");
-          s.onclick=function(){
-            s.disabled=true;
-            jpost("/duel/join",{id:t.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
-              s.disabled=false;
-              if(!rr||rr.error){bad(r,rr.error==="taken"?"somebody beat you to it.":(rr.error==="insufficient"?"not enough sahurs for that stake.":(rr.error==="already in a duel"?"you are already at a table.":"could not sit down")));pitRefresh();return;}
-              setBal(rr.balance);pitEnter(rr.duel);
-            }).catch(function(){s.disabled=false;bad(r,"network error");});
-          };
-          box.appendChild(s);
-        }
+        var sit=el("button","cbtn go","sit down");
+        sit.onclick=function(){
+          sit.disabled=true;
+          jpost("/duel/join",{id:t.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
+            sit.disabled=false;
+            if(!rr||rr.error){bad(r,rr.error==="taken"?"somebody beat you to it.":(rr.error==="insufficient"?"not enough sahurs for that stake.":(rr.error==="already in a duel"?"you are already at a table.":"could not sit down")));pitRefresh();return;}
+            setBal(rr.balance);pitEnter(rr.duel);
+          }).catch(function(){sit.disabled=false;bad(r,"network error");});
+        };
+        box.appendChild(sit);
         list.appendChild(box);
       });
-      if(mineRow)list.insertBefore(mineRow,list.firstChild);
     }
 
     function pitRefresh(){
@@ -1266,7 +1262,7 @@
         if(refused(d)){refusedGate();return;}
         if(!d||d.error)return;
         pitSkew(d);setBal(d.balance);
-        /* somebody sat down at your table while you were reading the list */
+        /* your own table takes you to its own page, waiting or not */
         if(d.mine){pitEnter(d.mine);return;}
         paintList(d);
       }).catch(function(){});
@@ -1337,7 +1333,30 @@
     var body=el("div","pitbody");v.appendChild(body);
     var note=el("div","casres","");v.appendChild(note);
 
-    if(d.state==="confirm"){
+    if(d.state==="open"){
+      /* Your table, up and waiting. This is the only page that can take it
+         down, and it has to be — you are sent straight here after opening one,
+         so a screen without a cancel on it left the stake stranded until the
+         table timed out. */
+      body.appendChild(el("p","pitsay","your table is up."));
+      body.appendChild(el("p","pitsub","waiting for somebody to sit down. nobody has yet, so you can take it back."));
+      var kill=el("button","cbtn stop","take it down \u2014 "+money(d.bet)+" sahurs back");
+      kill.onclick=function(){
+        kill.disabled=true;
+        jpost("/duel/cancel",{id:d.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
+          kill.disabled=false;
+          if(!rr||rr.error){
+            /* somebody sat down in the moment between painting and clicking */
+            bad(note,rr&&rr.error==="someone is at the table"?"too late — somebody just sat down.":"could not take it down.");
+            return;
+          }
+          setBal(rr.balance);
+          pitStop();viewPit(d.game);
+        }).catch(function(){kill.disabled=false;bad(note,"network error");});
+      };
+      body.appendChild(kill);
+      body.appendChild(el("p","pitsub","if nobody comes, it closes itself and the stake comes back either way."));
+    }else if(d.state==="confirm"){
       body.appendChild(el("p","pitsay",d.youConfirmed
         ?"you are in. waiting on them."
         :"they are waiting. say yes before the clock runs out."));
@@ -1550,7 +1569,7 @@
     if(!PIT.left||!PIT.left.isConnected)return;
     if(d.state==="done"||!d.deadline){PIT.left.textContent="";PIT.left.className="pitclock";return;}
     var ms=pitLeft(d.deadline);
-    PIT.left.textContent=pitSecs(ms)+"s";
+    PIT.left.textContent=pitClockText(ms);
     PIT.left.className="pitclock"+(ms<=4000?" hot":"");
   }
 
@@ -1593,10 +1612,15 @@
           if(pending.length)listWrap.appendChild(el("div","casnote","the shelves"));
           items.forEach(function(it){
             var box=el("div","shopitem");
-            var g=el("div","grow");g.appendChild(el("h4",null,it.name));if(it.desc)g.appendChild(el("p",null,it.desc));box.appendChild(g);
+            var g=el("div","grow");g.appendChild(el("h4",null,it.name));if(it.desc)g.appendChild(el("p",null,it.desc));
+            /* an item that unlocks a skin says so, and says when it is already
+               yours — buying it twice would just be a donation */
+            if(it.themeName)g.appendChild(el("p",null,it.owned?("unlocks the "+it.themeName+" theme — already yours."):("unlocks the "+it.themeName+" theme.")));
+            box.appendChild(g);
             box.appendChild(el("div","price",money(it.price)+" sahurs"));
-            var buy=el("button","cbtn","redeem");
-            buy.onclick=function(){shopConfirm(it,buy);};
+            var buy=el("button","cbtn",it.owned?"owned":"redeem");
+            if(it.owned)buy.disabled=true;
+            else buy.onclick=function(){shopConfirm(it,buy);};
             box.appendChild(buy);
             listWrap.appendChild(box);
           });

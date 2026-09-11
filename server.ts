@@ -361,6 +361,31 @@ function handValue(cards: string[]): { total: number; soft: boolean } {
   return { total, soft };
 }
 
+// ---------------------------------------------------------------------------
+// The shrine's skins.
+//
+// Only the ones marked `free` are everybody's. Every other theme is LOCKED to
+// everybody until tung puts it in the shop and that member buys it — which is
+// the default on purpose: adding a row here ships a theme nobody can wear yet,
+// rather than quietly giving it away to the whole shrine.
+//
+// Ownership lives at ["theme", uid, themeId]. The client is told what it owns
+// and never decides for itself; a locked theme it tries to wear anyway is
+// simply not in the stylesheet it was served.
+const SHRINE_THEMES: { id: string; name: string; note: string; free?: boolean }[] = [
+  { id: "wood", name: "Tung’s Wood", note: "the shrine as it was built.", free: true },
+  { id: "dark", name: "Dark Mode", note: "the wood, after hours." },
+];
+function themeById(id: string) {
+  return SHRINE_THEMES.find((t) => t.id === id) || null;
+}
+async function ownsTheme(uid: string, id: string): Promise<boolean> {
+  const t = themeById(id);
+  if (!t) return false;
+  if (t.free) return true;
+  return (await kv.get<number>(["theme", uid, id])).value === 1;
+}
+
 // roulette: which pockets are red on a European wheel
 const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 
@@ -1655,6 +1680,38 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, duel: duelView(d, u.id), balance: round2((await getCas(u.id)).bal) });
   }
 
+  // ---------- which skins this member may wear ----------
+  // Every theme the shrine has, each marked owned or not, and for the locked
+  // ones whatever the shop is currently asking. The settings page draws its
+  // list straight from this, so a theme that is not on sale reads as locked
+  // with nothing to click rather than as a button that quietly does nothing.
+  if (req.method === "GET" && path === "/themes") {
+    const u = await casUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // what the shop is selling, by theme
+    const forSale = new Map<string, { itemId: string; price: number; name: string }>();
+    // deno-lint-ignore no-explicit-any
+    for await (const e of kv.list<any>({ prefix: ["shopitem"] })) {
+      const th = String(e.value?.theme || "");
+      if (!th || !e.value.active) continue;
+      const price = round2(Number(e.value.price));
+      const cur = forSale.get(th);
+      // if two items grant the same theme, quote the cheaper one
+      if (!cur || price < cur.price) forSale.set(th, { itemId: e.value.id, price, name: e.value.name });
+    }
+    const themes = [];
+    for (const t of SHRINE_THEMES) {
+      const owned = await ownsTheme(u.id, t.id);
+      const sale = forSale.get(t.id) || null;
+      themes.push({
+        id: t.id, name: t.name, note: t.note, free: !!t.free, owned,
+        price: !owned && sale ? sale.price : null,
+        itemName: !owned && sale ? sale.name : null,
+      });
+    }
+    return json({ ok: true, themes, balance: round2((await getCas(u.id)).bal) });
+  }
+
   // ---------- admin ----------
   if (req.method === "GET" && path === "/admin") {
     // Full admin HTML is ~20KB. Serving it to every scanner was free egress.
@@ -2389,6 +2446,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
           desc: e.value.desc,
           price: e.value.price,
           inputLabel: e.value.inputLabel || "",
+          theme: e.value.theme || "",
+          themeName: e.value.theme ? (themeById(e.value.theme)?.name || "") : "",
+          // an item that unlocks something you already have is not for you
+          owned: e.value.theme ? await ownsTheme(u.id, e.value.theme) : false,
         });
       }
     }
@@ -2411,8 +2472,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const inputLabel = String(it.value.inputLabel || "").trim();
     const input = clip(b.input, 500);
     const price = round2(Number(it.value.price));
+    // Buying a skin you already wear is just a donation, so refuse it before
+    // taking the sahurs rather than after.
+    const grants = String(it.value.theme || "");
+    if (grants && await ownsTheme(u.id, grants)) return json({ error: "already owned" }, 409);
     const bal = await adjustBalance(u.id, -price);
     if (bal === null) return json({ error: "insufficient" }, 402);
+    // The debit has happened, so the grant must not be conditional on anything
+    // that can fail afterwards — it is written before the reply is built, and
+    // writing it twice is the same as writing it once.
+    if (grants && themeById(grants)) await kv.set(["theme", u.id, grants], 1);
     let pending: ShopPending | null = null;
     if (inputLabel && !input) {
       // they paid. walking away must not lose the question — keep an owed
@@ -2437,6 +2506,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       output: it.value.output || "",
       inputLabel,
       pending,
+      theme: grants || null,
     });
   }
   if (req.method === "POST" && path === "/shop/tell") {
@@ -2500,6 +2570,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   }
 
   // ---------- admin: shop management (list all / upsert / delete) ----------
+  // the list the shop editor's theme dropdown is built from
+  if (req.method === "GET" && path === "/admin/themes") {
+    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    return json({ ok: true, themes: SHRINE_THEMES.map((t) => ({ id: t.id, name: t.name, free: !!t.free })) });
+  }
   if (req.method === "GET" && path === "/admin/shop") {
     if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
     const items: unknown[] = [];
@@ -2523,11 +2598,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // output: what they are shown after redeeming (blank = nothing extra).
     const inputLabel = clip(b.inputLabel, 80);
     const output = clip(b.output, 1000);
+    // theme: redeeming this item unlocks that skin for the buyer. Checked
+    // against the registry so a typo cannot create an item that sells nothing.
+    const theme = clip(b.theme, 32);
+    if (theme && !themeById(theme)) return json({ error: "no such theme" }, 400);
+    if (theme && themeById(theme)!.free) return json({ error: "that theme is already everyone's" }, 400);
     // deno-lint-ignore no-explicit-any
     const existing = await kv.get<any>(["shopitem", id]);
     const ts = existing.value?.ts || Date.now();
-    await kv.set(["shopitem", id], { id, name, desc, price, active, ts, inputLabel, output });
-    return json({ ok: true, item: { id, name, desc, price, active, ts, inputLabel, output } });
+    await kv.set(["shopitem", id], { id, name, desc, price, active, ts, inputLabel, output, theme });
+    return json({ ok: true, item: { id, name, desc, price, active, ts, inputLabel, output, theme } });
   }
   if (req.method === "POST" && path === "/admin/shop/delete") {
     // deno-lint-ignore no-explicit-any
@@ -2990,6 +3070,8 @@ function setBalance(id,name,val){
 function refreshShop(){
   var key=keyEl.value.trim();
   shop.innerHTML='<div class="empty">loading...</div>';
+  // the registry first: every card's dropdown is built from it
+  loadThemes().then(function(){
   fetch("/admin/shop?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
     if(d.error){shop.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';setCount("shop","");return;}
     shop.innerHTML="";
@@ -2997,9 +3079,17 @@ function refreshShop(){
     if(!d.items.length){shop.innerHTML='<div class="empty">no shop items yet. hit “add shop item”.</div>';return;}
     d.items.forEach(function(it){shop.appendChild(itemCard(it));});
   }).catch(function(){shop.innerHTML='<div class="empty">network error.</div>';});
+  });
+}
+var THEME_LIST=[];
+function loadThemes(){
+  var key=keyEl.value.trim();
+  return fetch("/admin/themes?key="+encodeURIComponent(key)).then(function(r){return r.json();})
+    .then(function(d){ if(d && d.themes) THEME_LIST=d.themes.filter(function(t){return !t.free;}); })
+    .catch(function(){});
 }
 function itemCard(it){
-  it=it||{name:"",desc:"",price:0,active:true,inputLabel:"",output:""};
+  it=it||{name:"",desc:"",price:0,active:true,inputLabel:"",output:"",theme:""};
   var el=document.createElement("div");el.className="app";
   var r1=document.createElement("div");r1.className="row";
   var name=document.createElement("input");name.className="uname";name.placeholder="item name";name.value=it.name||"";name.maxLength=60;
@@ -3014,21 +3104,39 @@ function itemCard(it){
   var r2c=document.createElement("div");r2c.className="row";
   var output=document.createElement("textarea");output.className="uname";output.placeholder="shown to them after they redeem (optional, e.g. a code)";output.value=it.output||"";output.maxLength=1000;output.rows=3;
   r2c.appendChild(output);el.appendChild(r2c);
+  // what this item unlocks. The list is the shrine's own theme registry, so a
+  // theme added to the code shows up here and nowhere else until it is sold.
+  var r2d=document.createElement("div");r2d.className="row";
+  var tlab=document.createElement("label");tlab.style.cssText="display:flex;align-items:center;gap:8px;color:#e9d9c2;font-size:14px;flex:1";
+  tlab.appendChild(document.createTextNode("unlocks theme"));
+  var theme=document.createElement("select");theme.className="uname";theme.style.flex="1";
+  var none=document.createElement("option");none.value="";none.textContent="— nothing, an ordinary item —";theme.appendChild(none);
+  THEME_LIST.forEach(function(t){
+    var o=document.createElement("option");o.value=t.id;o.textContent=t.name+"  ("+t.id+")";theme.appendChild(o);
+  });
+  theme.value=it.theme||"";
+  // an unknown/removed theme would silently reset the dropdown to "nothing",
+  // so keep it visible rather than letting a save wipe it
+  if((it.theme||"")&&theme.value!==it.theme){
+    var o2=document.createElement("option");o2.value=it.theme;o2.textContent=it.theme+" (not in the registry)";
+    theme.appendChild(o2);theme.value=it.theme;
+  }
+  tlab.appendChild(theme);r2d.appendChild(tlab);el.appendChild(r2d);
   var r3=document.createElement("div");r3.className="row";
   var lab=document.createElement("label");lab.style.cssText="display:flex;align-items:center;gap:6px;color:#e9d9c2;font-size:14px";
   var chk=document.createElement("input");chk.type="checkbox";chk.checked=it.active!==false;chk.style.flex="0";
   lab.appendChild(chk);lab.appendChild(document.createTextNode("visible in shop"));
   var save=document.createElement("button");save.className="load";save.textContent=it.id?"save":"create";
-  save.onclick=function(){saveItem(it.id,name.value.trim(),desc.value.trim(),price.value,chk.checked,inputLabel.value.trim(),output.value,el);};
+  save.onclick=function(){saveItem(it.id,name.value.trim(),desc.value.trim(),price.value,chk.checked,inputLabel.value.trim(),output.value,el,theme.value);};
   r3.appendChild(lab);r3.appendChild(save);
   if(it.id){var del=document.createElement("button");del.className="no";del.textContent="delete";del.onclick=function(){deleteItem(it.id,it.name);};r3.appendChild(del);}
   el.appendChild(r3);
   return el;
 }
-function saveItem(id,name,desc,price,active,inputLabel,output,card){
+function saveItem(id,name,desc,price,active,inputLabel,output,card,theme){
   if(!name){alert("item needs a name");return;}
   if(!(Number(price)>=0)){alert("price must be 0 or more");return;}
-  fetch("/admin/shop/set",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id||"",name:name,desc:desc,price:Number(price),active:active,inputLabel:inputLabel,output:output})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshShop();});
+  fetch("/admin/shop/set",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id||"",name:name,desc:desc,price:Number(price),active:active,inputLabel:inputLabel,output:output,theme:theme||""})}).then(function(r){return r.json();}).then(function(d){if(d.error){alert(d.error);return;}refreshShop();});
 }
 function deleteItem(id,name){
   if(!confirm("Delete shop item: "+name+" ?"))return;
@@ -3036,7 +3144,9 @@ function deleteItem(id,name){
 }
 document.getElementById("addItem").onclick=function(){
   if(!keyEl.value.trim()){alert("enter your admin key first");return;}
-  var ph=shop.querySelector(".empty");if(ph)ph.remove();
-  shop.appendChild(itemCard(null));
+  loadThemes().then(function(){
+    var ph=shop.querySelector(".empty");if(ph)ph.remove();
+    shop.appendChild(itemCard(null));
+  });
 };
 </script></body></html>`;

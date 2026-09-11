@@ -112,7 +112,7 @@
       '<h3>Theme</h3>' +
       '<p class="sethint">how the shrine is painted.</p>' +
       '<div id="themegrid"></div>' +
-      '<p class="setlock">more themes are unlockable from the shop.</p>' +
+      '<p class="setlock" id="themeMsg">locked themes are unlocked by buying them in the casino shop.</p>' +
       '</section>' +
       '<section class="setsec">' +
       '<h3>Tab disguise</h3>' +
