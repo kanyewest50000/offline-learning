@@ -45,9 +45,24 @@
     s.appendChild(g);
     return s;
   }
+  // the pit's own two: tung himself, and a single card on its back
+  function icoPitTung(){
+    var i=el("img","piticon");
+    i.src=(typeof TUNG_IMG!=="undefined")?TUNG_IMG:"";i.alt="";
+    i.onerror=function(){i.style.display="none";};
+    return i;
+  }
+  function icoCut(){
+    var s=sv("svg",{viewBox:"0 0 24 24",width:"26",height:"26","aria-hidden":"true"});
+    s.appendChild(sv("rect",{x:"6",y:"2.5",width:"12",height:"19",rx:"2.6",fill:"currentColor","fill-opacity":".15",stroke:"currentColor","stroke-width":"1.5"}));
+    s.appendChild(sv("path",{d:"M9.5 8.5h5M9.5 12h5M9.5 15.5h5",stroke:"currentColor","stroke-width":"1.5","stroke-linecap":"round",fill:"none",opacity:".7"}));
+    return s;
+  }
   function gameIcon(id){
     if(id==="plinko")return icoPlinko();
     if(id==="blackjack")return icoBlackjack();
+    if(id==="pit-tung")return icoPitTung();
+    if(id==="pit-cut")return icoCut();
     return el("span",null,{roulette:"◉",mines:"💣",beef:"🐄",limbo:"📈",dice:"🎲"}[id]||"");
   }
   function money(n){return (Math.round(Number(n)*100)/100).toFixed(2);}
@@ -90,7 +105,7 @@
     if(!brokeEl)brokeEl=buildBroke();
     if(brokeEl.parentNode!==w)w.insertBefore(brokeEl,w.firstChild);
   }
-  function clearTimer(){if(claimTimer){clearInterval(claimTimer);claimTimer=null;}}
+  function clearTimer(){if(claimTimer){clearInterval(claimTimer);claimTimer=null;}pitStop();}
 
   /* the win celebration: a box that pops over the whole casino showing what you
      just took, then fades. shared by every game. */
@@ -278,7 +293,19 @@
     clearTimer();VIEW="lobby";
     var w=column();
     // no shrine card here: the Shrine button in the header is the only way in
-    w.appendChild(el("div","seclabel","the floor"));
+    // the pit first: the tables where the opponent is a person, not the house
+    w.appendChild(el("div","seclabel","the pit — player against player"));
+    var pit=el("div","casmenu pit");
+    [["Tung, Wood, Fire","pit-tung"],["The Cut","pit-cut"]].forEach(function(g){
+      var b=el("button","casgame pvp");
+      var ci=el("div","ci");ci.appendChild(gameIcon(g[1]));
+      b.appendChild(ci);
+      b.appendChild(el("div",null,g[0]));
+      b.onclick=function(){openPlay(g[1]);};
+      pit.appendChild(b);
+    });
+    w.appendChild(pit);
+    w.appendChild(el("div","seclabel","the floor — you against tung"));
     var grid=el("div","casmenu");
     [["Blackjack","blackjack"],["Roulette","roulette"],["Mines","mines"],
      ["Beef","beef"],["Limbo","limbo"],["Dice","dice"],
@@ -297,6 +324,7 @@
 
   function openPlay(name){
     clearTimer();
+    if(name.indexOf("pit-")===0)return viewPit(name.slice(4));
     if(name==="dice")return viewDice();
     if(name==="limbo")return viewLimbo();
     if(name==="roulette")return viewRoulette();
@@ -1089,6 +1117,267 @@
         setBal(d.balance);ok(r,"cashed out "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);
       }).catch(function(){cash.disabled=false;bad(r,"network error");});
     };
+  }
+
+  /* ---------- THE PIT (player vs player) ---------- */
+  /* Two tables where the opponent is another member rather than the house. The
+     client holds no rules at all: it posts create/join/confirm/move and paints
+     whatever the server says the duel now looks like. It never learns the other
+     player's pick until the server has both, because the server does not send
+     it — so there is nothing here to read out of devtools and nothing to time.
+
+     Every screen here is driven by one poll (pitPoll) and one countdown tick
+     (pitTick), both owned by PIT and both torn down by clearTimer(), which every
+     navigation already calls. */
+  var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null};
+  var PIT_GAMES={
+    tung:{name:"Tung, Wood, Fire",moves:["tung","wood","fire"],
+      blurb:"tung splits the wood. the wood feeds the fire. the fire takes tung.",
+      sub:"first to two rounds. a tie is no round at all — play it again."},
+    cut:{name:"The Cut",moves:[],
+      blurb:"one card each. the high card takes the pot.",
+      sub:"nothing to play. the deck is cut the moment you both say yes."}
+  };
+  function pitStop(){
+    if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;}
+    if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
+  }
+  /* the server ships its own clock with every duel, so the countdowns run off
+     the server's deadline rather than a browser clock that may be minutes out */
+  function pitSkew(d){if(d&&typeof d.now==="number")PIT.skew=d.now-Date.now();}
+  function pitLeft(deadline){return Math.max(0,(Number(deadline)||0)-(Date.now()+PIT.skew));}
+  function pitSecs(ms){return String(Math.ceil(ms/1000));}
+  function moveIcon(m){
+    if(m==="tung"){var i=el("img","pmimg");i.src=(typeof TUNG_IMG!=="undefined")?TUNG_IMG:"";i.alt="tung";i.onerror=function(){i.style.display="none";};return i;}
+    return el("span","pmemoji",m==="wood"?"🪵":"🔥");
+  }
+  function moveName(m){return m==="tung"?"tung":(m==="wood"?"wood":"fire");}
+
+  /* ---- the pit lobby: who is waiting, and a form to wait yourself ---- */
+  function viewPit(game){
+    var cfg=PIT_GAMES[game]||PIT_GAMES.tung;
+    var v=mount(cfg.name,gameIcon("pit-"+game));VIEW="pit";PIT.game=game;PIT.id=null;PIT.shape="";
+    v.appendChild(el("p","pitblurb",cfg.blurb));
+    v.appendChild(el("p","pitsub",cfg.sub));
+
+    var bet=betField("1");
+    var open=el("button","cbtn go","put up a table");
+    var row=el("div","ctlrow");
+    row.appendChild(ctl("stake",bet));
+    var bw=el("div","casrow");bw.appendChild(open);
+    row.appendChild(ctl(" ",bw));
+    v.appendChild(row);
+    var r=res(v);
+    v.appendChild(el("div","seclabel","open tables"));
+    var list=el("div","pitlist");v.appendChild(list);
+    v.appendChild(el("div","casnote","your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm."));
+
+    open.onclick=function(){
+      open.disabled=true;r.className="casres";r.textContent="";
+      jpost("/duel/create",{game:game,bet:Number(bet.value)}).then(function(d){if(refused(d)){refusedGate();return;}
+        open.disabled=false;
+        if(!d||d.error){bad(r,d&&d.error==="already in a duel"?"you are already at a table.":(d&&d.error)||"could not open a table");return;}
+        setBal(d.balance);pitRefresh();
+      }).catch(function(){open.disabled=false;bad(r,"network error");});
+    };
+
+    function paintList(d){
+      var mineRow=null,rows=(d.open||[]).filter(function(t){return t.game===game;});
+      list.innerHTML="";
+      if(!rows.length){list.appendChild(el("div","casnote","nobody is waiting. put a table up and someone will find it."));return;}
+      rows.forEach(function(t){
+        var box=el("div","pitrow"+(t.mine?" mine":""));
+        var g=el("div","grow");
+        g.appendChild(el("h4",null,t.mine?"your table":t.host));
+        var lf=pitLeft(t.deadline);
+        g.appendChild(el("p",null,t.mine?("waiting for someone — "+pitSecs(lf)+"s left"):("waiting — "+pitSecs(lf)+"s left")));
+        box.appendChild(g);
+        box.appendChild(el("div","price",money(t.bet)+" sahurs"));
+        if(t.mine){
+          var x=el("button","cbtn stop","take it down");
+          x.onclick=function(){
+            x.disabled=true;
+            jpost("/duel/cancel",{id:t.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
+              x.disabled=false;
+              if(!rr||rr.error){bad(r,rr&&rr.error==="someone is at the table"?"too late — someone just sat down.":"could not cancel");pitRefresh();return;}
+              setBal(rr.balance);ok(r,"table taken down. "+money(rr.refunded)+" sahurs returned.");pitRefresh();
+            }).catch(function(){x.disabled=false;bad(r,"network error");});
+          };
+          box.appendChild(x);
+          mineRow=box;
+        }else{
+          var s=el("button","cbtn go","sit down");
+          s.onclick=function(){
+            s.disabled=true;
+            jpost("/duel/join",{id:t.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
+              s.disabled=false;
+              if(!rr||rr.error){bad(r,rr.error==="taken"?"somebody beat you to it.":(rr.error==="insufficient"?"not enough sahurs for that stake.":(rr.error==="already in a duel"?"you are already at a table.":"could not sit down")));pitRefresh();return;}
+              setBal(rr.balance);pitEnter(rr.duel);
+            }).catch(function(){s.disabled=false;bad(r,"network error");});
+          };
+          box.appendChild(s);
+        }
+        list.appendChild(box);
+      });
+      if(mineRow)list.insertBefore(mineRow,list.firstChild);
+    }
+
+    function pitRefresh(){
+      jget("/duel/list?token="+encodeURIComponent(tok())).then(function(d){
+        if(refused(d)){refusedGate();return;}
+        if(!d||d.error)return;
+        pitSkew(d);setBal(d.balance);
+        /* somebody sat down at your table while you were reading the list */
+        if(d.mine){pitEnter(d.mine);return;}
+        paintList(d);
+      }).catch(function(){});
+    }
+    pitStop();pitRefresh();
+    /* brisk, because a table of yours being joined starts a ten second clock */
+    PIT.poll=setInterval(pitRefresh,1500);
+  }
+
+  /* ---- one duel, from the handshake to the result ---- */
+  function pitEnter(view){
+    pitStop();
+    PIT.id=view.id;PIT.shape="";
+    pitRender(view);
+    PIT.poll=setInterval(function(){
+      jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(PIT.id)).then(function(d){
+        if(refused(d)){refusedGate();return;}
+        if(!d||d.error){if(d&&d.error==="gone"){pitStop();openPlay("pit-"+(PIT.game||"tung"));}return;}
+        pitSkew(d);setBal(d.balance);pitRender(d.duel);
+      }).catch(function(){});
+    },1200);
+  }
+
+  function pitSend(path,body,onErr){
+    return jpost(path,body).then(function(d){if(refused(d)){refusedGate();return null;}
+      if(!d||d.error){if(onErr)onErr(d&&d.error);if(d&&d.duel){pitSkew(d);pitRender(d.duel);}return null;}
+      pitSkew(d);setBal(d.balance);pitRender(d.duel);return d;
+    }).catch(function(){if(onErr)onErr("network");return null;});
+  }
+
+  /* The screen is rebuilt only when the duel changes shape — state, round, what
+     you have already done. Everything else is a countdown, and redrawing the
+     page under a running clock makes buttons impossible to hit. */
+  function pitRender(d){
+    var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
+    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,d.reason,d.guest].join("|");
+    if(shape===PIT.shape){pitPaintClock(d);return;}
+    PIT.shape=shape;
+    if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
+    var v=mount(cfg.name,gameIcon("pit-"+d.game));VIEW="pit";
+    var back=v.parentNode.querySelector(".casback");
+    if(back)back.onclick=function(){pitStop();viewPit(d.game);};
+
+    var head=el("div","pitvs");
+    head.appendChild(el("span","pn",d.you||"you"));
+    head.appendChild(el("span","pvs","vs"));
+    head.appendChild(el("span","pn",d.theirName||"…"));
+    v.appendChild(head);
+    v.appendChild(el("div","pitpot",money(d.pot)+" sahurs on the table"));
+
+    var clock=el("div","pitclock","");v.appendChild(clock);
+    PIT.left=clock;
+    var body=el("div","pitbody");v.appendChild(body);
+    var note=el("div","casres","");v.appendChild(note);
+
+    if(d.state==="confirm"){
+      body.appendChild(el("p","pitsay",d.youConfirmed
+        ?"you are in. waiting on them."
+        :"they are waiting. say yes before the clock runs out."));
+      body.appendChild(el("p","pitsub",d.theyConfirmed?"they have confirmed.":"they have not confirmed yet."));
+      if(!d.youConfirmed){
+        var yes=el("button","cbtn go","i'm in");
+        yes.onclick=function(){yes.disabled=true;pitSend("/duel/confirm",{id:d.id},function(){yes.disabled=false;bad(note,"too late.");});};
+        body.appendChild(yes);
+      }
+      body.appendChild(el("p","pitsub","if either of you does not confirm, both stakes come straight back."));
+    }else if(d.state==="live"){
+      var score=el("div","pitscore");
+      score.appendChild(el("span","sv",String(d.yourWins)));
+      score.appendChild(el("span","sl","round "+d.round+" — first to "+d.target));
+      score.appendChild(el("span","sv",String(d.theirWins)));
+      body.appendChild(score);
+      if(d.yourMove){
+        var picked=el("div","pitpicked");
+        picked.appendChild(el("span","pl","you played"));
+        picked.appendChild(moveIcon(d.yourMove));
+        picked.appendChild(el("span","pl",d.theyMoved?"they have played too":"waiting on them"));
+        body.appendChild(picked);
+      }else{
+        var pickRow=el("div","pitmoves");
+        cfg.moves.forEach(function(m){
+          var b=el("button","pitmove");
+          b.appendChild(moveIcon(m));
+          b.appendChild(el("span",null,moveName(m)));
+          b.onclick=function(){
+            Array.prototype.forEach.call(pickRow.querySelectorAll("button"),function(x){x.disabled=true;});
+            pitSend("/duel/move",{id:d.id,move:m},function(e){
+              Array.prototype.forEach.call(pickRow.querySelectorAll("button"),function(x){x.disabled=false;});
+              bad(note,e==="already played"?"you already played this round.":"that did not land.");
+            });
+          };
+          pickRow.appendChild(b);
+        });
+        body.appendChild(pickRow);
+        body.appendChild(el("p","pitsub","they cannot see your pick, and you cannot see theirs. play before the clock runs out or you forfeit."));
+      }
+      pitHistory(body,d);
+    }else if(d.state==="done"){
+      var won=d.winner&&d.winner===d.you;
+      var big=el("div","pitend"+(d.winner?(won?" win":" lose"):""));
+      if(d.reason==="play"&&d.cards){
+        var cards=el("div","pitcards");
+        var mine=el("div","pcut");mine.appendChild(el("b",null,"you"));
+        mine.appendChild(el("span","cutc",d.youAreHost?d.cards.host:d.cards.guest));
+        var theirs=el("div","pcut");theirs.appendChild(el("b",null,d.theirName||"them"));
+        theirs.appendChild(el("span","cutc",d.youAreHost?d.cards.guest:d.cards.host));
+        cards.appendChild(mine);cards.appendChild(theirs);
+        body.appendChild(cards);
+      }
+      big.textContent=!d.winner
+        ?(d.reason==="cancelled"?"table taken down. your stake is back."
+          :d.reason==="expired"?"nobody came. your stake is back."
+          :d.reason==="unconfirmed"?"one of you never confirmed. both stakes are back."
+          :"nobody played. both stakes are back.")
+        :(won?(d.reason==="forfeit"?"they never played. the pot is yours.":"you take the pot.")
+              :(d.reason==="forfeit"?"you did not play in time. the pot went to them.":d.winner+" takes the pot."));
+      body.appendChild(big);
+      if(d.winner&&won)celebrate(d.pot,2);
+      pitHistory(body,d);
+      var again=el("button","cbtn go","back to the pit");
+      again.onclick=function(){pitStop();viewPit(d.game);};
+      body.appendChild(again);
+      pitStop();
+    }
+    pitPaintClock(d);
+    if(d.state!=="done"&&!PIT.tick)PIT.tick=setInterval(function(){pitPaintClock(d);},200);
+  }
+
+  /* every round already played, from your side of the table */
+  function pitHistory(body,d){
+    if(!d.rounds||!d.rounds.length)return;
+    var hist=el("div","pithist");
+    d.rounds.forEach(function(rr,i){
+      var line=el("div","ph");
+      line.appendChild(el("span","phn",String(i+1)));
+      line.appendChild(moveIcon(d.youAreHost?rr.host:rr.guest));
+      line.appendChild(el("span","phv",rr.won===null?"tie":(rr.won===d.you?"you":"them")));
+      line.appendChild(moveIcon(d.youAreHost?rr.guest:rr.host));
+      hist.appendChild(line);
+    });
+    body.appendChild(hist);
+  }
+
+  /* the only thing that moves between rebuilds */
+  function pitPaintClock(d){
+    if(!PIT.left||!PIT.left.isConnected)return;
+    if(d.state==="done"||!d.deadline){PIT.left.textContent="";PIT.left.className="pitclock";return;}
+    var ms=pitLeft(d.deadline);
+    PIT.left.textContent=pitSecs(ms)+"s";
+    PIT.left.className="pitclock"+(ms<=4000?" hot":"");
   }
 
   /* ---------- SHOP ---------- */

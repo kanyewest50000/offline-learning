@@ -279,7 +279,25 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     if (op === 1) m.mine[e] = 1; else delete m.mine[e];
     applyReact(id, e, op);
     var eid = mkId(); seenEids[eid] = 1;
-    apiPost("/react", { token:TOKEN, id:id, e:e, op:op, eid:eid });
+    // The server holds whether this reaction is yours, so it — not this
+    // optimistic guess — is the truth. It replies with the state it settled on;
+    // if that is not what we just painted, put the chip back.
+    apiPost("/react", { token:TOKEN, id:id, e:e, op:op, eid:eid }).then(function(r){
+      if (!r || typeof r.state !== "number") return;
+      var want = r.state === 1, have = !!m.mine[e];
+      if (want === have) return;
+      if (want) { m.mine[e] = 1; applyReact(id, e, 1); }
+      else { delete m.mine[e]; applyReact(id, e, -1); }
+    }).catch(function(){});
+  }
+  // which of the chips on screen are ours, told to us on open
+  function markMine(list){
+    if (!list || !list.length) return;
+    list.forEach(function(pair){
+      var m = MSGS[pair[0]]; if (!m) return;
+      m.mine[pair[1]] = 1;
+      renderReacts(pair[0]);
+    });
   }
   function openPalette(id, anchor){
     rTarget = id;
@@ -376,6 +394,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
       if (r && r.error === "unauthorized") { polling = false; refreshGate(); return; }
       if (r && r.blocked) { showBan(r); return; }
       if (r && r.events) { r.events.forEach(applyEvent); if (typeof r.cursor === "number") cursor = r.cursor; }
+      if (r && r.mine) markMine(r.mine);
     }).catch(function(){}).then(function(){
       if (polling && !pageHidden()) pollT = setTimeout(poll, POLL_MS);
     });

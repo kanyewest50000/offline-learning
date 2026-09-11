@@ -1,0 +1,316 @@
+#!/usr/bin/env -S deno run --allow-net --allow-env --allow-read
+// The Pit. Two players, two stakes, one pot — and the only thing that actually
+// matters is that the pot is paid out exactly once. Every exit from a duel (a
+// win, a cancel, a table nobody joined, a confirm nobody gave, a player who
+// wandered off) releases the same escrow, so every one of them is a chance to
+// pay twice, pay nobody, or mint sahurs out of a race. This walks all of them
+// and counts the money after each.
+//
+// Run the app with short duel clocks so the ten-minute and ten-second waits
+// happen in a second:
+//   ADMIN_KEY=devadminkey DUEL_OPEN_MS=1200 DUEL_CONFIRM_MS=1200 DUEL_MOVE_MS=1200 \
+//     deno run --allow-net --allow-env --unstable-kv server.ts
+//   ADMIN_KEY=devadminkey API=... deno run --allow-net --allow-env --allow-read scripts/test-duel.ts
+
+const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const API = (Deno.env.get("API") || "http://127.0.0.1:8000").replace(/\/$/, "");
+const ADMIN = Deno.env.get("ADMIN_KEY") || "devadminkey";
+const OPEN_MS = Number(Deno.env.get("DUEL_OPEN_MS") || 1200);
+const CONFIRM_MS = Number(Deno.env.get("DUEL_CONFIRM_MS") || 1200);
+const MOVE_MS = Number(Deno.env.get("DUEL_MOVE_MS") || 1200);
+
+function must(cond: boolean, msg: string) {
+  if (!cond) throw new Error(msg);
+}
+async function j(path: string, opt?: RequestInit) {
+  const r = await fetch(API + path, opt);
+  return { status: r.status, body: await r.json().catch(() => ({})) };
+}
+const post = (path: string, obj: unknown) =>
+  j(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(obj) });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const money = (n: number) => Math.round(n * 100) / 100;
+
+// ---------------------------------------------------------------------------
+// source: the shape of the rules, read off the server rather than trusted
+const src = await Deno.readTextFile(`${ROOT}/server.ts`);
+must(/DUEL_OPEN_MS"\) \|\| 10 \* 60 \* 1000\)/.test(src), "an unjoined table must default to a 10 minute life");
+must(/DUEL_CONFIRM_MS"\) \|\| 10 \* 1000\)/.test(src), "the confirm window must default to 10 seconds");
+// the pot is both stakes and nothing is skimmed: a rake would break every
+// conservation assertion below, so the absence of one is pinned here too
+must(/credits\.push\(\{ id: w\.id, amount: round2\(d\.bet \* 2\) \}\)/.test(src),
+  "the winner must take exactly both stakes — no rake, no rounding");
+must(/if \(entry\.value\?\.settled\) return false;/.test(src),
+  "commitDuel must refuse to pay a duel that is already settled");
+// every release of the escrow has to ride the same guarded commit
+const commits = [...src.matchAll(/kv\.atomic\(\)/g)].length;
+must(commits > 0, "no atomic commits found at all — did the file move?");
+must(/async function commitDuel\([\s\S]*?op = op\.check\(cur\)/.test(src),
+  "commitDuel must check every balance it credits");
+
+// ---------------------------------------------------------------------------
+async function member(tag: string) {
+  const n = tag + Math.random().toString(36).slice(2, 8);
+  const a = await post("/apply", { username: n, application: "the pit" });
+  const token = a.body?.token as string;
+  must(!!token, "apply failed for " + n);
+  const pend = await j("/admin/pending?key=" + encodeURIComponent(ADMIN));
+  const id = (pend.body.pending || []).find((x: { username: string }) => x.username === n)?.id;
+  must(!!id, n + " not pending");
+  must(!!(await post("/admin/decide", { key: ADMIN, id, action: "approve" })).body?.ok, "approve failed");
+  // stake them from the admin side so the faucet cooldown is not in the way
+  must(!!(await post("/admin/setbal", { key: ADMIN, id, balance: 100 })).body?.ok, "setbal failed for " + n);
+  return { name: n, token, id };
+}
+const bal = async (t: string) => money((await j("/cas/me?token=" + encodeURIComponent(t))).body.balance as number);
+
+// Every section below starts from a known balance rather than inheriting
+// whatever the last one left, so each assertion stands on its own and a failure
+// names the thing that actually broke.
+async function fund(m: { id: string }, amount: number) {
+  must(!!(await post("/admin/setbal", { key: ADMIN, id: m.id, balance: amount })).body?.ok,
+    "setbal failed");
+}
+
+// A duel can only ever move sahurs between its two players. This snapshots
+// both, runs something, and insists the total is untouched.
+async function conserved(a: string, b: string, what: string, fn: () => Promise<void>) {
+  const before = (await bal(a)) + (await bal(b));
+  await fn();
+  const after = (await bal(a)) + (await bal(b));
+  must(money(before) === money(after),
+    `${what} changed the total sahurs in play: ${before} -> ${after}`);
+}
+
+const A = await member("pitA");
+const B = await member("pitB");
+const C = await member("pitC");
+
+// ---------------------------------------------------------------------------
+// 1. a table costs you the stake up front, and taking it down gives it back
+{
+  await fund(A, 100);
+  const start = await bal(A.token);
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 5 });
+  must(c.body?.ok === true, "create failed: " + JSON.stringify(c.body));
+  must((await bal(A.token)) === money(start - 5), "creating a table must debit the stake immediately");
+  const id = c.body.duel.id;
+
+  // and you cannot open a second one while that is standing
+  const two = await post("/duel/create", { token: A.token, game: "tung", bet: 5 });
+  must(two.body?.error === "already in a duel", "a player may only hold one table at a time");
+  must((await bal(A.token)) === money(start - 5), "the refused second table must not have cost anything");
+
+  const x = await post("/duel/cancel", { token: A.token, id });
+  must(x.body?.ok === true, "cancel failed: " + JSON.stringify(x.body));
+  must((await bal(A.token)) === start, "cancelling must refund exactly the stake");
+
+  // the exploit this is really about: cancelling twice
+  const again = await post("/duel/cancel", { token: A.token, id });
+  must(again.body?.ok !== true, "a duel must not be cancellable twice");
+  must((await bal(A.token)) === start, "the second cancel must not pay again");
+}
+
+// 2. a table nobody sits at refunds itself — ONCE, however many readers reach
+//    it at the same instant.
+//    This is the sharpest edge in the whole file. Nothing runs on a timer, so
+//    the refund happens inside whichever request first notices the clock has
+//    run out — and if a dozen notice together, a dozen refunds are attempted.
+//    Every one of them is a fresh stake minted out of nothing. Measured: with
+//    the check on the duel entry removed from commitDuel, a handful of
+//    simultaneous readers pays the host twice within a couple of rounds; with
+//    it, no amount of pushing does. Several rounds, a crowd each time.
+{
+  for (let round = 0; round < 3; round++) {
+    await fund(A, 100);
+    const start = await bal(A.token);
+    const c = await post("/duel/create", { token: A.token, game: "tung", bet: 7 });
+    must(c.body?.ok === true, "create failed: " + JSON.stringify(c.body));
+    const id = c.body.duel.id;
+    await sleep(OPEN_MS + 300);
+    // one burst, fired together, all landing on an overdue table
+    await Promise.all(
+      new Array(12).fill(0).map(() => j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id)),
+    );
+    const end = await bal(A.token);
+    must(end === start,
+      `an expired table must refund exactly once — 12 simultaneous readers turned ${start} into ${end}`);
+    const st = await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+    must(st.body.duel.state === "done" && st.body.duel.reason === "expired", "the expired table must read as expired");
+  }
+  // and the lobby sweeps them too, so a host who never comes back is still paid
+  await fund(A, 100);
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 7 });
+  must(c.body?.ok === true, "create failed: " + JSON.stringify(c.body));
+  await sleep(OPEN_MS + 300);
+  await j("/duel/list?token=" + encodeURIComponent(B.token));   // someone else's page load
+  must((await bal(A.token)) === 100, "the lobby must sweep an abandoned table back to its host");
+}
+
+// 3. two people cannot take the same seat, and only the one who got it pays
+{
+  await fund(A, 100); await fund(B, 100); await fund(C, 100);
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 4 });
+  const id = c.body.duel.id;
+  const beforeB = await bal(B.token), beforeC = await bal(C.token);
+  const rush = await Promise.all([
+    post("/duel/join", { token: B.token, id }),
+    post("/duel/join", { token: C.token, id }),
+  ]);
+  const seated = rush.filter((r) => r.body?.ok === true);
+  must(seated.length === 1, `exactly one player may sit down, ${seated.length} did`);
+  const paid = [money(beforeB - (await bal(B.token))), money(beforeC - (await bal(C.token)))].filter((d) => d !== 0);
+  must(paid.length === 1 && paid[0] === 4, `only the seated player may be debited, saw ${JSON.stringify(paid)}`);
+  // let it die on the confirm clock; both stakes come home
+  const tot = (await bal(A.token)) + (await bal(B.token)) + (await bal(C.token));
+  await sleep(CONFIRM_MS + 400);
+  await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+  const st = await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+  must(st.body.duel.reason === "unconfirmed", "a duel nobody confirmed must end unconfirmed");
+  const tot2 = (await bal(A.token)) + (await bal(B.token)) + (await bal(C.token));
+  must(money(tot2 - tot) === 8, `both stakes must come back (${tot} -> ${tot2})`);
+}
+
+// 4. your own table is not a seat, and a stranger cannot play your duel
+{
+  await fund(A, 100); await fund(B, 100);
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 3 });
+  const id = c.body.duel.id;
+  must((await post("/duel/join", { token: A.token, id })).status === 400, "you cannot join your own table");
+  must((await post("/duel/join", { id })).status === 401, "an unauthenticated join must be refused");
+  must((await post("/duel/join", { token: "garbage", id })).status === 401, "a bad key must be refused");
+  await post("/duel/join", { token: B.token, id });
+  const third = await post("/duel/confirm", { token: C.token, id });
+  must(third.status === 403, "someone who is not in the duel cannot confirm it");
+  must((await j("/duel/state?token=" + encodeURIComponent(C.token) + "&id=" + id)).status === 403,
+    "someone who is not in the duel cannot read it");
+  await sleep(CONFIRM_MS + 400);
+  await j("/duel/list?token=" + encodeURIComponent(A.token));
+}
+
+// 5. a full game of Tung, Wood, Fire: the winner takes both stakes, exactly
+{
+  await fund(A, 100); await fund(B, 100);
+  const startA = await bal(A.token), startB = await bal(B.token);
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 6 });
+  const id = c.body.duel.id;
+  await post("/duel/join", { token: B.token, id });
+  must((await post("/duel/move", { token: A.token, id, move: "tung" })).body?.error === "not now",
+    "no moves before both players have confirmed");
+  await post("/duel/confirm", { token: A.token, id });
+  const live = await post("/duel/confirm", { token: B.token, id });
+  must(live.body.duel.state === "live", "two confirms must open the table");
+
+  // A plays tung, B plays wood — tung splits the wood, so A takes every round
+  let guard = 0;
+  for (;;) {
+    const st = await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+    if (st.body.duel.state === "done") break;
+    must(guard++ < 8, "the duel never finished");
+    // sending twice in one round must not be a way to change your mind
+    await post("/duel/move", { token: A.token, id, move: "tung" });
+    const dup = await post("/duel/move", { token: A.token, id, move: "fire" });
+    must(dup.body?.error === "already played", "a second move in one round must be refused");
+    // and until they answer, their pick is not visible
+    const peek = await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+    must(peek.body.duel.theirMove === undefined, "the opponent's move must never be shipped");
+    await post("/duel/move", { token: B.token, id, move: "wood" });
+  }
+  const fin = await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+  must(fin.body.duel.winner === A.name, "tung splits the wood — the host should have won");
+  must((await bal(A.token)) === money(startA + 6), "the winner must be up exactly the loser's stake");
+  must((await bal(B.token)) === money(startB - 6), "the loser must be down exactly their stake");
+}
+
+// 6. walking away after confirming is a forfeit, not a free refund
+{
+  await fund(A, 100); await fund(B, 100);
+  const startA = await bal(A.token), startB = await bal(B.token);
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 9 });
+  const id = c.body.duel.id;
+  await post("/duel/join", { token: B.token, id });
+  await post("/duel/confirm", { token: A.token, id });
+  await post("/duel/confirm", { token: B.token, id });
+  await post("/duel/move", { token: A.token, id, move: "fire" });   // B never answers
+  await sleep(MOVE_MS + 400);
+  await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+  const fin = await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+  must(fin.body.duel.reason === "forfeit", "an absent player must forfeit");
+  must(fin.body.duel.winner === A.name, "the player who was there must take it");
+  must((await bal(A.token)) === money(startA + 9), "the forfeit must pay the pot to the player who stayed");
+  must((await bal(B.token)) === money(startB - 9), "the player who left must lose their stake, once");
+}
+
+// 7. both of you wandering off is a wash, not a double payout
+{
+  await fund(A, 100); await fund(B, 100);
+  const startA = await bal(A.token), startB = await bal(B.token);
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 8 });
+  const id = c.body.duel.id;
+  await post("/duel/join", { token: B.token, id });
+  await post("/duel/confirm", { token: A.token, id });
+  await post("/duel/confirm", { token: B.token, id });
+  await sleep(MOVE_MS + 400);
+  // a crowd of readers all racing the same sweep
+  await Promise.all(new Array(6).fill(0).map(() =>
+    j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id)
+  ));
+  must((await bal(A.token)) === startA, "a duel nobody played must refund the host once");
+  must((await bal(B.token)) === startB, "a duel nobody played must refund the guest once");
+}
+
+// 8. The Cut: one card each, settled the instant the second yes lands
+{
+  await fund(A, 100); await fund(B, 100);
+  const startA = await bal(A.token), startB = await bal(B.token);
+  const c = await post("/duel/create", { token: A.token, game: "cut", bet: 10 });
+  const id = c.body.duel.id;
+  await post("/duel/join", { token: B.token, id });
+  await post("/duel/confirm", { token: A.token, id });
+  const done = await post("/duel/confirm", { token: B.token, id });
+  must(done.body.duel.state === "done", "the cut must resolve on the second confirm");
+  const cards = done.body.duel.cards;
+  must(!!cards && !!cards.host && !!cards.guest, "the cut must show both cards");
+  must(cards.host !== cards.guest, "the cut must not deal the same card twice");
+  const winner = done.body.duel.winner;
+  must(winner === A.name || winner === B.name, "the cut must have a winner");
+  const endA = await bal(A.token), endB = await bal(B.token);
+  must(money(endA + endB) === money(startA + startB), "the cut must not mint or burn sahurs");
+  must(money(Math.abs(endA - startA)) === 10 && money(Math.abs(endB - startB)) === 10,
+    "exactly one stake must change hands in a cut");
+  must((winner === A.name) === (endA > startA), "the balance that went up must belong to the declared winner");
+}
+
+// 9. you cannot stake what you do not have, and a refused stake costs nothing
+{
+  await fund(A, 100);
+  const D = await member("pitD");
+  must(!!(await post("/admin/setbal", { key: ADMIN, id: D.id, balance: 1 })).body?.ok, "setbal failed");
+  const broke = await post("/duel/create", { token: D.token, game: "tung", bet: 50 });
+  must(broke.body?.error === "insufficient", "a stake beyond your balance must be refused");
+  must((await bal(D.token)) === 1, "a refused table must not move the balance");
+  // and the same on the way in to someone else's table
+  const c = await post("/duel/create", { token: A.token, game: "tung", bet: 50 });
+  const id = c.body.duel.id;
+  const cannot = await post("/duel/join", { token: D.token, id });
+  must(cannot.body?.error === "insufficient", "you cannot sit at a table you cannot cover");
+  must((await bal(D.token)) === 1, "a refused seat must not move the balance");
+  await post("/duel/cancel", { token: A.token, id });
+}
+
+// 10. the whole thing, end to end, conserving every sahur
+await fund(A, 100);
+await fund(B, 100);
+await conserved(A.token, B.token, "a full duel", async () => {
+  const c = await post("/duel/create", { token: A.token, game: "cut", bet: 12 });
+  const id = c.body.duel.id;
+  await post("/duel/join", { token: B.token, id });
+  await post("/duel/confirm", { token: A.token, id });
+  await post("/duel/confirm", { token: B.token, id });
+});
+
+console.log(
+  "the pit: stakes escrowed on commit and released exactly once — cancel, expiry, " +
+    "unconfirmed, forfeit, double-forfeit and a played hand all pay once; seat races " +
+    "debit one player; no rake, no minting, no double refunds",
+);

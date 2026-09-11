@@ -28,7 +28,7 @@ assets/js/shrine/       everything behind the decoy. loaded in this order:
   originals.js            Tung's own games, from games/tung/
   chat.js                 chat client source
   casino.js               casino client source (lobby, dice, limbo, roulette,
-                          plinko, blackjack, mines, beef, shop, shrine faucet)
+                          plinko, blackjack, mines, beef, the pit, shop, faucet)
   styles.js               the shrine window's stylesheet
   markup.js               the shrine window's <body>
   window.js               assembles the document and opens the window
@@ -48,7 +48,31 @@ rather than as `<link>` and `<script src>`.
 
 Outcomes are the server's, never the client's: the casino code only sends bets
 and paints whatever `server.ts` replies, so editing it in devtools changes
-nothing.
+nothing. The same rule runs through the chat — a reply quotes a message by id
+and the server fills in what that message actually said, and whether a reaction
+is yours is a fact the server holds — so neither the words above a reply nor the
+number on a reaction chip can be set by whoever sent the request.
+
+## the pit
+
+Two tables in the casino where the opponent is another member rather than the
+house: **Tung, Wood, Fire** (tung splits the wood, the wood feeds the fire, the
+fire takes tung — first to two rounds, a tie is replayed) and **The Cut** (one
+card each, high card takes it).
+
+Both stakes are debited the moment a player commits and from then on the sahurs
+live in the duel record, not in anybody's balance. Every way out — a win, a
+cancel, a table nobody joined inside ten minutes, a confirm nobody gave inside
+ten seconds, a player who wandered off mid-round — goes through one function
+that writes the settled record and the credits it implies in a single atomic
+commit. So a duel can never read as finished without the money having moved, and
+it can never pay twice. Nothing is raked: whatever went in comes back out.
+
+Nothing runs on a timer. The clocks are enforced lazily — every read of a duel
+settles an overdue one first, and the lobby sweeps abandoned tables — so a stake
+always finds its way home even if the host never reopens the page.
+`scripts/test-duel.ts` walks every exit and counts the money after each, with a
+dozen readers racing the same expiry.
 
 ## working on it
 
@@ -98,6 +122,23 @@ which is how the tests force one. The claim and the payout land in a single
 atomic commit, so exactly one person can ever win a given gift and the winner is
 paid exactly once — `scripts/test-gift-claim.ts` throws a dozen simultaneous
 claims at one gift and counts the money.
+
+## settings
+
+A boxed gear in the top-left of the main menu opens the settings page: the
+**theme** (Tung's Wood, which is the base stylesheet, and Dark Mode, which
+overrides only colours) and the **tab disguise** — the title and favicon this
+window and every game tab opened from it wear, which used to sit as a bar over
+the catalog. The chosen theme is stamped on `<html data-theme>` as the document
+is written, so a dark window never flashes the wood first. Adding a theme is a
+row in `config.js` plus a block in `styles.js`; the layout is never touched.
+
+## admin
+
+`/admin` has a **Post as…** pane: drop a line into the chat under an approved
+member's name, or as tung, who posts with his own mark. It is the one place in
+the app where a message's author is not the account that sent the request —
+key-gated, and the name still has to belong to somebody real.
 
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a

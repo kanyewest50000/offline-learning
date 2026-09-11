@@ -60,7 +60,9 @@ must(server.includes("that offering is beneath the altar."), "under-min bets mus
 must(server.includes("even tung tung god has a ceiling."), "over-max bets must name the ceiling");
 must(server.includes("tung does not wager ghosts. put a real number on the felt."), "non-numbers need the ghost line");
 must(server.includes("function wagerError(") && server.includes("function readWager("), "bet copy is centralized");
-must((server.match(/wagerError\(b\.bet\)/g) || []).length === 7, "every casino start path must surface wagerError");
+// seven house games plus /duel/create — a new bet path that names its error
+// with anything but wagerError() is the thing this count exists to catch.
+must((server.match(/wagerError\(b\.bet\)/g) || []).length === 8, "every casino start path must surface wagerError");
 must(!server.includes('if (inputLabel && !input) return json({ error: "input required"'), "a missing answer must not block the sale");
 must(server.includes('path === "/shop/tell"'), "typed answers land on /shop/tell after the sale");
 must(server.includes('["shoppend", u.id, pending.id]'), "a pending question is stored only after they have paid");

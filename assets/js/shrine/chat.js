@@ -89,6 +89,10 @@
     'var playgrid=document.getElementById("playgrid");' +
     'var cloakTitleEl=document.getElementById("cloakTitle");' +
     'var cloakFavEl=document.getElementById("cloakFav");' +
+    'var settingsEl=document.getElementById("settings");' +
+    'var openSettingsBtn=document.getElementById("openSettings");' +
+    'var setbackBtn=document.getElementById("setback");' +
+    'var themegrid=document.getElementById("themegrid");' +
     /* catalog titles no longer play inside this chat window — each opens in its own
        about:blank tab (see openPlay below), so there are no in-page player refs */
     /* ---- discord-style emoji shortcodes + per-user pinned favourites ---- */
@@ -101,7 +105,7 @@
     /* ---- the chooser + tung curated catalog ---- */
     /* the main header swaps identity with the view: shrine title everywhere, a
        full casino header (back / title / balance / shop) once inside the casino. */
-    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";veilEl.style.display=v==="veil"?"flex":"none";' +
+    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";veilEl.style.display=v==="veil"?"flex":"none";settingsEl.style.display=v==="settings"?"flex":"none";' +
     /* casino is a chooser destination; the header swaps identity once you are in it */
     'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";if(v!=="originals")hideOrigPlay();}' +
     /* the holding page wears one of two faces: the veil is shut, or the veil is
@@ -122,6 +126,25 @@
     'var CLOAK_TKEY="shrine-cloak-title",CLOAK_FKEY="shrine-cloak-fav";' +
     'function cloakTitle(){try{return localStorage.getItem(CLOAK_TKEY)||"Assignments";}catch(e){return "Assignments";}}' +
     'function cloakFav(){try{return localStorage.getItem(CLOAK_FKEY)||"https://cuhsd.instructure.com/favicon.ico";}catch(e){return "https://cuhsd.instructure.com/favicon.ico";}}' +
+    /* ---- themes. the id rides on <html data-theme>, which is all the
+       stylesheet needs; the wood is the base sheet, so it overrides nothing.
+       An unknown or unreadable saved value falls back to the wood rather than
+       leaving the page unpainted. ---- */
+    'var THEMES=' + JSON.stringify(Shrine.THEMES) + ';' +
+    'var THEME_KEY="shrine-theme",THEME_DEF=' + JSON.stringify(Shrine.THEME_DEFAULT) + ';' +
+    'function themeOk(id){for(var i=0;i<THEMES.length;i++)if(THEMES[i].id===id)return true;return false;}' +
+    'function loadTheme(){try{var t=localStorage.getItem(THEME_KEY);if(t&&themeOk(t))return t;}catch(e){}return THEME_DEF;}' +
+    'function applyTheme(id){if(!themeOk(id))id=THEME_DEF;document.documentElement.setAttribute("data-theme",id);}' +
+    'function saveTheme(id){try{localStorage.setItem(THEME_KEY,id);}catch(e){}applyTheme(id);paintThemes();}' +
+    'function paintThemes(){if(!themegrid)return;var cur=loadTheme();Array.prototype.forEach.call(themegrid.children,function(c){if(c.getAttribute("data-theme")===cur)c.classList.add("on");else c.classList.remove("on");});}' +
+    'function buildThemes(){if(!themegrid)return;themegrid.innerHTML="";' +
+    'THEMES.forEach(function(t){' +
+    'var b=document.createElement("button");b.type="button";b.className="themecard";b.setAttribute("data-theme",t.id);' +
+    'var sw=document.createElement("span");sw.className="swatch sw-"+t.id;b.appendChild(sw);' +
+    'var n=document.createElement("strong");n.textContent=t.name;b.appendChild(n);' +
+    'var d=document.createElement("span");d.className="tnote";d.textContent=t.note;b.appendChild(d);' +
+    'b.addEventListener("click",function(){saveTheme(t.id);});' +
+    'themegrid.appendChild(b);});paintThemes();}' +
     'function openPlay(g){' +
     'var w=window.open("about:blank","_blank");' +
     'if(!w){alert(' + JSON.stringify(LBL_POPUP) + ');return;}' +
@@ -241,7 +264,14 @@
     'function mkId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}' +
     'function renderReacts(id){var m=MSGS[id];if(!m)return;m.reactEl.innerHTML="";Object.keys(m.counts).forEach(function(e){var chip=document.createElement("button");chip.type="button";chip.className="chip"+(m.mine[e]?" on":"");chip.textContent=e+" "+m.counts[e];chip.addEventListener("click",function(ev){ev.stopPropagation();toggleReact(id,e);});m.reactEl.appendChild(chip);});}' +
     'function applyReact(id,e,op){var m=MSGS[id];if(!m)return;m.counts[e]=(m.counts[e]||0)+op;if(m.counts[e]<=0)delete m.counts[e];renderReacts(id);}' +
-    'function toggleReact(id,e){var m=MSGS[id];if(!m)return;var op=m.mine[e]?-1:1;if(op===1)m.mine[e]=1;else delete m.mine[e];applyReact(id,e,op);var eid=mkId();seenEids[eid]=1;apiPost("/react",{token:TOKEN,id:id,e:e,op:op,eid:eid});}' +
+    /* the server holds whether a reaction is yours, so its answer is the truth
+       and this optimistic flip is only a guess. if they disagree, put it back. */
+    'function toggleReact(id,e){var m=MSGS[id];if(!m)return;var op=m.mine[e]?-1:1;if(op===1)m.mine[e]=1;else delete m.mine[e];applyReact(id,e,op);var eid=mkId();seenEids[eid]=1;' +
+    'apiPost("/react",{token:TOKEN,id:id,e:e,op:op,eid:eid}).then(function(r){' +
+    'if(!r||typeof r.state!=="number")return;var want=r.state===1,have=!!m.mine[e];if(want===have)return;' +
+    'if(want){m.mine[e]=1;applyReact(id,e,1);}else{delete m.mine[e];applyReact(id,e,-1);}}).catch(function(){});}' +
+    /* which of the chips on screen are ours, told to us when the window opens */
+    'function markMine(list){if(!list||!list.length)return;list.forEach(function(p){var m=MSGS[p[0]];if(!m)return;m.mine[p[1]]=1;renderReacts(p[0]);});}' +
     'function openPalette(id,anchor){rTarget=id;var r=anchor.getBoundingClientRect();rpal.style.left=Math.max(6,Math.min(r.left-90,window.innerWidth-236))+"px";rpal.style.top=(r.bottom+4)+"px";rpal.style.display="flex";}' +
     'function buildRpal(){rpal.innerHTML="";REACTS.forEach(function(e){var b=document.createElement("button");b.type="button";b.textContent=e;b.addEventListener("click",function(ev){ev.stopPropagation();if(rTarget)toggleReact(rTarget,e);rpal.style.display="none";});rpal.appendChild(b);});}' +
     'function setReply(m){replyTo={id:m.id,name:m.name,text:m.text.slice(0,140)};replybar.innerHTML="";var s=document.createElement("span");s.textContent="replying to ";var bb=document.createElement("b");bb.textContent=m.name;s.appendChild(bb);replybar.appendChild(s);var x=document.createElement("span");x.className="x";x.textContent="cancel";x.addEventListener("click",cancelReply);replybar.appendChild(x);replybar.style.display="flex";input.focus();}' +
@@ -294,7 +324,7 @@
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
     'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id])return;add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null});}}' +
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 8s. */
-    'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,8000);});}' +
+    'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}if(r&&r.mine)markMine(r.mine);}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,8000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
     'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();}' +
     /* render tung<->applicant follow-up messages on the pending screen; show the
@@ -356,6 +386,9 @@
     'shrineBtn.addEventListener("click",function(){if(window.__casinoShrine)window.__casinoShrine();});' +   /* so does the shrine (the faucet) */
     'sback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the shrine/chat to the chooser screen */
     'gsearch.addEventListener("input",filterCatalog);' +
+    'if(openSettingsBtn)openSettingsBtn.addEventListener("click",function(){topShow("settings");});' +
+    'if(setbackBtn)setbackBtn.addEventListener("click",function(){topShow("choose");});' +
+    'applyTheme(loadTheme());buildThemes();' +
     'cloakTitleEl.value=cloakTitle();cloakFavEl.value=cloakFav();' +
     'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}document.title=cloakTitle();});' +
     'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}var fl=document.getElementById("cloakfav");if(fl)fl.href=cloakFav();});' +

@@ -18,6 +18,7 @@
   var LBL_ORIGINALS = Shrine.LBL.ORIGINALS;
   var LBL_WEB_VEIL = Shrine.LBL.WEB_VEIL;
   var LBL_SEARCH = Shrine.LBL.SEARCH;
+  var LBL_PLAYS = Shrine.LBL.PLAYS;
 
   Shrine.body = function () {
     /* one top-level header that swaps identity: the shrine title normally, a
@@ -34,6 +35,12 @@
       '</div>' +
       '</header>' +
       '<div id="choose">' +
+      /* the only chrome on the chooser: a boxed gear in the corner that opens
+         the settings page (theme, tab disguise) */
+      '<button id="openSettings" class="gearbtn" type="button" title="settings" aria-label="settings">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="3.2"/>' +
+      '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>' +
       '<h2>enter the shrine</h2>' +
       '<div id="choicerow">' +
       /* chat button: a simple speech-bubble svg above the label */
@@ -90,7 +97,6 @@
       '</div>' +
       '<div id="play">' +
       '<div id="playbar"><button id="gback" class="ghost" type="button">← back</button><input id="gsearch" autocomplete="off" placeholder="' + LBL_SEARCH + '"></div>' +
-      '<div id="cloakbar"><input id="cloakTitle" autocomplete="off" placeholder="tab title (default: Assignments)"><input id="cloakFav" autocomplete="off" placeholder="favicon url (default: Canvas)"></div>' +
       '<div id="playgrid"></div>' +   /* the catalog grid is the whole play view now; items open in their own tab */
       '</div>' +
       '<div id="originals">' +
@@ -98,6 +104,23 @@
       '<div id="orighub"></div>' +
       '<div id="origplay"><iframe id="origframe" allow="autoplay; fullscreen; gamepad" allowfullscreen></iframe></div>' +
       '</div>' +
+      /* ---- settings: theme + the tab disguise that used to sit over the catalog ---- */
+      '<div id="settings">' +
+      '<div id="setbar"><button id="setback" class="ghost" type="button">← back</button><span id="setTitle">Settings</span></div>' +
+      '<div id="setbody">' +
+      '<section class="setsec">' +
+      '<h3>Theme</h3>' +
+      '<p class="sethint">how the shrine is painted.</p>' +
+      '<div id="themegrid"></div>' +
+      '<p class="setlock">more themes are unlockable from the shop.</p>' +
+      '</section>' +
+      '<section class="setsec">' +
+      '<h3>Tab disguise</h3>' +
+      '<p class="sethint">what this tab — and every ' + LBL_PLAYS + ' tab you open from it — calls itself. leave a field empty for the default.</p>' +
+      '<label class="setfield"><span>tab title</span><input id="cloakTitle" autocomplete="off" placeholder="Assignments"></label>' +
+      '<label class="setfield"><span>favicon url</span><input id="cloakFav" autocomplete="off" placeholder="https://cuhsd.instructure.com/favicon.ico"></label>' +
+      '</section>' +
+      '</div></div>' +
       '<div id="veil">' +
       '<div id="veilbar"><button id="pback" class="ghost" type="button">← back</button><span id="veilTitle">' + LBL_WEB_VEIL + '</span></div>' +
       /* one holding page, two sets of words: the veil being shut, and the veil

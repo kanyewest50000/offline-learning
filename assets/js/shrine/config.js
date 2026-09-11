@@ -53,7 +53,21 @@
   var LBL_SEARCH = "search " + LBL_PLAYS;
   var LBL_POPUP = "allow popups to play " + LBL_PLAYS;
 
+  /* The shrine's skins, offered on the settings page. `id` is what lands in
+     localStorage and on <html data-theme>; the stylesheet carries a block per
+     id, so adding a theme is a row here plus a block in styles.js. The wood is
+     the shrine as built, which is why it has no data-theme block of its own —
+     it IS the base stylesheet, and every other theme overrides away from it.
+     Anything locked shows on the page but cannot be chosen yet. */
+  var THEMES = [
+    { id: "wood", name: "Tung’s Wood", note: "the shrine as it was built." },
+    { id: "dark", name: "Dark Mode", note: "the wood, after hours." }
+  ];
+  var THEME_DEFAULT = "wood";
+
   Shrine.API = SHRINE_API;
+  Shrine.THEMES = THEMES;
+  Shrine.THEME_DEFAULT = THEME_DEFAULT;
   Shrine.TUNG_IMG = TUNG_IMG;
   Shrine.TUNGGOD_IMG = TUNGGOD_IMG;
   Shrine.esc = esc;

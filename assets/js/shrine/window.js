@@ -35,7 +35,18 @@
     var ctitle, cfav;
     try { ctitle = localStorage.getItem("shrine-cloak-title") || "Assignments"; } catch (e) { ctitle = "Assignments"; }
     try { cfav = localStorage.getItem("shrine-cloak-fav") || "https://cuhsd.instructure.com/favicon.ico"; } catch (e) { cfav = "https://cuhsd.instructure.com/favicon.ico"; }
-    return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">' +
+    /* the chosen theme is stamped on <html> here rather than left to the client
+       to set on boot: the chat script runs after the document is painted, so
+       doing it there would show a flash of the wood before a dark-mode window
+       settles. An unknown saved value falls back to the default. */
+    var ctheme = Shrine.THEME_DEFAULT;
+    try {
+      var saved = localStorage.getItem("shrine-theme");
+      for (var i = 0; i < Shrine.THEMES.length; i++) {
+        if (Shrine.THEMES[i].id === saved) { ctheme = saved; break; }
+      }
+    } catch (e) { /* private mode: the default stands */ }
+    return '<!DOCTYPE html><html lang="en" data-theme="' + esc(ctheme) + '"><head><meta charset="UTF-8">' +
       '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
       '<title>' + esc(ctitle) + '</title>' +
       '<link id="cloakfav" rel="icon" href="' + esc(cfav) + '">' +

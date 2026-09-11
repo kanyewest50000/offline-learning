@@ -26,11 +26,23 @@
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 //   GET  /veil?token=                                     -> {live, allowed, url?}
 //   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
+//   GET  /duel/list?token=                                -> {open:[...], mine, balance}
+//   POST /duel/create   {token, game, bet}                -> {ok, duel, balance}
+//   POST /duel/cancel   {token, id}                       -> {ok, refunded, balance}
+//   POST /duel/join     {token, id}                       -> {ok, duel, balance}
+//   POST /duel/confirm  {token, id}                       -> {ok, duel, balance}
+//   POST /duel/move     {token, id, move}                 -> {ok, duel, balance}
+//   GET  /duel/state?token=&id=                           -> {ok, duel, balance}
 //   GET  /admin/veil?key=                                 -> {live, configured}
 //   POST /admin/veil    {key, live}                       -> {ok, live, configured}
 //   POST /admin/veiluser {key, id, allowed}               -> {ok, veil}
 
-const kv = await Deno.openKv();
+// Deno.openKv() with no argument keeps its database in a per-location cache
+// directory, which means every run on one machine shares it. SHRINE_KV_PATH
+// lets a test run point at a file of its own so one run cannot inherit the
+// last one's chat history, wisdom clock or balances. Unset in production, where
+// Deno Deploy provides the database.
+const kv = await Deno.openKv(Deno.env.get("SHRINE_KV_PATH") || undefined);
 // Two separate Discord webhooks so redemptions and applications land in their
 // own channels. Either can be unset; that kind of notification just goes quiet.
 const SHOP_WEBHOOK = Deno.env.get("SHOP_WEBHOOK_URL") || "";
@@ -159,6 +171,59 @@ async function adjustBalance(id: string, delta: number): Promise<number | null> 
     const res = await kv.atomic().check(cur)
       .set(["cas", id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL }).commit();
     if (res.ok) return Math.max(0, nb);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Claiming an in-progress game (mines / beef / blackjack).
+//
+// Every one of those games ends the same way: read the stored hand, work out
+// what it pays, delete it, credit the player. Done as three separate steps that
+// is a money printer — N requests all read the same live hand, all pass the
+// "is there a game?" guard, and all credit the payout, so one 10 sahur bet can
+// be cashed out eight times for eight payouts. Measured, before this existed:
+// 8 of 8 concurrent cashouts paid, and a blackjack stand paid 120 on a hand
+// worth 20.
+//
+// So the delete and the credit ride in ONE commit, guarded by a check on the
+// game entry itself. Whoever commits first takes the record with them; every
+// racing duplicate finds its check stale and is told there is no game. These
+// two are the ONLY way a game record may be ended — never `kv.delete` a live
+// hand next to an `adjustBalance`.
+// deno-lint-ignore no-explicit-any
+async function claimGame(key: Deno.KvKey, entry: Deno.KvEntryMaybe<any>): Promise<boolean> {
+  if (!entry.value) return false;
+  return (await kv.atomic().check(entry).delete(key).commit()).ok;
+}
+// Claim it AND pay it. Returns the new balance, or null if somebody else got
+// there first (in which case nothing was written and nothing was paid).
+// deno-lint-ignore no-explicit-any
+async function settleGame(
+  key: Deno.KvKey,
+  entry: Deno.KvEntryMaybe<any>,
+  uid: string,
+  payout: number,
+): Promise<number | null> {
+  if (!entry.value) return null;
+  const pay = Number.isFinite(payout) && payout > 0 ? payout : 0;
+  for (;;) {
+    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", uid]);
+    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+    const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+    const nb = round2(base + pay);
+    if (!Number.isFinite(nb) || nb < 0) return null;
+    const res = await kv.atomic()
+      .check(entry)
+      .check(cur)
+      .delete(key)
+      .set(["cas", uid], { ...rec, bal: nb }, { expireIn: CAS_TTL })
+      .commit();
+    if (res.ok) return nb;
+    // Two different losses look the same from here, so ask which it was: if the
+    // game record has moved, another request has already settled this hand and
+    // we must not pay. If only the balance moved, try again.
+    const again = await kv.get(key);
+    if (again.versionstamp !== entry.versionstamp) return null;
   }
 }
 
@@ -329,8 +394,10 @@ function rankOf(c: string): string { return c.slice(0, c.length - 1); }
 // Dealer draws once, after every hand is finished, then each hand is paid on its
 // own stake. A two-card 21 only pays 3:2 when the hand was never split — after a
 // split it is an ordinary 21, which is the standard rule.
+// `entry` is the ["bj", uid] read this request worked from: the hand is claimed
+// and paid in one commit, so several stands landing together settle once.
 // deno-lint-ignore no-explicit-any
-async function bjResolve(uid: string, st: any) {
+async function bjResolve(uid: string, st: any, entry: Deno.KvEntryMaybe<any>) {
   const anyAlive = st.hands.some((h: any) => handValue(h.cards).total <= 21);
   if (anyAlive) while (handValue(st.dealer).total < 17) st.dealer.push(drawCard());
   const dv = handValue(st.dealer).total;
@@ -346,8 +413,7 @@ async function bjResolve(uid: string, st: any) {
     h.done = true;
     total = round2(total + h.payout);
   }
-  await kv.delete(["bj", uid]);
-  if (total > 0) await adjustBalance(uid, total);
+  if (await settleGame(["bj", uid], entry, uid, total) === null) return null;
   return st;
 }
 
@@ -471,6 +537,12 @@ const WISDOM_MAX_MS = Number(Deno.env.get("WISDOM_MAX_MS") || 3 * 60 * 60 * 1000
 const GIFT_CHANCE = Number(Deno.env.get("WISDOM_GIFT_CHANCE") || 0.2);
 const GIFT_AMOUNT = Number(Deno.env.get("WISDOM_GIFT_AMOUNT") || 50);
 const WISDOM_NAME = "tung";
+
+// The reaction palette, exactly as the clients offer it (assets/js/shrine/chat.js
+// and embed/chat.html both build their row from this same set). Reactions are
+// held per person per message, so this list is also the full vocabulary of what
+// can ever be stored — an emoji that is not here is refused rather than filed.
+const REACTIONS = new Set(["❤️", "👍", "👎", "😂", "😮", "😢", "🔥", "🤡", "🙏", "💀"]);
 
 // Nobody but tung may hold that name. A member wearing it would be
 // indistinguishable from him in the log, could be tipped in his place, and
@@ -626,9 +698,22 @@ async function veilLive(): Promise<boolean> {
   return f.value === true;
 }
 
+// What a message actually said, keyed by its id. A reply quotes a message by
+// id and the server fills the words in from here — the client is never trusted
+// to say what it is quoting. Reactions look a message up here too, so you
+// cannot react to something that was never posted.
+type MsgRef = { name: string; text: string; from: string | null };
+
 async function appendEvent(ev: Record<string, unknown>) {
   const seq = await nextSeq();
   ev.seq = seq;
+  if (ev.type === "msg" && typeof ev.id === "string") {
+    await kv.set(
+      ["msg", ev.id],
+      { name: ev.name, text: ev.text, from: ev.from ?? null } as MsgRef,
+      { expireIn: TTL_MS },
+    );
+  }
   // expireIn gives the key a native TTL: Deno KV deletes it ~2 weeks later on
   // its own, so old chat lines disappear with no per-message timestamp, no
   // sweep job, and no cron. The monotonic seq still orders what remains.
@@ -801,6 +886,201 @@ async function allowGlobal(key: string, limit: number, windowMs: number): Promis
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// THE PIT — player-versus-player tables.
+//
+// Everything here is built around one rule: a duel's escrow is paid in exactly
+// once and paid out exactly once. Both stakes are debited the moment a player
+// commits to a table, and from then on the sahurs live in the duel record, not
+// in anybody's balance. Every exit — a win, a cancel, a timeout, a forfeit —
+// goes through commitDuel(), which writes the settled record and the credits it
+// implies in ONE atomic commit guarded by a check on the duel AND on every
+// balance it touches. So the record can never read "done" without the money
+// having moved, and it can never pay twice: the second attempt's check on the
+// duel entry fails, it re-reads, sees `settled`, and does nothing.
+//
+// Nothing here mints or destroys sahurs. Whatever went in comes back out, to
+// one player or split between both. scripts/test-duel.ts counts it.
+// The three clocks. Env-overridable only so the tests can watch a ten-minute
+// table expire in a second; the defaults are the real game.
+const DUEL_OPEN_MS = Number(Deno.env.get("DUEL_OPEN_MS") || 10 * 60 * 1000);   // an open table nobody joins refunds itself
+const DUEL_CONFIRM_MS = Number(Deno.env.get("DUEL_CONFIRM_MS") || 10 * 1000);  // both players must confirm within this of the join
+const DUEL_MOVE_MS = Number(Deno.env.get("DUEL_MOVE_MS") || 30 * 1000);        // a player who does not move inside this forfeits the duel
+const DUEL_TTL = 24 * 60 * 60 * 1000;  // a finished record lingers a day so both sides can read it
+
+// KV:
+//   ["duel", id]    -> Duel
+//   ["duelof", uid] -> the id of the one duel that player is in (one at a time)
+
+type DuelSide = { id: string; name: string; confirmed: boolean; move: string | null; wins: number };
+type Duel = {
+  id: string;
+  game: string;
+  bet: number;
+  host: DuelSide;
+  guest: DuelSide | null;
+  state: "open" | "confirm" | "live" | "done";
+  ts: number;
+  deadline: number;      // what the current state is waiting for, as an epoch ms
+  round: number;
+  settled: boolean;      // the escrow has been released. set once, never unset.
+  winner: string | null; // username, or null for a void/refunded duel
+  reason: string;        // why it ended: cancelled | expired | unconfirmed | forfeit | play
+  rounds: { host: string; guest: string; won: string | null }[];
+  cards?: { host: string; guest: string };
+};
+
+// Tung, Wood, Fire: the same three-way cycle as the old game, wearing the
+// shrine's own nouns. `beats` is read in one direction only — a[x] === y means
+// x takes y — so the cycle cannot be made inconsistent by editing one entry.
+const TUNG_BEATS: Record<string, string> = { tung: "wood", wood: "fire", fire: "tung" };
+const DUEL_GAMES: Record<string, { name: string; moves: string[]; target: number }> = {
+  // first to two rounds; a tie is not a round and is simply replayed
+  tung: { name: "Tung, Wood, Fire", moves: ["tung", "wood", "fire"], target: 2 },
+  // no moves at all: the server cuts the deck the moment both players confirm
+  cut: { name: "The Cut", moves: [], target: 1 },
+};
+
+function duelSide(u: { id: string; username: string }): DuelSide {
+  return { id: u.id, name: u.username, confirmed: false, move: null, wins: 0 };
+}
+
+// What a player is allowed to see of a duel. Crucially it never ships the
+// opponent's move while the round is still open — that is the whole game.
+function duelView(d: Duel, uid: string | null) {
+  const youAreHost = !!uid && d.host.id === uid;
+  const you = youAreHost ? d.host : (d.guest && d.guest.id === uid ? d.guest : null);
+  const them = youAreHost ? d.guest : (you ? d.host : null);
+  const open = d.state === "live";
+  return {
+    id: d.id,
+    game: d.game,
+    gameName: DUEL_GAMES[d.game]?.name || d.game,
+    bet: d.bet,
+    pot: round2(d.bet * (d.guest ? 2 : 1)),
+    state: d.state,
+    round: d.round,
+    target: DUEL_GAMES[d.game]?.target ?? 1,
+    deadline: d.deadline,
+    now: Date.now(),
+    host: d.host.name,
+    guest: d.guest ? d.guest.name : null,
+    you: you ? you.name : null,
+    youAreHost,
+    // your own pick is yours to see; theirs is only ever "have they moved yet"
+    yourMove: you ? you.move : null,
+    yourWins: you ? you.wins : 0,
+    theirWins: them ? them.wins : 0,
+    theirName: them ? them.name : null,
+    youConfirmed: you ? you.confirmed : false,
+    theyConfirmed: them ? them.confirmed : false,
+    theyMoved: them ? (open ? them.move !== null : false) : false,
+    winner: d.winner,
+    reason: d.reason,
+    rounds: d.rounds,
+    cards: d.state === "done" ? d.cards ?? null : null,
+    settled: d.settled,
+  };
+}
+
+// The single door the escrow leaves by. `credits` is what each side is owed;
+// the checks make the whole thing all-or-nothing against concurrent writers.
+async function commitDuel(
+  entry: Deno.KvEntryMaybe<Duel>,
+  next: Duel,
+  credits: { id: string; amount: number }[],
+): Promise<boolean> {
+  if (entry.value?.settled) return false;   // already paid; never pay again
+  let op = kv.atomic().check(entry);
+  const seen = new Set<string>();
+  for (const c of credits) {
+    if (seen.has(c.id) || !(c.amount > 0)) continue;
+    seen.add(c.id);
+    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", c.id]);
+    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+    const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+    const nb = round2(base + c.amount);
+    if (!Number.isFinite(nb) || nb < 0) return false;
+    op = op.check(cur).set(["cas", c.id], { ...rec, bal: nb }, { expireIn: CAS_TTL });
+  }
+  op = op.set(["duel", next.id], next, { expireIn: DUEL_TTL });
+  // the players are free again the moment the record is final
+  if (next.settled) {
+    op = op.delete(["duelof", next.host.id]);
+    if (next.guest) op = op.delete(["duelof", next.guest.id]);
+  }
+  return (await op.commit()).ok;
+}
+
+// End a duel and release the escrow. winner === null refunds both sides their
+// own stake; a winner takes the whole pot. No rake — the pit is between players.
+function finishDuel(d: Duel, winnerId: string | null, reason: string): {
+  next: Duel;
+  credits: { id: string; amount: number }[];
+} {
+  const next: Duel = { ...d, state: "done", settled: true, reason, winner: null, deadline: 0 };
+  const credits: { id: string; amount: number }[] = [];
+  if (!d.guest) {
+    // never joined: only the host ever staked anything
+    credits.push({ id: d.host.id, amount: d.bet });
+    return { next, credits };
+  }
+  if (winnerId === null) {
+    credits.push({ id: d.host.id, amount: d.bet });
+    credits.push({ id: d.guest.id, amount: d.bet });
+    return { next, credits };
+  }
+  const w = winnerId === d.host.id ? d.host : d.guest;
+  next.winner = w.name;
+  credits.push({ id: w.id, amount: round2(d.bet * 2) });
+  return { next, credits };
+}
+
+// Deadlines are enforced lazily: nothing here runs on a timer, so every read of
+// a duel passes through this first and an overdue one settles on the spot. The
+// lobby sweeps open tables too, so an abandoned stake always finds its way home
+// even if the host never comes back.
+async function sweepDuel(entry: Deno.KvEntryMaybe<Duel>): Promise<Deno.KvEntryMaybe<Duel>> {
+  let cur = entry;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const d = cur.value;
+    if (!d || d.state === "done" || Date.now() <= d.deadline) return cur;
+    let out: { next: Duel; credits: { id: string; amount: number }[] };
+    if (d.state === "open") {
+      out = finishDuel(d, null, "expired");
+    } else if (d.state === "confirm") {
+      // one side sat on their hands: nobody plays and nobody loses anything
+      out = finishDuel(d, null, "unconfirmed");
+    } else {
+      // live: whoever failed to move forfeits. both asleep and it is a wash.
+      const hostMoved = d.host.move !== null;
+      const guestMoved = !!d.guest && d.guest.move !== null;
+      if (hostMoved === guestMoved) out = finishDuel(d, null, "forfeit");
+      else out = finishDuel(d, hostMoved ? d.host.id : d.guest!.id, "forfeit");
+    }
+    if (await commitDuel(cur, out.next, out.credits)) {
+      return await kv.get<Duel>(["duel", d.id]);
+    }
+    cur = await kv.get<Duel>(["duel", d.id]);
+  }
+  return cur;
+}
+
+async function loadDuel(id: string): Promise<Deno.KvEntryMaybe<Duel>> {
+  return await sweepDuel(await kv.get<Duel>(["duel", id]));
+}
+
+// The Cut: one card each, high card takes it. Ties are re-cut rather than
+// pushed, so the pot always goes somewhere and nobody can farm a free push.
+const CUT_ORDER = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
+function cutRank(c: string): number { return CUT_ORDER.indexOf(rankOf(c)); }
+function cutDeal(): { host: string; guest: string } {
+  for (;;) {
+    const host = drawCard(), guest = drawCard();
+    if (cutRank(host) !== cutRank(guest)) return { host, guest };
+  }
+}
+
 const listenPort = Number(Deno.env.get("PORT") || "8000") || 8000;
 Deno.serve({ port: listenPort }, async (req, info) => {
   const url = new URL(req.url);
@@ -931,10 +1211,22 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // A fresh open gets exactly the public window: the last OPEN_MSGS lines
       // plus the reacts among them. No full-log dump.
       const win = await recentWindow();
+      const inWindow = new Set<string>();
       for (const ev of win.events) {
         events.push(ev);
+        if (ev?.type === "msg" && typeof ev.id === "string") inWindow.add(ev.id);
         if (typeof ev?.seq === "number") cursor = ev.seq;
       }
+      // Which of these reactions are yours. The counts rebuild themselves from
+      // the +1/-1 events, but "did I press this" is state only the server has
+      // now — without it a reload would leave your own chips unlit, and pressing
+      // one again would be a no-op the client could not explain.
+      const mine: [string, string][] = [];
+      for await (const e of kv.list<number>({ prefix: ["rx", user.id] }, { limit: 2000 })) {
+        const mid = e.key[2], emo = e.key[3];
+        if (typeof mid === "string" && typeof emo === "string" && inWindow.has(mid)) mine.push([mid, emo]);
+      }
+      return json({ events, cursor, mine });
     } else {
       // Incremental poll. A live client is only a few events behind newest, so
       // the common case serves straight from `since` with no extra work. Only
@@ -990,10 +1282,30 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (!allow("msg:" + user.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
       if (!await allowGlobal("msg:" + user.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
     }
-    const reply = b.reply && b.reply.id
-      ? { id: clip(b.reply.id, 32), name: clip(b.reply.name, 24), text: clip(b.reply.text, 140) }
-      : null;
+    // A reply used to carry the quoted name and text straight from the sender,
+    // which meant anyone could post a reply block attributing any words to any
+    // member — or to tung. Only the id travels now; the words are read back out
+    // of what was actually posted. A quote whose message has aged out of the
+    // two week window is dropped rather than invented, so the message still
+    // sends, just without the quote.
+    let reply: { id: string; name: string; text: string } | null = null;
+    const replyId = b.reply && b.reply.id ? clip(b.reply.id, 32) : "";
+    if (replyId) {
+      const q = await kv.get<MsgRef>(["msg", replyId]);
+      if (q.value) {
+        reply = { id: replyId, name: String(q.value.name), text: String(q.value.text).slice(0, 140) };
+      }
+    }
+    // The id is the sender's, so their own optimistic bubble matches the one
+    // that comes back — but it is claimed exactly once. Without that, picking
+    // an id that is already taken would overwrite another message's entry in
+    // the quote index and let a reply be pointed at rewritten words.
     const id = clip(b.id, 32) || rid(8);
+    const claim = await kv.atomic()
+      .check({ key: ["msg", id], versionstamp: null })
+      .set(["msg", id], { name: user.username, text, from: null } as MsgRef, { expireIn: TTL_MS })
+      .commit();
+    if (!claim.ok) return json({ error: "duplicate" }, 409);
     await appendEvent({ type: "msg", id, name: user.username, text, reply });
     // tung occasionally has something to add. only ever after a real message,
     // so the room is never talking to itself.
@@ -1002,18 +1314,42 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   }
 
   // ---------- react ----------
+  // Counts are accumulated by each client from the +1/-1 events it sees, so an
+  // unrecorded reaction is an unbounded one: the old route took `op` from the
+  // sender and kept no state, which meant a hundred POSTs put a hundred on the
+  // chip. Whether a given person has a given reaction on a given message is now
+  // a fact the server holds, and the delta is derived from it — so pressing the
+  // same reaction twice is a no-op, and the count can never exceed the number
+  // of real members who actually pressed it.
   if (req.method === "POST" && path === "/react") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
     const user = await authUser(b.token);
     if (!user) return json({ error: "unauthorized" }, 401);
+    const rbs = blockState(user);
+    if (rbs.blocked) return json({ error: "blocked", reason: rbs.reason, until: rbs.until }, 403);
     const id = clip(b.id, 32);
     const e = clip(b.e, 16);
-    const op = b.op === -1 ? -1 : 1;
     const eid = clip(b.eid, 16) || rid(6);
     if (!id || !e) return json({ error: "bad" }, 400);
-    await appendEvent({ type: "react", id, e, op, eid, name: user.username });
-    return json({ ok: true });
+    if (!REACTIONS.has(e)) return json({ error: "not a reaction" }, 400);
+    // you may only react to something that was actually said
+    const target = await kv.get<MsgRef>(["msg", id]);
+    if (!target.value) return json({ error: "gone" }, 404);
+    if (!allow("rx:" + user.id, 30, 10_000)) return tooMany(10);
+    // keyed by person first so a client can be told, on open, which of the
+    // chips in front of it are its own — see the `mine` list on /events
+    const key = ["rx", user.id, id, e];
+    const cur = await kv.get<number>(key);
+    const on = cur.value === 1;
+    const wants = b.op === -1 ? false : true;
+    if (on === wants) return json({ ok: true, state: on ? 1 : 0, noop: true });
+    const flip = wants
+      ? kv.atomic().check(cur).set(key, 1, { expireIn: TTL_MS })
+      : kv.atomic().check(cur).delete(key);
+    if (!(await flip.commit()).ok) return json({ ok: true, state: on ? 1 : 0, noop: true });
+    await appendEvent({ type: "react", id, e, op: wants ? 1 : -1, eid, name: user.username });
+    return json({ ok: true, state: wants ? 1 : 0 });
   }
 
   // ---------- web veil: is it open, and where does it go? ----------
@@ -1077,6 +1413,248 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ error: "busy" }, 503);
   }
 
+  // ======================= THE PIT (player vs player) =======================
+  // Auth is the same casino gate as everywhere else. Every route that touches a
+  // duel goes through loadDuel(), so an overdue table settles itself before the
+  // request is even considered — you cannot act on a duel whose clock has run.
+
+  // ---------- what is on offer, and what am I already in ----------
+  if (req.method === "GET" && path === "/duel/list") {
+    const u = await casUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const open: unknown[] = [];
+    for await (const e of kv.list<Duel>({ prefix: ["duel"] }, { limit: 200 })) {
+      const d = e.value;
+      if (!d || d.state !== "open") continue;
+      // an open table past its hour is swept here rather than shown; the host
+      // gets their stake back without ever having to reopen the page
+      if (Date.now() > d.deadline) { await sweepDuel(e); continue; }
+      open.push({
+        id: d.id, game: d.game, gameName: DUEL_GAMES[d.game]?.name || d.game,
+        bet: d.bet, host: d.host.name, mine: d.host.id === u.id, ts: d.ts, deadline: d.deadline,
+      });
+    }
+    open.sort((a, b) => (b as { ts: number }).ts - (a as { ts: number }).ts);
+    const lock = await kv.get<string>(["duelof", u.id]);
+    let mine = null;
+    if (lock.value) {
+      const d = await loadDuel(lock.value);
+      // a settled duel is not "mine" any more — commitDuel drops the lock, but a
+      // stale one must not pin the player out of starting another
+      if (d.value && !d.value.settled) mine = duelView(d.value, u.id);
+      else if (!d.value) await kv.delete(["duelof", u.id]);
+    }
+    const c = await getCas(u.id);
+    return json({
+      ok: true, balance: round2(c.bal), open, mine, now: Date.now(),
+      games: Object.keys(DUEL_GAMES).map((k) => ({ id: k, name: DUEL_GAMES[k].name })),
+      openMs: DUEL_OPEN_MS, confirmMs: DUEL_CONFIRM_MS, moveMs: DUEL_MOVE_MS,
+    });
+  }
+
+  // ---------- put a table up ----------
+  if (req.method === "POST" && path === "/duel/create") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // Churn guard only. What actually stops someone flooding the pit is the
+    // one-table-at-a-time lock below; this just keeps open/cancel cycling from
+    // becoming a write amplifier.
+    if (!allow("duel:" + u.id, 20, 60_000)) return tooMany(30);
+    const game = DUEL_GAMES[clip(b.game, 16)] ? clip(b.game, 16) : null;
+    if (!game) return json({ error: "no such game" }, 400);
+    const bet = parseBet(b.bet);
+    if (bet === null) return json({ error: wagerError(b.bet) }, 400);
+    // one table at a time. the lock is claimed in the same commit as the debit,
+    // so two tabs racing to open a table cannot both stake.
+    const lock = await kv.get<string>(["duelof", u.id]);
+    if (lock.value) return json({ error: "already in a duel" }, 409);
+    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
+    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+    const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+    const nb = round2(base - bet);
+    if (nb < -1e-9) return json({ error: "insufficient" }, 402);
+    const now = Date.now();
+    const id = rid(10);
+    const duel: Duel = {
+      id, game, bet, host: duelSide(u), guest: null, state: "open", ts: now,
+      deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, reason: "", rounds: [],
+    };
+    const res = await kv.atomic()
+      .check(lock).check(cur)
+      .set(["duelof", u.id], id, { expireIn: DUEL_TTL })
+      .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
+      .set(["duel", id], duel, { expireIn: DUEL_TTL })
+      .commit();
+    if (!res.ok) return json({ error: "busy" }, 409);
+    return json({ ok: true, duel: duelView(duel, u.id), balance: Math.max(0, nb) });
+  }
+
+  // ---------- take the table back down ----------
+  // Only while it is still open and unjoined. If a join landed first the check
+  // below fails and the host is told so rather than being refunded twice.
+  if (req.method === "POST" && path === "/duel/cancel") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const entry = await loadDuel(clip(b.id, 32));
+    const d = entry.value;
+    if (!d) return json({ error: "gone" }, 404);
+    if (d.host.id !== u.id) return json({ error: "not yours" }, 403);
+    if (d.settled) return json({ error: "over", duel: duelView(d, u.id) }, 409);
+    if (d.state !== "open") return json({ error: "someone is at the table", duel: duelView(d, u.id) }, 409);
+    const out = finishDuel(d, null, "cancelled");
+    if (!await commitDuel(entry, out.next, out.credits)) {
+      const again = await loadDuel(d.id);
+      return json({ error: "someone is at the table", duel: again.value ? duelView(again.value, u.id) : null }, 409);
+    }
+    return json({ ok: true, refunded: d.bet, balance: round2((await getCas(u.id)).bal) });
+  }
+
+  // ---------- sit down at someone else's table ----------
+  if (req.method === "POST" && path === "/duel/join") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const entry = await loadDuel(clip(b.id, 32));
+    const d = entry.value;
+    if (!d) return json({ error: "gone" }, 404);
+    if (d.state !== "open" || d.guest) return json({ error: "taken" }, 409);
+    if (d.host.id === u.id) return json({ error: "that is your own table" }, 400);
+    const lock = await kv.get<string>(["duelof", u.id]);
+    if (lock.value) return json({ error: "already in a duel" }, 409);
+    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
+    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+    const bal = Number.isFinite(rec.bal) ? rec.bal : 0;
+    const nb = round2(bal - d.bet);
+    if (nb < -1e-9) return json({ error: "insufficient" }, 402);
+    const now = Date.now();
+    const next: Duel = {
+      ...d, guest: duelSide(u), state: "confirm", deadline: now + DUEL_CONFIRM_MS,
+    };
+    // seat, stake and lock in one commit: two people racing for the last seat
+    // means exactly one debit, and the loser is told the table is taken.
+    const res = await kv.atomic()
+      .check(entry).check(lock).check(cur)
+      .set(["duelof", u.id], d.id, { expireIn: DUEL_TTL })
+      .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
+      .set(["duel", d.id], next, { expireIn: DUEL_TTL })
+      .commit();
+    if (!res.ok) return json({ error: "taken" }, 409);
+    return json({ ok: true, duel: duelView(next, u.id), balance: Math.max(0, nb) });
+  }
+
+  // ---------- both of you, say yes, within ten seconds ----------
+  if (req.method === "POST" && path === "/duel/confirm") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const entry = await loadDuel(clip(b.id, 32));
+      const d = entry.value;
+      if (!d) return json({ error: "gone" }, 404);
+      if (d.settled) return json({ error: "over", duel: duelView(d, u.id) }, 409);
+      if (d.state !== "confirm") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
+      const mine = d.host.id === u.id ? "host" : (d.guest && d.guest.id === u.id ? "guest" : null);
+      if (!mine) return json({ error: "not your duel" }, 403);
+      const next: Duel = { ...d, host: { ...d.host }, guest: d.guest ? { ...d.guest } : null };
+      if (mine === "host") next.host.confirmed = true; else next.guest!.confirmed = true;
+      const both = next.host.confirmed && !!next.guest?.confirmed;
+      let credits: { id: string; amount: number }[] = [];
+      if (both && d.game === "cut") {
+        // no moves to make: the deck is cut the instant the second yes lands, in
+        // the same commit, so there is no unsettled window to time out inside
+        const cards = cutDeal();
+        const hostWins = cutRank(cards.host) > cutRank(cards.guest);
+        const done = finishDuel({ ...next, cards }, hostWins ? d.host.id : d.guest!.id, "play");
+        done.next.cards = cards;
+        credits = done.credits;
+        Object.assign(next, done.next);
+      } else if (both) {
+        next.state = "live";
+        next.deadline = Date.now() + DUEL_MOVE_MS;
+      }
+      if (await commitDuel(entry, next, credits)) {
+        return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
+      }
+    }
+    return json({ error: "busy" }, 503);
+  }
+
+  // ---------- play a hand ----------
+  if (req.method === "POST" && path === "/duel/move") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const move = clip(b.move, 16);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const entry = await loadDuel(clip(b.id, 32));
+      const d = entry.value;
+      if (!d) return json({ error: "gone" }, 404);
+      if (d.settled) return json({ error: "over", duel: duelView(d, u.id) }, 409);
+      if (d.state !== "live") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
+      const cfg = DUEL_GAMES[d.game];
+      if (!cfg || cfg.moves.indexOf(move) < 0) return json({ error: "not a move" }, 400);
+      const mine = d.host.id === u.id ? "host" : (d.guest && d.guest.id === u.id ? "guest" : null);
+      if (!mine) return json({ error: "not your duel" }, 403);
+      const me = mine === "host" ? d.host : d.guest!;
+      // one pick per round, and it is final. re-sending is not a way to see
+      // their answer first and then change yours.
+      if (me.move !== null) return json({ error: "already played", duel: duelView(d, u.id) }, 409);
+      const next: Duel = {
+        ...d, host: { ...d.host }, guest: d.guest ? { ...d.guest } : null, rounds: d.rounds.slice(),
+      };
+      if (mine === "host") next.host.move = move; else next.guest!.move = move;
+      let credits: { id: string; amount: number }[] = [];
+      const hm = next.host.move, gm = next.guest!.move;
+      if (hm !== null && gm !== null) {
+        // both are in, so the round can be read. a tie is not a round: it is
+        // wiped and replayed, on a fresh clock.
+        const hostTakes = TUNG_BEATS[hm] === gm;
+        const guestTakes = TUNG_BEATS[gm] === hm;
+        next.rounds.push({
+          host: hm, guest: gm,
+          won: hostTakes ? next.host.name : (guestTakes ? next.guest!.name : null),
+        });
+        if (hostTakes) next.host.wins += 1;
+        if (guestTakes) next.guest!.wins += 1;
+        next.host.move = null;
+        next.guest!.move = null;
+        if (next.host.wins >= cfg.target || next.guest!.wins >= cfg.target) {
+          const winner = next.host.wins >= cfg.target ? next.host.id : next.guest!.id;
+          const done = finishDuel(next, winner, "play");
+          credits = done.credits;
+          Object.assign(next, done.next);
+        } else {
+          if (hostTakes || guestTakes) next.round += 1;
+          next.deadline = Date.now() + DUEL_MOVE_MS;
+        }
+      }
+      if (await commitDuel(entry, next, credits)) {
+        return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
+      }
+    }
+    return json({ error: "busy" }, 503);
+  }
+
+  // ---------- watch the clock ----------
+  if (req.method === "GET" && path === "/duel/state") {
+    const u = await casUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const entry = await loadDuel(clip(url.searchParams.get("id"), 32));
+    const d = entry.value;
+    if (!d) return json({ error: "gone" }, 404);
+    if (d.host.id !== u.id && (!d.guest || d.guest.id !== u.id)) {
+      return json({ error: "not your duel" }, 403);
+    }
+    return json({ ok: true, duel: duelView(d, u.id), balance: round2((await getCas(u.id)).bal) });
+  }
+
   // ---------- admin ----------
   if (req.method === "GET" && path === "/admin") {
     // Full admin HTML is ~20KB. Serving it to every scanner was free egress.
@@ -1135,6 +1713,45 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // ---------- admin: read / flip the web veil ----------
   // `configured` tells the dashboard whether PROXY_URL is set at all, without
   // ever handing the URL itself to the page.
+  // ---------- post a message as somebody else ----------
+  // The one place in the app where a message's author is not the account that
+  // sent the request. Key-gated, and deliberately narrow: the name has to
+  // belong to a real approved member (or be tung himself), so this cannot
+  // conjure a line from an account that never existed. It is a moderator tool
+  // for seeding and for putting words in tung's mouth on purpose — every other
+  // route derives the author from the token and always will.
+  if (req.method === "POST" && path === "/admin/postas") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const asName = clip(b.username, 24);
+    const text = clip(b.text, 1000);
+    if (!asName || !text) return json({ error: "missing" }, 400);
+    // tung is not a member and has no record to look up, so he is named here
+    const asTung = impersonatesTung(asName);
+    let name = WISDOM_NAME;
+    if (!asTung) {
+      const app = await findApprovedByUsername(asName);
+      if (!app) return json({ error: "no such member" }, 404);
+      name = app.username;       // use their real casing, not what was typed
+    }
+    // the quote is resolved the same way an ordinary send resolves it: nobody,
+    // admin included, gets to write words into somebody else's mouth twice over
+    let reply: { id: string; name: string; text: string } | null = null;
+    const replyId = b.replyTo ? clip(b.replyTo, 32) : "";
+    if (replyId) {
+      const q = await kv.get<MsgRef>(["msg", replyId]);
+      if (!q.value) return json({ error: "no such message" }, 404);
+      reply = { id: replyId, name: String(q.value.name), text: String(q.value.text).slice(0, 140) };
+    }
+    const id = rid(8);
+    await appendEvent({
+      type: "msg", id, name, text, reply,
+      from: asTung ? "tung" : null,
+    });
+    return json({ ok: true, id, username: name, tung: asTung });
+  }
+
   if (req.method === "GET" && path === "/admin/veil") {
     if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
     const f = await kv.get<boolean>(["veil", "live"]);
@@ -1552,7 +2169,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       else if (pv.total === 21) { result = "blackjack"; payout = payoutOf(bet, 2.5); }
       else { result = "dealer_blackjack"; payout = 0; }
       st.hands[0].done = true; st.hands[0].result = result; st.hands[0].payout = payout;
-      await kv.delete(["bj", u.id]);
+      // never stored, so there is no record to claim — pay it straight out
       if (payout > 0) await adjustBalance(u.id, payout);
       return await bjRespond(u.id, st, true);
     }
@@ -1604,8 +2221,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     }
 
     while (st.active < st.hands.length && st.hands[st.active].done) st.active++;
-    if (st.active >= st.hands.length) return await bjRespond(u.id, await bjResolve(u.id, st), true);
-    await kv.set(["bj", u.id], st, { expireIn: GAME_TTL });
+    if (st.active >= st.hands.length) {
+      const done = await bjResolve(u.id, st, g);
+      if (!done) return json({ error: "no hand" }, 400);   // another request settled it
+      return await bjRespond(u.id, done, true);
+    }
+    if (!(await kv.atomic().check(g).set(["bj", u.id], st, { expireIn: GAME_TTL }).commit()).ok) {
+      return json({ error: "no hand" }, 400);   // a concurrent action moved the hand
+    }
     return await bjRespond(u.id, st, false);
   }
 
@@ -1639,7 +2262,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const tile = Math.floor(Number(b.tile));
     if (!(tile >= 0 && tile <= 24) || st.revealed.includes(tile)) return json({ error: "bad tile" }, 400);
     if (st.mines.includes(tile)) {
-      await kv.delete(["mines", u.id]);
+      if (!await claimGame(["mines", u.id], g)) return json({ error: "no game" }, 400);
       const bal = (await getCas(u.id)).bal;
       return json({ ok: true, state: "boom", tile, mines: st.mines, balance: round2(bal) });
     }
@@ -1648,12 +2271,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const mult = minesMult(st.count, safe);
     // auto-win once every safe tile is uncovered
     if (safe === 25 - st.count) {
-      await kv.delete(["mines", u.id]);
       const payout = payoutOf(st.bet, minesMultExact(st.count, safe));
-      const bal = await adjustBalance(u.id, payout);
-      return json({ ok: true, state: "cashout", tile, multiplier: mult, payout, revealed: st.revealed, mines: st.mines, balance: round2(bal!) });
+      const bal = await settleGame(["mines", u.id], g, u.id, payout);
+      if (bal === null) return json({ error: "no game" }, 400);
+      return json({ ok: true, state: "cashout", tile, multiplier: mult, payout, revealed: st.revealed, mines: st.mines, balance: round2(bal) });
     }
-    await kv.set(["mines", u.id], st, { expireIn: GAME_TTL });
+    if (!(await kv.atomic().check(g).set(["mines", u.id], st, { expireIn: GAME_TTL }).commit()).ok) {
+      return json({ error: "no game" }, 400);   // a concurrent pick or cashout moved it
+    }
     return json({ ok: true, state: "playing", tile, revealed: st.revealed, multiplier: mult, nextMultiplier: minesMult(st.count, safe + 1) });
   }
   if (req.method === "POST" && path === "/cas/mines/cashout") {
@@ -1666,11 +2291,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!g.value) return json({ error: "no game" }, 400);
     const st = g.value;
     if (!st.revealed.length) return json({ error: "reveal a tile first" }, 400);
-    await kv.delete(["mines", u.id]);
     const mult = minesMult(st.count, st.revealed.length);
     const payout = payoutOf(st.bet, minesMultExact(st.count, st.revealed.length));
-    const bal = await adjustBalance(u.id, payout);
-    return json({ ok: true, state: "cashout", multiplier: mult, payout, mines: st.mines, balance: round2(bal!) });
+    const bal = await settleGame(["mines", u.id], g, u.id, payout);
+    if (bal === null) return json({ error: "no game" }, 400);   // already cashed out
+    return json({ ok: true, state: "cashout", multiplier: mult, payout, mines: st.mines, balance: round2(bal) });
   }
 
   // ---------- BEEF (crash-chicken: start / step / cashout) ----------
@@ -1709,7 +2334,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     }
     const nextStep = st.step + 1;
     if (nextStep >= st.deathStep) {
-      await kv.delete(["beef", u.id]);
+      if (!await claimGame(["beef", u.id], g)) return json({ error: "no game" }, 400);
       const bal = (await getCas(u.id)).bal;
       return json({ ok: true, state: "dead", step: nextStep, deathStep: st.deathStep, balance: round2(bal) });
     }
@@ -1717,12 +2342,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const mult = beefMult(st.q, nextStep);
     if (nextStep >= st.lanes) {
       // reached the far side — auto cash out at the top multiplier
-      await kv.delete(["beef", u.id]);
       const payout = payoutOf(st.bet, beefMultExact(st.q, nextStep));
-      const bal = await adjustBalance(u.id, payout);
-      return json({ ok: true, state: "cashout", step: nextStep, multiplier: mult, payout, balance: round2(bal!) });
+      const bal = await settleGame(["beef", u.id], g, u.id, payout);
+      if (bal === null) return json({ error: "no game" }, 400);
+      return json({ ok: true, state: "cashout", step: nextStep, multiplier: mult, payout, balance: round2(bal) });
     }
-    await kv.set(["beef", u.id], st, { expireIn: GAME_TTL });
+    if (!(await kv.atomic().check(g).set(["beef", u.id], st, { expireIn: GAME_TTL }).commit()).ok) {
+      return json({ error: "no game" }, 400);   // a concurrent step or cashout moved it
+    }
     return json({ ok: true, state: "playing", step: nextStep, multiplier: mult, nextMultiplier: beefMult(st.q, nextStep + 1) });
   }
   if (req.method === "POST" && path === "/cas/beef/cashout") {
@@ -1739,11 +2366,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       return json({ error: "no game" }, 400);
     }
     if (st.step < 1) return json({ error: "take a step first" }, 400);
-    await kv.delete(["beef", u.id]);
     const mult = beefMult(st.q, st.step);
     const payout = payoutOf(st.bet, beefMultExact(st.q, st.step));
-    const bal = await adjustBalance(u.id, payout);
-    return json({ ok: true, state: "cashout", step: st.step, multiplier: mult, payout, balance: round2(bal!) });
+    const bal = await settleGame(["beef", u.id], g, u.id, payout);
+    if (bal === null) return json({ error: "no game" }, 400);   // already cashed out
+    return json({ ok: true, state: "cashout", step: st.step, multiplier: mult, payout, balance: round2(bal) });
   }
 
   // ---------- SHOP: list active items + redeem ----------
@@ -1983,6 +2610,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn" data-pane="balances">Casino balances <span class="count" id="count-balances"></span></button>
 <button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
 <button type="button" class="navbtn" data-pane="chat">Chat log <span class="count" id="count-chat"></span></button>
+<button type="button" class="navbtn" data-pane="postas">Post as&hellip;</button>
 <button type="button" class="navbtn" data-pane="veil">Web veil <span class="count" id="count-veil"></span></button>
 <button type="button" class="navbtn" data-pane="danger">Wipe data</button>
 </aside>
@@ -2017,6 +2645,14 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <p class="hint">The last 500 retained chat lines. Not loaded with the other lists — dump only when you need it. Clearing wipes every retained message and reaction; accounts, balances and shop items are untouched.</p>
 <div class="row" style="margin-bottom:14px"><button class="load" id="dumpChat">dump last 500</button><button class="no" id="clearChat">clear chat log</button></div>
 <div id="chatlog"><div class="empty">not loaded. click dump last 500.</div></div>
+</section>
+<section class="pane" id="pane-postas">
+<h2>Post as&hellip;</h2>
+<p class="hint">Drop a message into the chat under somebody else's name. The name must belong to an approved member, or be <b>tung</b> — who posts with his own mark, exactly like a Wisdom. Reply-to is optional: give the id of a message (the chat log shows one under each line) and the quote is filled in from what that message actually says.</p>
+<div class="field"><label for="paName">post as</label><input id="paName" class="uname" placeholder="username, or tung" autocomplete="off"></div>
+<div class="field"><label for="paText">message</label><textarea id="paText" class="uname" placeholder="what they said"></textarea></div>
+<div class="field"><label for="paReply">reply to (optional message id)</label><input id="paReply" class="uname" placeholder="leave empty for no quote" autocomplete="off"></div>
+<div class="row" style="margin-top:12px"><button class="load" id="paSend">post it</button><span id="paMsg" class="hint"></span></div>
 </section>
 <section class="pane" id="pane-veil">
 <h2>Web veil</h2>
@@ -2096,6 +2732,7 @@ function showPane(id){
   for(var j=0;j<btns.length;j++) btns[j].classList.toggle("on", btns[j].getAttribute("data-pane")===id);
 }
 var navBtns=document.querySelectorAll(".navbtn");
+document.getElementById("paSend").onclick=postAs;
 for(var n=0;n<navBtns.length;n++){
   navBtns[n].onclick=function(){showPane(this.getAttribute("data-pane"));};
 }
@@ -2119,6 +2756,28 @@ function bindSearch(id, fn){
 bindSearch("search-pending", function(){renderPending();});
 bindSearch("search-users", function(){renderUsers();});
 bindSearch("search-balances", function(){renderBalances();});
+function postAs(){
+  var key=keyEl.value.trim();
+  var name=document.getElementById("paName").value.trim();
+  var text=document.getElementById("paText").value;
+  var replyTo=document.getElementById("paReply").value.trim();
+  var out=document.getElementById("paMsg");
+  if(!name||!text.trim()){out.textContent="need a name and a message.";return;}
+  out.textContent="posting...";
+  fetch("/admin/postas",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({key:key,username:name,text:text,replyTo:replyTo})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.error){
+        out.textContent=d.error==="no such member"?"no approved member by that name.":
+          (d.error==="no such message"?"no message with that id — it may have aged out.":d.error);
+        return;
+      }
+      out.textContent="posted as "+d.username+(d.tung?" (the shrine)":"")+".";
+      document.getElementById("paText").value="";
+      document.getElementById("paReply").value="";
+    }).catch(function(){out.textContent="network error.";});
+}
+
 function dumpChat(){
   var key=keyEl.value.trim();
   chatlog.innerHTML='<div class="empty">loading...</div>';

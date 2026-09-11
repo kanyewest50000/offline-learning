@@ -390,6 +390,60 @@
       '.bjres.win{color:#6ee787}.bjres.lose{color:#e0908a}' +
       '.card{min-width:38px;height:54px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;background:#f5efe0;color:#1d1206;border-radius:6px;border:1px solid #ccc}' +
       '.card.red{color:#b3261e}' +
+      /* ---- the pit: player against player ---- */
+      /* the pit inherits .casmenu's four columns so its two tiles are the same
+         size as the house games below them, rather than two banners */
+      '.casgame.pvp{border-color:#7a5a1a}' +
+      '.casgame.pvp{border-color:#7a5a1a;background:linear-gradient(155deg,#3a2410,#241505)}' +
+      '.casgame.pvp:hover{border-color:#f2c063}' +
+      '.piticon{width:30px;height:30px;object-fit:cover;border-radius:6px;display:block}' +
+      '.pitblurb{margin:0;font-size:14px;color:#f2c063;font-style:italic;line-height:1.5}' +
+      '.pitsub{margin:0;font-size:12px;color:#8a6a3a;line-height:1.5}' +
+      '.pitlist{display:flex;flex-direction:column;gap:8px}' +
+      '.pitrow{display:flex;align-items:center;gap:12px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:12px 14px}' +
+      '.pitrow.mine{border-color:#c8823c;background:linear-gradient(135deg,#3a2410,#241505)}' +
+      '.pitrow .grow{flex:1;min-width:0}' +
+      '.pitrow h4{margin:0 0 2px;font-size:14px;color:#f5efe0}' +
+      '.pitrow p{margin:0;font-size:12px;color:#c8823c}' +
+      '.pitrow .price{font-weight:700;color:#f2c063;white-space:nowrap}' +
+      /* the duel screen */
+      '.pitvs{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap}' +
+      '.pitvs .pn{font-size:17px;font-weight:800;color:#f5efe0;max-width:40vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.pitvs .pvs{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8a6a3a}' +
+      '.pitpot{text-align:center;font-size:13px;color:#f2c063;font-weight:700}' +
+      '.pitclock{text-align:center;font-size:34px;font-weight:800;color:#c8823c;font-variant-numeric:tabular-nums;line-height:1;min-height:34px}' +
+      '.pitclock.hot{color:#e0908a}' +
+      '.pitbody{display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}' +
+      '.pitbody .cbtn{min-width:190px}' +
+      '.pitsay{margin:0;font-size:16px;color:#f5efe0;font-weight:600}' +
+      '.pitbody .pitsub{margin:0;max-width:380px;text-align:center}' +
+      '.pitscore{display:flex;align-items:center;justify-content:center;gap:16px}' +
+      '.pitscore .sv{font-size:32px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums;line-height:1}' +
+      '.pitscore .sl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8a6a3a}' +
+      '.pitmoves{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}' +
+      '.pitmove{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-width:104px;padding:16px 14px;' +
+      'background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;border-radius:14px;color:#f2c063;font-weight:800;' +
+      'font-size:13px;letter-spacing:.04em;text-transform:lowercase;cursor:pointer;transition:transform .1s ease,border-color .1s ease}' +
+      '.pitmove:hover:not(:disabled){transform:translateY(-3px);border-color:#f2c063}' +
+      '.pitmove:disabled{opacity:.45;cursor:not-allowed}' +
+      '.pmimg{width:38px;height:38px;object-fit:cover;border-radius:8px;display:block}' +
+      '.pmemoji{font-size:34px;line-height:1}' +
+      '.pitpicked{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}' +
+      '.pitpicked .pl{font-size:12px;color:#8a6a3a}' +
+      '.pitpicked .pmimg{width:44px;height:44px}' +
+      '.pithist{display:flex;flex-direction:column;gap:5px;margin-top:4px;width:100%;max-width:280px}' +
+      '.pithist .ph{display:flex;align-items:center;justify-content:center;gap:10px;padding:5px 8px;background:#1d1206;border:1px solid #3a2410;border-radius:8px}' +
+      '.pithist .phn{font-size:10px;font-weight:800;color:#8a6a3a;width:12px}' +
+      '.pithist .phv{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#c8823c;width:44px}' +
+      '.pithist .pmimg{width:22px;height:22px}' +
+      '.pithist .pmemoji{font-size:20px}' +
+      '.pitend{font-size:20px;font-weight:800;color:#f5efe0;line-height:1.35;max-width:420px}' +
+      '.pitend.win{color:#6ee787}.pitend.lose{color:#e0908a}' +
+      '.pitcards{display:flex;gap:18px;justify-content:center;flex-wrap:wrap}' +
+      '.pcut{display:flex;flex-direction:column;align-items:center;gap:6px}' +
+      '.pcut b{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a}' +
+      '.cutc{display:flex;align-items:center;justify-content:center;width:78px;height:110px;border-radius:12px;' +
+      'background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;font-size:27px;font-weight:800;box-shadow:0 8px 20px #0008}' +
       '.shopitem{display:flex;align-items:center;gap:12px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:12px 14px}' +
       '.shopitem.wait{border-color:#c8823c}' +
       '.shopitem .grow{flex:1}' +
@@ -409,7 +463,142 @@
       '.brokebar .cbtn{white-space:nowrap;flex:0 0 auto;margin-left:auto}' +
       '.brokex{position:absolute;top:8px;right:10px;background:transparent;border:0;color:#8a6a3a;font-size:14px;cursor:pointer;padding:2px 6px;line-height:1}' +
       '.brokex:hover{color:#f2c063}' +
-      '@media(max-width:560px){.brokebar{flex-wrap:wrap}.brokebar .cbtn{width:auto;margin-left:auto}}';
+      '@media(max-width:560px){.brokebar{flex-wrap:wrap}.brokebar .cbtn{width:auto;margin-left:auto}}' +
+      /* ---- the gear, and the settings page behind it ---- */
+      '#choose{position:relative}' +
+      '.gearbtn{position:absolute;top:16px;left:16px;width:40px;height:40px;padding:0;display:flex;align-items:center;justify-content:center;' +
+      'background:#241505;border:1px solid #4a3316;border-radius:11px;color:#c8823c;cursor:pointer;' +
+      'transition:transform .12s ease,border-color .12s ease,color .12s ease}' +
+      '.gearbtn svg{width:21px;height:21px}' +
+      '.gearbtn:hover{border-color:#c8823c;color:#f2c063;transform:rotate(35deg)}' +
+      '#settings{flex:1;display:none;flex-direction:column;min-height:0;background:radial-gradient(120% 80% at 50% 0%,#241505 0%,#160d04 60%)}' +
+      '#setbar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:linear-gradient(180deg,#32200c,#2b1a0a);border-bottom:1px solid #3a2410}' +
+      '#setTitle{font-weight:700;color:#f2c063}' +
+      '#setbody{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:20px;align-items:center}' +
+      '.setsec{width:100%;max-width:560px;background:linear-gradient(155deg,#2e1c08,#1d1206);border:1px solid #4a3316;border-radius:14px;padding:18px}' +
+      '.setsec h3{margin:0 0 4px;font-size:15px;color:#f2c063}' +
+      '.sethint{margin:0 0 14px;font-size:12px;color:#8a6a3a;line-height:1.5}' +
+      '.setlock{margin:12px 0 0;font-size:11px;color:#8a6a3a;font-style:italic;text-align:center}' +
+      '.setfield{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}' +
+      '.setfield>span{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a6a3a}' +
+      '.setfield input{width:100%;box-sizing:border-box;font-size:13px}' +
+      '.setfield input:focus{outline:none;border-color:#c8823c;box-shadow:0 0 0 2px #c8823c40}' +
+      '#themegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}' +
+      '.themecard{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:12px;text-align:left;' +
+      'background:#1d1206;border:1px solid #3a2410;border-radius:12px;color:#f5efe0;cursor:pointer;font-family:inherit}' +
+      '.themecard:hover{border-color:#7a5a1a}' +
+      '.themecard.on{border-color:#f2c063;box-shadow:0 0 0 1px #f2c063 inset}' +
+      '.themecard strong{font-size:13px;color:#f2c063;font-weight:700}' +
+      '.themecard .tnote{font-size:11px;color:#8a6a3a;font-style:italic;line-height:1.4}' +
+      /* each swatch paints its own theme, so the choice is visible before it is made */
+      '.swatch{width:100%;height:34px;border-radius:8px;border:1px solid #00000055;display:block}' +
+      '.swatch.sw-wood{background:linear-gradient(120deg,#2b1a0a 0%,#3a2410 45%,#c8823c 100%)}' +
+      '.swatch.sw-dark{background:linear-gradient(120deg,#161618 0%,#232328 45%,#8b8b96 100%)}' +
+      /* =====================================================================
+         DARK MODE
+         The wood above is the shrine as built and owns every colour in this
+         sheet. A theme is a block like this one: it repaints the surfaces and
+         leaves the layout completely alone, so a new theme can never move
+         anything. Only colour properties belong below this line.
+         ===================================================================== */
+      /* data-theme sits ON <html>, so the root needs an attribute selector and
+         everything else a descendant one — "[data-theme] html" would match
+         nothing at all */
+      'html[data-theme="dark"],[data-theme="dark"] body{background:#121214;color:#e8e8ec}' +
+      '[data-theme="dark"] #mainhdr{background:#1c1c20;border-bottom-color:#2a2a30}' +
+      '[data-theme="dark"] #hdrShrine small{color:#9a9aa6}' +
+      '[data-theme="dark"] .hbtn{background:#232328;border-color:#3a3a44;color:#d6d6de}' +
+      '[data-theme="dark"] .hbtn:hover{background:#2e2e36;border-color:#6a6a78}' +
+      '[data-theme="dark"] #gate p,[data-theme="dark"] .hint{color:#9a9aa6}' +
+      '[data-theme="dark"] .warn{color:#d6d6de}' +
+      '[data-theme="dark"] input,[data-theme="dark"] textarea,' +
+      '[data-theme="dark"] #casino input,[data-theme="dark"] #casino select{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
+      '[data-theme="dark"] button{background:#5a5a68;color:#f2f2f6}' +
+      '[data-theme="dark"] button.ghost{background:transparent;color:#b8b8c4;border-color:#3a3a44}' +
+      '[data-theme="dark"] #myhash{background:#1a1a1e;border-color:#2a2a30;color:#d6d6de}' +
+      '[data-theme="dark"] #f,[data-theme="dark"] #picker,[data-theme="dark"] #replybar{background:#1c1c20;border-color:#2a2a30}' +
+      '[data-theme="dark"] #pick{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
+      '[data-theme="dark"] .msg{background:#232328}' +
+      '[data-theme="dark"] .msg.me{background:#3d3d4a}' +
+      '[data-theme="dark"] .who{color:#9a9aa6}' +
+      '[data-theme="dark"] .msg.me .who,[data-theme="dark"] .who:hover{color:#d6d6de}' +
+      /* tung stays gold in every theme: he is not part of the decor */
+      '[data-theme="dark"] .msg.tung{background:linear-gradient(160deg,#26262c,#19191d);border-color:#5a4a24;border-left-color:#f2c063}' +
+      '[data-theme="dark"] .act,[data-theme="dark"] .chip{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
+      '[data-theme="dark"] .chip.on{background:#3d3d4a;border-color:#6a6a78}' +
+      '[data-theme="dark"] .quote{color:#9a9aa6;border-left-color:#6a6a78}' +
+      '[data-theme="dark"] .quote b{color:#e8e8ec}' +
+      '[data-theme="dark"] #rpal{background:#232328;border-color:#3a3a44}' +
+      '[data-theme="dark"] #rpal button:hover,[data-theme="dark"] .pemoji:hover{background:#3a3a44}' +
+      '[data-theme="dark"] .bigbtn{background:linear-gradient(155deg,#2a2a31,#1e1e23);border-color:#3a3a44;color:#c6c6d2}' +
+      '[data-theme="dark"] .bigbtn:hover{border-color:#8b8b96}' +
+      '[data-theme="dark"] .gearbtn{background:#232328;border-color:#3a3a44;color:#b8b8c4}' +
+      '[data-theme="dark"] .gearbtn:hover{border-color:#8b8b96;color:#e8e8ec}' +
+      '[data-theme="dark"] #shrinebar,[data-theme="dark"] #playbar,[data-theme="dark"] #origbar,' +
+      '[data-theme="dark"] #veilbar,[data-theme="dark"] #setbar{background:linear-gradient(180deg,#26262c,#1c1c20);border-bottom-color:#2a2a30}' +
+      '[data-theme="dark"] #banView{background:#0e0e10}' +
+      '[data-theme="dark"] #banUntil{color:#9a9aa6}' +
+      '[data-theme="dark"] .gtile{background:linear-gradient(155deg,#26262c,#1e1e23);border-color:#3a3a44;color:#e8e8ec}' +
+      '[data-theme="dark"] .gtile:hover{background:linear-gradient(155deg,#31313a,#26262c);border-color:#8b8b96}' +
+      '[data-theme="dark"] #originals,[data-theme="dark"] #veil,[data-theme="dark"] #settings,' +
+      '[data-theme="dark"] #casino{background:radial-gradient(120% 80% at 50% 0%,#1e1e23 0%,#111113 60%)}' +
+      '[data-theme="dark"] #origTitle,[data-theme="dark"] #veilTitle,[data-theme="dark"] #setTitle{color:#d6d6de}' +
+      '[data-theme="dark"] .origlead,[data-theme="dark"] .origtile span,[data-theme="dark"] #veilbody p{color:#9a9aa6}' +
+      '[data-theme="dark"] .origtile{background:linear-gradient(155deg,#26262c,#1a1a1e);border-color:#3a3a44;color:#e8e8ec}' +
+      '[data-theme="dark"] .origtile strong,[data-theme="dark"] #veilbody h2{color:#d6d6de}' +
+      '[data-theme="dark"] .setsec{background:linear-gradient(155deg,#26262c,#19191d);border-color:#3a3a44}' +
+      '[data-theme="dark"] .setsec h3{color:#d6d6de}' +
+      '[data-theme="dark"] .themecard{background:#1a1a1e;border-color:#3a3a44}' +
+      '[data-theme="dark"] .themecard strong{color:#d6d6de}' +
+      '[data-theme="dark"] .themecard.on{border-color:#8b8b96;box-shadow:0 0 0 1px #8b8b96 inset}' +
+      /* casino surfaces */
+      '[data-theme="dark"] #casbalwrap{background:#1a1a1e;border-color:#3a3a44}' +
+      '[data-theme="dark"] #casbalwrap b,[data-theme="dark"] #hdrCasino .chtitle{color:#d6d6de}' +
+      '[data-theme="dark"] .casgame{background:linear-gradient(155deg,#26262c,#1a1a1e);border-color:#3a3a44;color:#e8e8ec}' +
+      '[data-theme="dark"] .casgame:hover{background:#2e2e36;border-color:#8b8b96}' +
+      '[data-theme="dark"] .casgame .ci{color:#c6c6d2}' +
+      '[data-theme="dark"] .casgame.pvp{border-color:#5a5a68;background:linear-gradient(155deg,#2e2e36,#1e1e23)}' +
+      '[data-theme="dark"] .casgame.pvp:hover{border-color:#b8b8c4}' +
+      '[data-theme="dark"] .ctlrow,[data-theme="dark"] .pithist .ph{background:#19191d;border-color:#3a3a44}' +
+      '[data-theme="dark"] .panel{background:linear-gradient(150deg,#26262c,#19191d);border-color:#3a3a44}' +
+      '[data-theme="dark"] .stat,[data-theme="dark"] .cell,[data-theme="dark"] .shopitem,' +
+      '[data-theme="dark"] .pitrow,[data-theme="dark"] .rout{background:#232328;border-color:#3a3a44}' +
+      '[data-theme="dark"] .cell:hover{background:#2e2e36}' +
+      '[data-theme="dark"] .casback{border-color:#3a3a44;color:#b8b8c4}' +
+      '[data-theme="dark"] .cbtn{background:#5a5a68;color:#f2f2f6}' +
+      '[data-theme="dark"] .cbtn.sec{background:#232328;color:#d6d6de;border-color:#3a3a44}' +
+      '[data-theme="dark"] .altar{background:radial-gradient(80% 60% at 50% 12%,#2e2e36 0%,#1e1e23 55%,#141417 100%);border-color:#3a3a44}' +
+      '[data-theme="dark"] .godimg{border-color:#5a5a68}' +
+      '[data-theme="dark"] .godsub{color:#9a9aa6}' +
+      '[data-theme="dark"] #casclaim{background:#5a5a68;color:#f2f2f6}' +
+      '[data-theme="dark"] .brokebar,[data-theme="dark"] .pitrow.mine{background:linear-gradient(135deg,#2e2e36,#1e1e23);border-color:#8b8b96}' +
+      '[data-theme="dark"] .brokebar h4{color:#e8e8ec}' +
+      '[data-theme="dark"] .brokebar p,[data-theme="dark"] .pitrow p{color:#9a9aa6}' +
+      '[data-theme="dark"] .pitblurb,[data-theme="dark"] .pitpot,[data-theme="dark"] .pitscore .sv,' +
+      '[data-theme="dark"] .pitrow .price{color:#d6d6de}' +
+      '[data-theme="dark"] .pitmove{background:linear-gradient(155deg,#2e2e36,#1e1e23);border-color:#3a3a44;color:#d6d6de}' +
+      '[data-theme="dark"] .pitmove:hover:not(:disabled){border-color:#b8b8c4}' +
+      '[data-theme="dark"] .pitclock{color:#b8b8c4}' +
+      '[data-theme="dark"] .ovcard{background:linear-gradient(160deg,#26262c,#19191d);border-color:#3a3a44}' +
+      '[data-theme="dark"] .ovcard h3{color:#d6d6de}' +
+      '[data-theme="dark"] .ovrow{border-top-color:#2a2a30}' +
+      '[data-theme="dark"] .ovrow span{color:#e8e8ec}' +
+      '[data-theme="dark"] #appThread .tmsg.admin{background:#232328;border-color:#3a3a44}' +
+      '[data-theme="dark"] #appThread .tmsg.me{background:#5a5a68;color:#f2f2f6}' +
+      /* every muted label in the sheet is the same wood brown (#8a6a3a). On a
+         grey ground that reads as a stain rather than as quiet text, so they all
+         go neutral together — one rule, so a new label picks it up by being
+         written in the house style rather than by being remembered here. */
+      '[data-theme="dark"] .seclabel,[data-theme="dark"] .casnote,[data-theme="dark"] .ctl>span,' +
+      '[data-theme="dark"] .stat b,[data-theme="dark"] .pcell b,[data-theme="dark"] .ovrow b,' +
+      '[data-theme="dark"] .bjlabel,[data-theme="dark"] .bjhtag,[data-theme="dark"] .dscale,' +
+      '[data-theme="dark"] .godnote,[data-theme="dark"] .brokex,[data-theme="dark"] .ovcard .ovsub,' +
+      '[data-theme="dark"] .sethint,[data-theme="dark"] .setlock,[data-theme="dark"] .setfield>span,' +
+      '[data-theme="dark"] .themecard .tnote,[data-theme="dark"] .pitsub,[data-theme="dark"] .pitscore .sl,' +
+      '[data-theme="dark"] .pitpicked .pl,[data-theme="dark"] .pithist .phn,[data-theme="dark"] .pcut b,' +
+      '[data-theme="dark"] .pitvs .pvs,[data-theme="dark"] .origlead{color:#8b8b96}' +
+      '[data-theme="dark"] .pithist .phv,[data-theme="dark"] .stat span,[data-theme="dark"] .pcell span{color:#c6c6d2}' +
+      '[data-theme="dark"] .pcell.gem span{color:#6ee787}';
 
   /* the in-page in-page player styles were removed — catalog items now open in a
      separate about:blank tab that carries its own header + iframe styles */
