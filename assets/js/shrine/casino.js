@@ -1151,7 +1151,7 @@
       sub:"first to two rounds. a tie is no round at all — play it again."},
     cut:{name:"The Cut",moves:[],
       blurb:"one card each. the high card takes the pot.",
-      sub:"nothing to play. the deck is cut the moment you both say yes."}
+      sub:"nothing to play. the deck is cut the moment everyone at the table says yes. a tie is re-cut."}
   };
   function pitStop(){
     if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;}
@@ -1207,20 +1207,26 @@
     v.appendChild(el("p","pitsub",cfg.sub));
 
     var bet=betField("1");
+    var seatsSel=game==="cut"?selectOf([["2","2"],["3","3"],["4","4"]],"2"):null;
     var open=el("button","cbtn go","put up a table");
     var row=el("div","ctlrow");
     row.appendChild(ctl("stake",bet));
+    if(seatsSel)row.appendChild(ctl("players",seatsSel));
     var bw=el("div","casrow");bw.appendChild(open);
     row.appendChild(ctl(" ",bw));
     v.appendChild(row);
     var r=res(v);
     v.appendChild(el("div","seclabel","open tables"));
     var list=el("div","pitlist");v.appendChild(list);
-    v.appendChild(el("div","casnote","your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm."));
+    v.appendChild(el("div","casnote",game==="cut"
+      ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, it does not fill within 10 minutes, or anyone does not confirm."
+      :"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm."));
 
     open.onclick=function(){
       open.disabled=true;r.className="casres";r.textContent="";
-      jpost("/duel/create",{game:game,bet:Number(bet.value)}).then(function(d){if(refused(d)){refusedGate();return;}
+      var body={game:game,bet:Number(bet.value)};
+      if(seatsSel)body.seats=Number(seatsSel.value);
+      jpost("/duel/create",body).then(function(d){if(refused(d)){refusedGate();return;}
         open.disabled=false;
         if(!d||d.error){bad(r,d&&d.error==="already in a duel"?"you are already at a table.":(d&&d.error)||"could not open a table");return;}
         setBal(d.balance);pitRefresh();
@@ -1240,7 +1246,10 @@
         var g=el("div","grow");
         g.appendChild(el("h4",null,t.mine?"your table":t.host));
         var lf=pitLeft(t.deadline);
-        g.appendChild(el("p",null,t.mine?("waiting for someone — "+pitSecs(lf)+"s left"):("waiting — "+pitSecs(lf)+"s left")));
+        var seats=t.seats||2, filled=t.filled||1;
+        var wait=(seats>2?(filled+" / "+seats+" seated"):(t.mine?"waiting for someone":"waiting"))
+          +" — "+pitClockText(lf)+" left";
+        g.appendChild(el("p",null,wait));
         box.appendChild(g);
         box.appendChild(el("div","price",money(t.bet)+" sahurs"));
         var sit=el("button","cbtn go","sit down");
@@ -1313,7 +1322,8 @@
       return;
     }
     var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
-    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,d.reason,d.guest].join("|");
+    var who=(d.players||[]).map(function(p){return p.name+":"+(p.confirmed?"1":"0");}).join(",");
+    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,d.reason,d.guest,d.filled,who].join("|");
     if(shape===PIT.shape){pitPaintClock(d);return;}
     PIT.shape=shape;
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
@@ -1322,9 +1332,13 @@
     if(back)back.onclick=function(){pitStop();viewPit(d.game);};
 
     var head=el("div","pitvs");
-    head.appendChild(el("span","pn",d.you||"you"));
-    head.appendChild(el("span","pvs","vs"));
-    head.appendChild(el("span","pn",d.theirName||"…"));
+    var names=(d.players&&d.players.length)?d.players.slice():[{name:d.you||"you",you:true},{name:d.theirName||"\u2026"}];
+    var seats=d.seats||2;
+    while(names.length<seats)names.push({name:"\u2026"});
+    names.forEach(function(p,i){
+      if(i)head.appendChild(el("span","pvs","vs"));
+      head.appendChild(el("span","pn",p.you?(d.you||"you"):(p.name||"\u2026")));
+    });
     v.appendChild(head);
     v.appendChild(el("div","pitpot",money(d.pot)+" sahurs on the table"));
 
@@ -1334,39 +1348,61 @@
     var note=el("div","casres","");v.appendChild(note);
 
     if(d.state==="open"){
-      /* Your table, up and waiting. This is the only page that can take it
-         down, and it has to be — you are sent straight here after opening one,
-         so a screen without a cancel on it left the stake stranded until the
-         table timed out. */
-      body.appendChild(el("p","pitsay","your table is up."));
-      body.appendChild(el("p","pitsub","waiting for somebody to sit down. nobody has yet, so you can take it back."));
-      var kill=el("button","cbtn stop","take it down \u2014 "+money(d.bet)+" sahurs back");
-      kill.onclick=function(){
-        kill.disabled=true;
-        jpost("/duel/cancel",{id:d.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
-          kill.disabled=false;
-          if(!rr||rr.error){
-            /* somebody sat down in the moment between painting and clicking */
-            bad(note,rr&&rr.error==="someone is at the table"?"too late — somebody just sat down.":"could not take it down.");
-            return;
-          }
-          setBal(rr.balance);
-          pitStop();viewPit(d.game);
-        }).catch(function(){kill.disabled=false;bad(note,"network error");});
-      };
-      body.appendChild(kill);
-      body.appendChild(el("p","pitsub","if nobody comes, it closes itself and the stake comes back either way."));
+      /* The table page while it is still filling. A 2-seat table only lives
+         here with the host alone; a 3- or 4-seat Cut stays here until the
+         last chair is taken. This is the only page that can take it down. */
+      var filled=d.filled||1, need=Math.max(0,(d.seats||2)-filled);
+      if(d.youAreHost){
+        body.appendChild(el("p","pitsay",filled<=1?"your table is up.":(filled+" of "+(d.seats||2)+" seated."));
+        body.appendChild(el("p","pitsub",need===0
+          ?"the table is full."
+          :(need===1
+            ?(filled<=1?"waiting for somebody to sit down. nobody has yet, so you can take it back."
+              :"waiting for one more. you can still take it down.")
+            :"waiting for "+need+" more. you can still take it down.")));
+        var kill=el("button","cbtn stop","take it down \u2014 "+money(d.bet)+" sahurs back");
+        kill.onclick=function(){
+          kill.disabled=true;
+          jpost("/duel/cancel",{id:d.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
+            kill.disabled=false;
+            if(!rr||rr.error){
+              /* somebody sat down in the moment between painting and clicking */
+              bad(note,rr&&rr.error==="someone is at the table"?"too late — somebody just sat down.":"could not take it down.");
+              return;
+            }
+            setBal(rr.balance);
+            pitStop();viewPit(d.game);
+          }).catch(function(){kill.disabled=false;bad(note,"network error");});
+        };
+        body.appendChild(kill);
+        body.appendChild(el("p","pitsub",filled<=1
+          ?"if nobody comes, it closes itself and the stake comes back either way."
+          :"taking it down sends every stake home. if it never fills, the same thing happens on its own."));
+      }else{
+        body.appendChild(el("p","pitsay","you are seated."));
+        body.appendChild(el("p","pitsub",need===1
+          ?"waiting for one more. the deck is cut once the table is full and everyone says yes."
+          :"waiting for "+need+" more. the deck is cut once the table is full and everyone says yes."));
+        body.appendChild(el("p","pitsub","your stake is held. it comes back if the host takes the table down or the table never fills."));
+      }
     }else if(d.state==="confirm"){
+      var many=(d.seats||2)>2;
+      var ready=(d.players||[]).filter(function(p){return p.confirmed;}).length;
+      var total=(d.players&&d.players.length)||(d.seats||2);
       body.appendChild(el("p","pitsay",d.youConfirmed
-        ?"you are in. waiting on them."
-        :"they are waiting. say yes before the clock runs out."));
-      body.appendChild(el("p","pitsub",d.theyConfirmed?"they have confirmed.":"they have not confirmed yet."));
+        ?(many?"you are in. waiting on the others.":"you are in. waiting on them.")
+        :(many?"the table is full. say yes before the clock runs out.":"they are waiting. say yes before the clock runs out.")));
+      body.appendChild(el("p","pitsub",many
+        ?(ready+" of "+total+" have confirmed.")
+        :(d.theyConfirmed?"they have confirmed.":"they have not confirmed yet.")));
       if(!d.youConfirmed){
         var yes=el("button","cbtn go","i'm in");
         yes.onclick=function(){yes.disabled=true;pitSend("/duel/confirm",{id:d.id},function(){yes.disabled=false;bad(note,"too late.");});};
         body.appendChild(yes);
       }
-      body.appendChild(el("p","pitsub","if either of you does not confirm, both stakes come straight back."));
+      body.appendChild(el("p","pitsub",many
+        ?"if anyone does not confirm, every stake comes straight back."
+        :"if either of you does not confirm, both stakes come straight back."));
     }else if(d.state==="live"){
       var score=el("div","pitscore");
       score.appendChild(el("span","sv",String(d.yourWins)));
@@ -1404,28 +1440,33 @@
       pitStop();
       var won=d.winner&&d.winner===d.you;
       var big=el("div","pitend"+(d.winner?(won?" win":" lose"):""));
-      var dealing=false,mineSlot=null,theirSlot=null,yourCard=null,theirCard=null,cutSay=null;
-      if(d.reason==="play"&&d.cards){
+      var dealing=false,cutSay=null,cutHands=[];
+      if(d.reason==="play"&&(d.hands||d.cards)){
         dealing=true;
-        yourCard=d.youAreHost?d.cards.host:d.cards.guest;
-        theirCard=d.youAreHost?d.cards.guest:d.cards.host;
+        cutHands=(d.hands&&d.hands.length)?d.hands.slice():[
+          {name:"you",card:d.youAreHost?d.cards.host:d.cards.guest,you:true},
+          {name:d.theirName||"them",card:d.youAreHost?d.cards.guest:d.cards.host,you:false}
+        ];
+        cutHands.sort(function(a,b){return (b.you?1:0)-(a.you?1:0);});
         var cards=el("div","pitcards");
-        var mine=el("div","pcut");mine.appendChild(el("b",null,"you"));
-        mineSlot=el("div","cutslot");mine.appendChild(mineSlot);
-        var theirs=el("div","pcut");theirs.appendChild(el("b",null,d.theirName||"them"));
-        theirSlot=el("div","cutslot");theirs.appendChild(theirSlot);
-        cards.appendChild(mine);cards.appendChild(theirs);
-        /* both face down first, so the row is its final size from the start and
-           nothing jumps as the cards turn */
-        mineSlot.appendChild(cardEl("??"));
-        theirSlot.appendChild(cardEl("??"));
+        cutHands.forEach(function(h){
+          var box=el("div","pcut");
+          box.appendChild(el("b",null,h.you?"you":(h.name||"them")));
+          h.slot=el("div","cutslot");
+          h.slot.appendChild(cardEl("??"));
+          box.appendChild(h.slot);
+          cards.appendChild(box);
+        });
+        /* every card face down first, so the row is its final size from the
+           start and nothing jumps as they turn */
         body.appendChild(cards);
         cutSay=el("div","clashsay cut","");body.appendChild(cutSay);
       }
+      var many=(d.seats||2)>2;
       big.textContent=!d.winner
         ?(d.reason==="cancelled"?"table taken down. your stake is back."
-          :d.reason==="expired"?"nobody came. your stake is back."
-          :d.reason==="unconfirmed"?"one of you never confirmed. both stakes are back."
+          :d.reason==="expired"?(many?"the table never filled. your stake is back.":"nobody came. your stake is back.")
+          :d.reason==="unconfirmed"?(many?"someone never confirmed. every stake is back.":"one of you never confirmed. both stakes are back.")
           :"nobody played. both stakes are back.")
         :(won?(d.reason==="forfeit"?"they never played. the pot is yours.":"you take the pot.")
               :(d.reason==="forfeit"?"you did not play in time. the pot went to them.":d.winner+" takes the pot."));
@@ -1434,41 +1475,48 @@
       var again=el("button","cbtn go","back to the pit");
       again.onclick=function(){pitStop();viewPit(d.game);};
       body.appendChild(again);
+      var potx=d.seats||d.filled||2;
       if(!dealing){
-        if(d.winner&&won)celebrate(d.pot,2);
+        if(d.winner&&won)celebrate(d.pot,potx);
       }else{
-        /* the result would give the second card away, so it waits behind it */
+        /* the result would give the last card away, so it waits behind it */
         big.style.visibility="hidden";
         again.style.visibility="hidden";
         function cutTell(t){if(!cutSay)return;cutSay.textContent=t;cutSay.className="clashsay cut show";}
         cutTell("the deck is cut.");
+        var mineH=cutHands[0], rest=cutHands.slice(1);
         /* yours: it stirs, then turns */
-        pitAfter(CUT_STIR_MS,function(){mineSlot.className="cutslot hot";});
+        pitAfter(CUT_STIR_MS,function(){if(mineH&&mineH.slot)mineH.slot.className="cutslot hot";});
         pitAfter(CUT_FIRST_MS,function(){
-          mineSlot.className="cutslot";
-          cutTurn(mineSlot,yourCard);
+          if(!mineH)return;
+          mineH.slot.className="cutslot";
+          cutTurn(mineH.slot,mineH.card);
         });
-        pitAfter(CUT_FIRST_MS+CUT_FLIP_MS,function(){cutTell("you drew "+yourCard+".");});
-        /* theirs: the long wait, spent watching their card get restless */
-        pitAfter(CUT_FIRST_MS+CUT_GAP_MS-CUT_TEASE_MS,function(){
-          theirSlot.className="cutslot hot";
-          cutTell("and for them\u2026");
+        pitAfter(CUT_FIRST_MS+CUT_FLIP_MS,function(){if(mineH)cutTell("you drew "+mineH.card+".");});
+        rest.forEach(function(h,i){
+          var start=CUT_FIRST_MS+(i+1)*CUT_GAP_MS;
+          var label=rest.length===1?"them":(h.name||"them");
+          pitAfter(start-CUT_TEASE_MS,function(){
+            h.slot.className="cutslot hot";
+            cutTell("and for "+label+"\u2026");
+          });
+          pitAfter(start,function(){
+            h.slot.className="cutslot";
+            cutTurn(h.slot,h.card);
+          });
         });
-        pitAfter(CUT_FIRST_MS+CUT_GAP_MS,function(){
-          theirSlot.className="cutslot";
-          cutTurn(theirSlot,theirCard);
-        });
-        pitAfter(CUT_FIRST_MS+CUT_GAP_MS+CUT_FLIP_MS,function(){
-          /* the ring lands on whichever card took it, then the words */
+        var lastAt=CUT_FIRST_MS+Math.max(1,rest.length)*CUT_GAP_MS+CUT_FLIP_MS;
+        pitAfter(lastAt,function(){
           if(d.winner){
-            var w=won?mineSlot:theirSlot;
-            w.className="cutslot won";
+            cutHands.forEach(function(h){
+              if((h.you&&won)||(!h.you&&h.name===d.winner))h.slot.className="cutslot won";
+            });
           }
-          cutTell(d.winner?(won?"yours is higher.":"theirs is higher."):"");
+          cutTell(d.winner?(won?"yours is higher.":(many?d.winner+" is higher.":"theirs is higher.")):"");
           pitAfter(420,function(){
             big.style.visibility="";
             again.style.visibility="";
-            if(d.winner&&won)celebrate(d.pot,2);
+            if(d.winner&&won)celebrate(d.pot,potx);
           });
         });
       }

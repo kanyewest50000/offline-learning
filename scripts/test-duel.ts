@@ -38,8 +38,10 @@ must(/DUEL_OPEN_MS"\) \|\| 10 \* 60 \* 1000\)/.test(src), "an unjoined table mus
 must(/DUEL_CONFIRM_MS"\) \|\| 10 \* 1000\)/.test(src), "the confirm window must default to 10 seconds");
 // the pot is both stakes and nothing is skimmed: a rake would break every
 // conservation assertion below, so the absence of one is pinned here too
-must(/credits\.push\(\{ id: w\.id, amount: round2\(d\.bet \* 2\) \}\)/.test(src),
-  "the winner must take exactly both stakes — no rake, no rounding");
+must(/credits\.push\(\{ id: w\.id, amount: round2\(d\.bet \* seatedPlayers\(d\)\.length\) \}\)/.test(src),
+  "the winner must take every stake at the table — no rake, no rounding");
+must(/if \(ranks\.filter\(\(r\) => r === hi\)\.length !== 1\) continue/.test(src),
+  "a high-card tie must be re-cut at any table size, not split or pushed");
 must(/if \(entry\.value\?\.settled\) return false;/.test(src),
   "commitDuel must refuse to pay a duel that is already settled");
 // every release of the escrow has to ride the same guarded commit
@@ -67,8 +69,8 @@ const bal = async (t: string) => money((await j("/cas/me?token=" + encodeURIComp
 // Opening a table is churn-capped per account, and this file opens a lot of
 // them. Assert on the way in so a tripped cap names itself rather than showing
 // up later as an unreadable duel id.
-async function table(token: string, game: string, bet: number): Promise<string> {
-  const c = await post("/duel/create", { token, game, bet });
+async function table(token: string, game: string, bet: number, seats?: number): Promise<string> {
+  const c = await post("/duel/create", seats ? { token, game, bet, seats } : { token, game, bet });
   must(c.body?.ok === true, "could not open a table: " + JSON.stringify(c.body));
   return c.body.duel.id as string;
 }
@@ -344,6 +346,7 @@ const C = await member("pitC");
   const startA = await bal(A.token), startB = await bal(B.token);
   const c = await post("/duel/create", { token: A.token, game: "cut", bet: 10 });
   const id = c.body.duel.id;
+  must(c.body.duel.seats === 2, "a cut with no seats asked for must default to 2");
   await post("/duel/join", { token: B.token, id });
   await post("/duel/confirm", { token: A.token, id });
   const done = await post("/duel/confirm", { token: B.token, id });
@@ -388,8 +391,134 @@ await conserved(A.token, B.token, "a full duel", async () => {
   await post("/duel/confirm", { token: B.token, id });
 });
 
+// 11. The Cut at three and four: the table stays open until the last chair
+//     is taken, every seated stake is conserved, and a tied high card is
+//     re-cut until one player has it. Tung, Wood, Fire is still two chairs
+//     no matter what you ask for.
+{
+  const P = await member("cutP");
+  const Q = await member("cutQ");
+  const R = await member("cutR");
+  const S = await member("cutS");
+  const T = await member("cutT");
+
+  const forced = await post("/duel/create", { token: P.token, game: "tung", bet: 3, seats: 4 });
+  must(forced.body.duel.seats === 2, "tung, wood, fire must stay a two-player table");
+  await post("/duel/cancel", { token: P.token, id: forced.body.duel.id });
+
+  const weird = await post("/duel/create", { token: P.token, game: "cut", bet: 3, seats: 9 });
+  must(weird.body.duel.seats === 2, "a cut that asks for a nonsense size must fall back to 2");
+  await post("/duel/cancel", { token: P.token, id: weird.body.duel.id });
+
+  // three chairs: the first guest does not start the handshake
+  await fund(P, 100); await fund(Q, 100); await fund(R, 100);
+  const three = await post("/duel/create", { token: P.token, game: "cut", bet: 5, seats: 3 });
+  must(three.body.duel.seats === 3 && three.body.duel.state === "open", "a 3-seat cut must open as a 3-seat table");
+  const id3 = three.body.duel.id;
+  const first = await post("/duel/join", { token: Q.token, id: id3 });
+  must(first.body?.ok === true && first.body.duel.state === "open",
+    "the first guest at a 3-seat table must leave it filling: " + JSON.stringify(first.body));
+  must(first.body.duel.filled === 2, "two people should be seated after the first sit-down");
+  must((await post("/duel/confirm", { token: P.token, id: id3 })).body?.error === "not now",
+    "nobody may confirm a cut that is still filling");
+
+  // host can still take a filling table down, and both stakes come home
+  const midP = await bal(P.token), midQ = await bal(Q.token);
+  const pulled = await post("/duel/cancel", { token: P.token, id: id3 });
+  must(pulled.body?.ok === true, "the host must be able to take a filling cut down");
+  must((await bal(P.token)) === money(midP + 5) && (await bal(Q.token)) === money(midQ + 5),
+    "cancelling a filling cut must refund everyone who sat");
+
+  // play a 3-seat cut through, then a 4-seat one
+  async function playCut(seats: number, players: { name: string; token: string }[], bet: number) {
+    const starts = [];
+    for (const p of players) starts.push(await bal(p.token));
+    const opened = await post("/duel/create", { token: players[0].token, game: "cut", bet, seats });
+    must(opened.body?.ok === true && opened.body.duel.seats === seats,
+      "could not open a " + seats + "-seat cut: " + JSON.stringify(opened.body));
+    const id = opened.body.duel.id as string;
+    for (let i = 1; i < players.length; i++) {
+      const seat = await post("/duel/join", { token: players[i].token, id });
+      must(seat.body?.ok === true, "sit-down " + i + " failed: " + JSON.stringify(seat.body));
+      const expect = i === players.length - 1 ? "confirm" : "open";
+      must(seat.body.duel.state === expect,
+        "after " + (i + 1) + " seated a " + seats + "-seat cut should be " + expect + ", got " + seat.body.duel.state);
+    }
+    // a stranger still cannot walk in once it is full
+    if (seats === 3) {
+      const late = await post("/duel/join", { token: T.token, id });
+      must(late.body?.error === "taken", "a full cut must refuse another sit-down");
+    }
+    const afterFull = await post("/duel/cancel", { token: players[0].token, id });
+    must(afterFull.body?.ok !== true, "a full cut must not be cancellable");
+
+    let last = await post("/duel/confirm", { token: players[0].token, id });
+    must(last.body?.ok === true, "confirm failed for " + players[0].name + ": " + JSON.stringify(last.body));
+    for (let i = 1; i < players.length; i++) {
+      last = await post("/duel/confirm", { token: players[i].token, id });
+      must(last.body?.ok === true, "confirm failed for " + players[i].name + ": " + JSON.stringify(last.body));
+    }
+    must(last.body.duel.state === "done", "the cut must resolve on the last confirm");
+    const cards = last.body.duel.cards;
+    const hands = last.body.duel.hands as { name: string; card: string; you: boolean }[];
+    must(!!cards && !!cards.host && !!cards.guest, "the cut must still show host and guest cards");
+    must(Array.isArray(hands) && hands.length === seats, "the cut must deal one card per seat");
+    must(hands.every((h) => !!h.card), "every seated player must receive a card");
+    const names = players.map((p) => p.name);
+    must(names.includes(last.body.duel.winner), "the cut must name one of the seated winners");
+    const ends = [];
+    for (const p of players) ends.push(await bal(p.token));
+    const before = starts.reduce((a, b) => a + b, 0);
+    const after = ends.reduce((a, b) => a + b, 0);
+    must(money(before) === money(after),
+      seats + "-seat cut minted or burned sahurs: " + before + " -> " + after);
+    const deltas = ends.map((e, i) => money(e - starts[i]));
+    const up = deltas.filter((x) => x > 0);
+    const down = deltas.filter((x) => x < 0);
+    must(up.length === 1 && up[0] === money(bet * (seats - 1)),
+      seats + "-seat winner must be up the other stakes, saw " + JSON.stringify(deltas));
+    must(down.length === seats - 1 && down.every((x) => x === money(-bet)),
+      seats + "-seat losers must each be down exactly their stake, saw " + JSON.stringify(deltas));
+  }
+
+  await fund(P, 100); await fund(Q, 100); await fund(R, 100);
+  await playCut(3, [P, Q, R], 5);
+  await fund(P, 100); await fund(Q, 100); await fund(R, 100); await fund(S, 100);
+  await playCut(4, [P, Q, R, S], 4);
+
+  // two guests racing for the remaining chairs of a 3-seat table both sit
+  await fund(P, 100); await fund(Q, 100); await fund(R, 100);
+  const race = await post("/duel/create", { token: P.token, game: "cut", bet: 2, seats: 3 });
+  const raceId = race.body.duel.id;
+  const rush = await Promise.all([
+    post("/duel/join", { token: Q.token, id: raceId }),
+    post("/duel/join", { token: R.token, id: raceId }),
+  ]);
+  const sat = rush.filter((x) => x.body?.ok === true);
+  must(sat.length === 2, "both guests must be able to sit a 3-seat cut at once, " + sat.length + " did");
+  const st = await j("/duel/state?token=" + encodeURIComponent(P.token) + "&id=" + raceId);
+  must(st.body.duel.state === "confirm" && st.body.duel.filled === 3,
+    "a 3-seat cut with both guests in must be waiting on confirms");
+  await sleep(CONFIRM_MS + 400);
+  await j("/duel/state?token=" + encodeURIComponent(P.token) + "&id=" + raceId);
+  must((await bal(P.token)) === 100 && (await bal(Q.token)) === 100 && (await bal(R.token)) === 100,
+    "an unconfirmed 3-seat cut must refund every stake once");
+
+  // a filling table that expires refunds everyone who sat, once
+  await fund(P, 100); await fund(Q, 100);
+  const slow = await post("/duel/create", { token: P.token, game: "cut", bet: 6, seats: 4 });
+  const sid = slow.body.duel.id;
+  must((await post("/duel/join", { token: Q.token, id: sid })).body?.ok === true, "second seat on a 4-cut failed");
+  await sleep(OPEN_MS + 300);
+  await Promise.all(new Array(8).fill(0).map(() =>
+    j("/duel/state?token=" + encodeURIComponent(P.token) + "&id=" + sid)
+  ));
+  must((await bal(P.token)) === 100 && (await bal(Q.token)) === 100,
+    "an expired filling cut must refund every seated stake once");
+}
+
 console.log(
   "the pit: stakes escrowed on commit and released exactly once — cancel, expiry, " +
     "unconfirmed, forfeit, double-forfeit and a played hand all pay once; seat races " +
-    "debit one player; no rake, no minting, no double refunds",
+    "debit one player; no rake, no minting, no double refunds; the cut seats 2, 3 or 4",
 );

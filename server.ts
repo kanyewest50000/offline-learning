@@ -27,7 +27,7 @@
 //   GET  /veil?token=                                     -> {live, allowed, url?}
 //   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
-//   POST /duel/create   {token, game, bet}                -> {ok, duel, balance}
+//   POST /duel/create   {token, game, bet, seats?}        -> {ok, duel, balance}
 //   POST /duel/cancel   {token, id}                       -> {ok, refunded, balance}
 //   POST /duel/join     {token, id}                       -> {ok, duel, balance}
 //   POST /duel/confirm  {token, id}                       -> {ok, duel, balance}
@@ -938,12 +938,15 @@ const DUEL_TTL = 24 * 60 * 60 * 1000;  // a finished record lingers a day so bot
 //   ["duelof", uid] -> the id of the one duel that player is in (one at a time)
 
 type DuelSide = { id: string; name: string; confirmed: boolean; move: string | null; wins: number };
+type CutCards = { host: string; guest: string; extra?: string[] };
 type Duel = {
   id: string;
   game: string;
   bet: number;
+  seats: number;         // 2, 3 or 4. The Cut can wait for more than one guest.
   host: DuelSide;
   guest: DuelSide | null;
+  extra: DuelSide[];     // third and fourth players, in sit-down order
   state: "open" | "confirm" | "live" | "done";
   ts: number;
   deadline: number;      // what the current state is waiting for, as an epoch ms
@@ -952,8 +955,28 @@ type Duel = {
   winner: string | null; // username, or null for a void/refunded duel
   reason: string;        // why it ended: cancelled | expired | unconfirmed | forfeit | play
   rounds: { host: string; guest: string; won: string | null }[];
-  cards?: { host: string; guest: string };
+  cards?: CutCards;
 };
+
+function extraOf(d: Duel): DuelSide[] {
+  return Array.isArray(d.extra) ? d.extra : [];
+}
+function duelSeats(d: Duel): number {
+  const n = Number(d.seats);
+  return n === 3 || n === 4 ? n : 2;
+}
+function seatedPlayers(d: Duel): DuelSide[] {
+  return d.guest ? [d.host, d.guest, ...extraOf(d)] : [d.host];
+}
+function findSide(d: Duel, uid: string): DuelSide | null {
+  return seatedPlayers(d).find((p) => p.id === uid) ?? null;
+}
+function cutCardOf(d: Duel, i: number): string | null {
+  if (!d.cards) return null;
+  if (i === 0) return d.cards.host;
+  if (i === 1) return d.cards.guest;
+  return d.cards.extra?.[i - 2] ?? null;
+}
 
 // Tung, Wood, Fire: the same three-way cycle as the old game, wearing the
 // shrine's own nouns. `beats` is read in one direction only — a[x] === y means
@@ -974,15 +997,19 @@ function duelSide(u: { id: string; username: string }): DuelSide {
 // opponent's move while the round is still open — that is the whole game.
 function duelView(d: Duel, uid: string | null) {
   const youAreHost = !!uid && d.host.id === uid;
-  const you = youAreHost ? d.host : (d.guest && d.guest.id === uid ? d.guest : null);
+  const people = seatedPlayers(d);
+  const you = uid ? findSide(d, uid) : null;
   const them = youAreHost ? d.guest : (you ? d.host : null);
   const open = d.state === "live";
+  const seats = duelSeats(d);
   return {
     id: d.id,
     game: d.game,
     gameName: DUEL_GAMES[d.game]?.name || d.game,
     bet: d.bet,
-    pot: round2(d.bet * (d.guest ? 2 : 1)),
+    seats,
+    filled: people.length,
+    pot: round2(d.bet * people.length),
     state: d.state,
     round: d.round,
     target: DUEL_GAMES[d.game]?.target ?? 1,
@@ -1000,10 +1027,22 @@ function duelView(d: Duel, uid: string | null) {
     youConfirmed: you ? you.confirmed : false,
     theyConfirmed: them ? them.confirmed : false,
     theyMoved: them ? (open ? them.move !== null : false) : false,
+    players: people.map((p) => ({
+      name: p.name,
+      you: !!uid && p.id === uid,
+      confirmed: p.confirmed,
+    })),
     winner: d.winner,
     reason: d.reason,
     rounds: d.rounds,
     cards: d.state === "done" ? d.cards ?? null : null,
+    hands: d.state === "done" && d.cards
+      ? people.map((p, i) => ({
+        name: p.name,
+        card: cutCardOf(d, i),
+        you: !!uid && p.id === uid,
+      }))
+      : null,
     settled: d.settled,
   };
 }
@@ -1031,33 +1070,33 @@ async function commitDuel(
   op = op.set(["duel", next.id], next, { expireIn: DUEL_TTL });
   // the players are free again the moment the record is final
   if (next.settled) {
-    op = op.delete(["duelof", next.host.id]);
-    if (next.guest) op = op.delete(["duelof", next.guest.id]);
+    for (const p of seatedPlayers(next)) op = op.delete(["duelof", p.id]);
   }
   return (await op.commit()).ok;
 }
 
-// End a duel and release the escrow. winner === null refunds both sides their
-// own stake; a winner takes the whole pot. No rake — the pit is between players.
+// End a duel and release the escrow. winner === null refunds every seated
+// player their own stake; a winner takes the whole pot. No rake — the pit
+// is between players.
 function finishDuel(d: Duel, winnerId: string | null, reason: string): {
   next: Duel;
   credits: { id: string; amount: number }[];
 } {
   const next: Duel = { ...d, state: "done", settled: true, reason, winner: null, deadline: 0 };
   const credits: { id: string; amount: number }[] = [];
-  if (!d.guest) {
+  const people = seatedPlayers(d);
+  if (people.length === 1) {
     // never joined: only the host ever staked anything
     credits.push({ id: d.host.id, amount: d.bet });
     return { next, credits };
   }
   if (winnerId === null) {
-    credits.push({ id: d.host.id, amount: d.bet });
-    credits.push({ id: d.guest.id, amount: d.bet });
+    for (const p of people) credits.push({ id: p.id, amount: d.bet });
     return { next, credits };
   }
-  const w = winnerId === d.host.id ? d.host : d.guest;
+  const w = people.find((p) => p.id === winnerId) ?? d.host;
   next.winner = w.name;
-  credits.push({ id: w.id, amount: round2(d.bet * 2) });
+  credits.push({ id: w.id, amount: round2(d.bet * seatedPlayers(d).length) });
   return { next, credits };
 }
 
@@ -1095,14 +1134,21 @@ async function loadDuel(id: string): Promise<Deno.KvEntryMaybe<Duel>> {
   return await sweepDuel(await kv.get<Duel>(["duel", id]));
 }
 
-// The Cut: one card each, high card takes it. Ties are re-cut rather than
-// pushed, so the pot always goes somewhere and nobody can farm a free push.
+// The Cut: one card each, high card takes it. Ties for the high card are
+// re-cut rather than pushed or split, at two seats or four, so the pot
+// always goes to one player and nobody can farm a free push.
 const CUT_ORDER = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
 function cutRank(c: string): number { return CUT_ORDER.indexOf(rankOf(c)); }
-function cutDeal(): { host: string; guest: string } {
+function cutDealFor(people: DuelSide[]): { cards: CutCards; winnerId: string } {
   for (;;) {
-    const host = drawCard(), guest = drawCard();
-    if (cutRank(host) !== cutRank(guest)) return { host, guest };
+    const dealt = people.map(() => drawCard());
+    const ranks = dealt.map(cutRank);
+    const hi = Math.max(...ranks);
+    if (ranks.filter((r) => r === hi).length !== 1) continue;
+    return {
+      cards: { host: dealt[0], guest: dealt[1] ?? dealt[0], extra: dealt.slice(2) },
+      winnerId: people[ranks.indexOf(hi)].id,
+    };
   }
 }
 
@@ -1456,7 +1502,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (Date.now() > d.deadline) { await sweepDuel(e); continue; }
       open.push({
         id: d.id, game: d.game, gameName: DUEL_GAMES[d.game]?.name || d.game,
-        bet: d.bet, host: d.host.name, mine: d.host.id === u.id, ts: d.ts, deadline: d.deadline,
+        bet: d.bet, seats: duelSeats(d), filled: seatedPlayers(d).length,
+        host: d.host.name, mine: d.host.id === u.id, ts: d.ts, deadline: d.deadline,
       });
     }
     open.sort((a, b) => (b as { ts: number }).ts - (a as { ts: number }).ts);
@@ -1502,8 +1549,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (nb < -1e-9) return json({ error: "insufficient" }, 402);
     const now = Date.now();
     const id = rid(10);
+    const want = Number(b.seats);
+    const seats = game === "cut" && (want === 3 || want === 4) ? want : 2;
     const duel: Duel = {
-      id, game, bet, host: duelSide(u), guest: null, state: "open", ts: now,
+      id, game, bet, seats, host: duelSide(u), guest: null, extra: [], state: "open", ts: now,
       deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, reason: "", rounds: [],
     };
     const res = await kv.atomic()
@@ -1517,8 +1566,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   }
 
   // ---------- take the table back down ----------
-  // Only while it is still open and unjoined. If a join landed first the check
-  // below fails and the host is told so rather than being refunded twice.
+  // Only while it is still filling. A 2-seat table stops being open the
+  // instant someone sits, so a cancel cannot slip in after the handshake
+  // starts. A 3- or 4-seat Cut stays open until the last chair is taken,
+  // and taking it down refunds everyone who already sat.
   if (req.method === "POST" && path === "/duel/cancel") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -1544,32 +1595,46 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
-    const entry = await loadDuel(clip(b.id, 32));
-    const d = entry.value;
-    if (!d) return json({ error: "gone" }, 404);
-    if (d.state !== "open" || d.guest) return json({ error: "taken" }, 409);
-    if (d.host.id === u.id) return json({ error: "that is your own table" }, 400);
-    const lock = await kv.get<string>(["duelof", u.id]);
-    if (lock.value) return json({ error: "already in a duel" }, 409);
-    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
-    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
-    const bal = Number.isFinite(rec.bal) ? rec.bal : 0;
-    const nb = round2(bal - d.bet);
-    if (nb < -1e-9) return json({ error: "insufficient" }, 402);
-    const now = Date.now();
-    const next: Duel = {
-      ...d, guest: duelSide(u), state: "confirm", deadline: now + DUEL_CONFIRM_MS,
-    };
-    // seat, stake and lock in one commit: two people racing for the last seat
-    // means exactly one debit, and the loser is told the table is taken.
-    const res = await kv.atomic()
-      .check(entry).check(lock).check(cur)
-      .set(["duelof", u.id], d.id, { expireIn: DUEL_TTL })
-      .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
-      .set(["duel", d.id], next, { expireIn: DUEL_TTL })
-      .commit();
-    if (!res.ok) return json({ error: "taken" }, 409);
-    return json({ ok: true, duel: duelView(next, u.id), balance: Math.max(0, nb) });
+    // a 3- or 4-seat table can take two sit-downs at once, so a lost race
+    // against another empty chair is retried rather than called taken
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const entry = await loadDuel(clip(b.id, 32));
+      const d = entry.value;
+      if (!d) return json({ error: "gone" }, 404);
+      if (d.state !== "open") return json({ error: "taken" }, 409);
+      if (d.host.id === u.id) return json({ error: "that is your own table" }, 400);
+      if (findSide(d, u.id)) return json({ error: "already in a duel" }, 409);
+      if (seatedPlayers(d).length >= duelSeats(d)) return json({ error: "taken" }, 409);
+      const lock = await kv.get<string>(["duelof", u.id]);
+      if (lock.value) return json({ error: "already in a duel" }, 409);
+      const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
+      const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+      const bal = Number.isFinite(rec.bal) ? rec.bal : 0;
+      const nb = round2(bal - d.bet);
+      if (nb < -1e-9) return json({ error: "insufficient" }, 402);
+      const extra = extraOf(d).map((s) => ({ ...s }));
+      let guest = d.guest ? { ...d.guest } : null;
+      if (!guest) guest = duelSide(u);
+      else extra.push(duelSide(u));
+      const filled = 1 + (guest ? 1 : 0) + extra.length;
+      const full = filled >= duelSeats(d);
+      const now = Date.now();
+      const next: Duel = {
+        ...d, guest, extra,
+        state: full ? "confirm" : "open",
+        deadline: full ? now + DUEL_CONFIRM_MS : d.deadline,
+      };
+      // seat, stake and lock in one commit: two people racing for the last
+      // seat means exactly one debit, and the loser is told the table is taken.
+      const res = await kv.atomic()
+        .check(entry).check(lock).check(cur)
+        .set(["duelof", u.id], d.id, { expireIn: DUEL_TTL })
+        .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
+        .set(["duel", d.id], next, { expireIn: DUEL_TTL })
+        .commit();
+      if (res.ok) return json({ ok: true, duel: duelView(next, u.id), balance: Math.max(0, nb) });
+    }
+    return json({ error: "taken" }, 409);
   }
 
   // ---------- both of you, say yes, within ten seconds ----------
@@ -1584,22 +1649,27 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (!d) return json({ error: "gone" }, 404);
       if (d.settled) return json({ error: "over", duel: duelView(d, u.id) }, 409);
       if (d.state !== "confirm") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
-      const mine = d.host.id === u.id ? "host" : (d.guest && d.guest.id === u.id ? "guest" : null);
+      const next: Duel = {
+        ...d,
+        host: { ...d.host },
+        guest: d.guest ? { ...d.guest } : null,
+        extra: extraOf(d).map((s) => ({ ...s })),
+      };
+      const mine = findSide(next, u.id);
       if (!mine) return json({ error: "not your duel" }, 403);
-      const next: Duel = { ...d, host: { ...d.host }, guest: d.guest ? { ...d.guest } : null };
-      if (mine === "host") next.host.confirmed = true; else next.guest!.confirmed = true;
-      const both = next.host.confirmed && !!next.guest?.confirmed;
+      mine.confirmed = true;
+      const people = seatedPlayers(next);
+      const allIn = people.length >= duelSeats(next) && people.every((p) => p.confirmed);
       let credits: { id: string; amount: number }[] = [];
-      if (both && d.game === "cut") {
-        // no moves to make: the deck is cut the instant the second yes lands, in
+      if (allIn && d.game === "cut") {
+        // no moves to make: the deck is cut the instant the last yes lands, in
         // the same commit, so there is no unsettled window to time out inside
-        const cards = cutDeal();
-        const hostWins = cutRank(cards.host) > cutRank(cards.guest);
-        const done = finishDuel({ ...next, cards }, hostWins ? d.host.id : d.guest!.id, "play");
-        done.next.cards = cards;
+        const cut = cutDealFor(people);
+        const done = finishDuel({ ...next, cards: cut.cards }, cut.winnerId, "play");
+        done.next.cards = cut.cards;
         credits = done.credits;
         Object.assign(next, done.next);
-      } else if (both) {
+      } else if (allIn) {
         next.state = "live";
         next.deadline = Date.now() + DUEL_MOVE_MS;
       }
@@ -1674,7 +1744,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const entry = await loadDuel(clip(url.searchParams.get("id"), 32));
     const d = entry.value;
     if (!d) return json({ error: "gone" }, 404);
-    if (d.host.id !== u.id && (!d.guest || d.guest.id !== u.id)) {
+    if (!findSide(d, u.id)) {
       return json({ error: "not your duel" }, 403);
     }
     return json({ ok: true, duel: duelView(d, u.id), balance: round2((await getCas(u.id)).bal) });
