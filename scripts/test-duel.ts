@@ -64,6 +64,15 @@ async function member(tag: string) {
 }
 const bal = async (t: string) => money((await j("/cas/me?token=" + encodeURIComponent(t))).body.balance as number);
 
+// Opening a table is churn-capped per account, and this file opens a lot of
+// them. Assert on the way in so a tripped cap names itself rather than showing
+// up later as an unreadable duel id.
+async function table(token: string, game: string, bet: number): Promise<string> {
+  const c = await post("/duel/create", { token, game, bet });
+  must(c.body?.ok === true, "could not open a table: " + JSON.stringify(c.body));
+  return c.body.duel.id as string;
+}
+
 // Every section below starts from a known balance rather than inheriting
 // whatever the last one left, so each assertion stands on its own and a failure
 // names the thing that actually broke.
@@ -169,6 +178,76 @@ const C = await member("pitC");
   must(st.body.duel.reason === "unconfirmed", "a duel nobody confirmed must end unconfirmed");
   const tot2 = (await bal(A.token)) + (await bal(B.token)) + (await bal(C.token));
   must(money(tot2 - tot) === 8, `both stakes must come back (${tot} -> ${tot2})`);
+}
+
+// 3b. cancel against a join. Both want to release the same escrow — the host's
+//     stake back, or the guest's stake in — and if both were ever allowed to
+//     land the host would be refunded for a table that is now being played,
+//     which is a stake conjured out of nothing.
+//
+//     Two shapes. Fired together, exactly one may win (on one server the cancel
+//     reliably gets to its commit first, since it reads less before committing,
+//     so this half mostly proves the join is refused cleanly and costs nobody
+//     anything). Fired just after a join has landed — the actual exploit, where
+//     a host watches someone sit down and then tries to take their stake back
+//     out from under the duel — the cancel must be refused and the host must
+//     still be down their stake.
+{
+  // its own players: this section opens eight tables and the churn cap is
+  // per account, so borrowing A would starve the sections after it
+  const H = await member("racH"), G = await member("racG");
+  for (let round = 0; round < 4; round++) {
+    await fund(H, 100); await fund(G, 100);
+    const id = await table(H.token, "tung", 9);
+    const startA = await bal(H.token), startB = await bal(G.token);
+
+    const [cancelled, joined] = await Promise.all([
+      post("/duel/cancel", { token: H.token, id }),
+      post("/duel/join", { token: G.token, id }),
+    ]);
+    const cancelWon = cancelled.body?.ok === true;
+    const joinWon = joined.body?.ok === true;
+    must(cancelWon !== joinWon,
+      `exactly one of cancel/join may succeed, got cancel=${cancelWon} join=${joinWon}`);
+
+    const endA = await bal(H.token), endB = await bal(G.token);
+    if (cancelWon) {
+      must(endA === money(startA + 9), `the cancel won, so the host gets their stake back once (${startA} -> ${endA})`);
+      must(endB === startB, `the guest never sat down, so nothing may leave their balance (${startB} -> ${endB})`);
+    } else {
+      must(endA === startA, `the join won, so the host's stake stays on the table (${startA} -> ${endA})`);
+      must(endB === money(startB - 9), `the guest sat down, so exactly their stake is staked (${startB} -> ${endB})`);
+      await sleep(CONFIRM_MS + 400);
+      await j("/duel/state?token=" + encodeURIComponent(H.token) + "&id=" + id);
+    }
+  }
+
+  // the exploit proper: take the stake back after somebody has already sat down
+  for (let round = 0; round < 4; round++) {
+    await fund(H, 100); await fund(G, 100);
+    const id = await table(H.token, "tung", 9);
+    const seat = await post("/duel/join", { token: G.token, id });
+    must(seat.body?.ok === true, "the guest should be seated: " + JSON.stringify(seat.body));
+    const midA = await bal(H.token), midB = await bal(G.token);
+
+    // several attempts at once, in case one of them can slip through
+    const tries = await Promise.all(
+      new Array(6).fill(0).map(() => post("/duel/cancel", { token: H.token, id })),
+    );
+    must(tries.every((t) => t.body?.ok !== true),
+      "a table that has been joined must not be cancellable: " + JSON.stringify(tries.map((t) => t.body)));
+    must((await bal(H.token)) === midA,
+      `a refused cancel must not refund the host (${midA} -> ${await bal(H.token)})`);
+    must((await bal(G.token)) === midB, "a refused cancel must not touch the guest");
+
+    // the duel is still a real duel, and settles normally on its own clock
+    const st = await j("/duel/state?token=" + encodeURIComponent(H.token) + "&id=" + id);
+    must(st.body.duel.state === "confirm", "the joined table must still be waiting on confirmations");
+    await sleep(CONFIRM_MS + 400);
+    await j("/duel/state?token=" + encodeURIComponent(H.token) + "&id=" + id);
+    must((await bal(H.token)) === money(midA + 9) && (await bal(G.token)) === money(midB + 9),
+      "once the confirm window lapses both stakes come home, exactly once each");
+  }
 }
 
 // 4. your own table is not a seat, and a stranger cannot play your duel

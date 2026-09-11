@@ -1129,7 +1129,22 @@
      Every screen here is driven by one poll (pitPoll) and one countdown tick
      (pitTick), both owned by PIT and both torn down by clearTimer(), which every
      navigation already calls. */
-  var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null};
+  var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null,reveal:[],
+    busy:false,pending:null,roundsSeen:null};
+  /* the clash: the beat between a round resolving and the next one starting */
+  var CL_IN_MS=520, CL_HIT_MS=600, CL_SAY_MS=1000, CL_HOLD_MS=2050;
+  /* How a cut is dealt. There is nothing to play in this game — both cards are
+     decided before either is shown — so the entire experience is the wait, and
+     it is paced deliberately: the deck is cut, your card stirs and turns over
+     slowly, you sit with it for three full seconds while THEIR card starts to
+     shiver, and only then does it turn. The result is held back behind the
+     second card, because knowing the outcome early is the one thing that would
+     make the pause worthless. */
+  var CUT_STIR_MS=250;    /* a card wakes up before it turns */
+  var CUT_FIRST_MS=700;   /* yours turns */
+  var CUT_FLIP_MS=900;    /* and takes this long doing it — slow on purpose */
+  var CUT_GAP_MS=3000;    /* start to start between the two cards */
+  var CUT_TEASE_MS=1000;  /* their card starts shivering this long beforehand */
   var PIT_GAMES={
     tung:{name:"Tung, Wood, Fire",moves:["tung","wood","fire"],
       blurb:"tung splits the wood. the wood feeds the fire. the fire takes tung.",
@@ -1141,6 +1156,29 @@
   function pitStop(){
     if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;}
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
+    /* a half-dealt cut must not keep turning cards over on a screen the player
+       has already left */
+    PIT.reveal.forEach(function(t){clearTimeout(t);});
+    PIT.reveal=[];
+    /* if a clash was mid-flight its callback will never land, so the render
+       gate has to be lifted here or every later paint would be swallowed */
+    PIT.busy=false;PIT.pending=null;
+  }
+  function pitAfter(ms,fn){
+    var t=setTimeout(function(){
+      PIT.reveal=PIT.reveal.filter(function(x){return x!==t;});
+      fn();
+    },ms);
+    PIT.reveal.push(t);
+    return t;
+  }
+  /* Turn one card over, in the slot it is already lying face down in. Replacing
+     the node is what runs the animation — same mechanic blackjack uses to flip
+     its hole card, and the same .pcard markup, so the two tables deal alike. */
+  function cutTurn(slot,card){
+    var c=cardEl(card);
+    if(slot.firstChild)slot.replaceChild(c,slot.firstChild);
+    else slot.appendChild(c);
   }
   /* the server ships its own clock with every duel, so the countdowns run off
      the server's deadline rather than a browser clock that may be minutes out */
@@ -1157,6 +1195,7 @@
   function viewPit(game){
     var cfg=PIT_GAMES[game]||PIT_GAMES.tung;
     var v=mount(cfg.name,gameIcon("pit-"+game));VIEW="pit";PIT.game=game;PIT.id=null;PIT.shape="";
+    PIT.roundsSeen=null;PIT.busy=false;PIT.pending=null;
     v.appendChild(el("p","pitblurb",cfg.blurb));
     v.appendChild(el("p","pitsub",cfg.sub));
 
@@ -1240,7 +1279,7 @@
   /* ---- one duel, from the handshake to the result ---- */
   function pitEnter(view){
     pitStop();
-    PIT.id=view.id;PIT.shape="";
+    PIT.id=view.id;PIT.shape="";PIT.roundsSeen=null;PIT.pending=null;
     pitRender(view);
     PIT.poll=setInterval(function(){
       jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(PIT.id)).then(function(d){
@@ -1262,6 +1301,21 @@
      you have already done. Everything else is a countdown, and redrawing the
      page under a running clock makes buttons impossible to hit. */
   function pitRender(d){
+    /* a clash owns the screen while it plays; the newest state waits for it */
+    if(PIT.busy){PIT.pending=d;return;}
+    /* first sight of a duel establishes the baseline, so reopening one that is
+       already several rounds in does not replay them all */
+    if(PIT.roundsSeen===null){PIT.roundsSeen=(d.rounds&&d.rounds.length)||0;}
+    else if(d.rounds&&d.rounds.length>PIT.roundsSeen&&(PIT_GAMES[d.game]||{}).moves&&(PIT_GAMES[d.game]||{}).moves.length){
+      PIT.roundsSeen=d.rounds.length;
+      pitClash(d,d.rounds[d.rounds.length-1],function(){
+        PIT.busy=false;
+        var nxt=PIT.pending||d;PIT.pending=null;
+        PIT.shape="";                       /* the clash replaced the screen */
+        pitRender(nxt);
+      });
+      return;
+    }
     var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
     var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,d.reason,d.guest].join("|");
     if(shape===PIT.shape){pitPaintClock(d);return;}
@@ -1326,16 +1380,28 @@
       }
       pitHistory(body,d);
     }else if(d.state==="done"){
+      /* stop the poll and the clock BEFORE the cut starts dealing, so the
+         reveal timers registered below are not cleared by our own cleanup */
+      pitStop();
       var won=d.winner&&d.winner===d.you;
       var big=el("div","pitend"+(d.winner?(won?" win":" lose"):""));
+      var dealing=false,mineSlot=null,theirSlot=null,yourCard=null,theirCard=null,cutSay=null;
       if(d.reason==="play"&&d.cards){
+        dealing=true;
+        yourCard=d.youAreHost?d.cards.host:d.cards.guest;
+        theirCard=d.youAreHost?d.cards.guest:d.cards.host;
         var cards=el("div","pitcards");
         var mine=el("div","pcut");mine.appendChild(el("b",null,"you"));
-        mine.appendChild(el("span","cutc",d.youAreHost?d.cards.host:d.cards.guest));
+        mineSlot=el("div","cutslot");mine.appendChild(mineSlot);
         var theirs=el("div","pcut");theirs.appendChild(el("b",null,d.theirName||"them"));
-        theirs.appendChild(el("span","cutc",d.youAreHost?d.cards.guest:d.cards.host));
+        theirSlot=el("div","cutslot");theirs.appendChild(theirSlot);
         cards.appendChild(mine);cards.appendChild(theirs);
+        /* both face down first, so the row is its final size from the start and
+           nothing jumps as the cards turn */
+        mineSlot.appendChild(cardEl("??"));
+        theirSlot.appendChild(cardEl("??"));
         body.appendChild(cards);
+        cutSay=el("div","clashsay cut","");body.appendChild(cutSay);
       }
       big.textContent=!d.winner
         ?(d.reason==="cancelled"?"table taken down. your stake is back."
@@ -1345,15 +1411,123 @@
         :(won?(d.reason==="forfeit"?"they never played. the pot is yours.":"you take the pot.")
               :(d.reason==="forfeit"?"you did not play in time. the pot went to them.":d.winner+" takes the pot."));
       body.appendChild(big);
-      if(d.winner&&won)celebrate(d.pot,2);
       pitHistory(body,d);
       var again=el("button","cbtn go","back to the pit");
       again.onclick=function(){pitStop();viewPit(d.game);};
       body.appendChild(again);
-      pitStop();
+      if(!dealing){
+        if(d.winner&&won)celebrate(d.pot,2);
+      }else{
+        /* the result would give the second card away, so it waits behind it */
+        big.style.visibility="hidden";
+        again.style.visibility="hidden";
+        function cutTell(t){if(!cutSay)return;cutSay.textContent=t;cutSay.className="clashsay cut show";}
+        cutTell("the deck is cut.");
+        /* yours: it stirs, then turns */
+        pitAfter(CUT_STIR_MS,function(){mineSlot.className="cutslot hot";});
+        pitAfter(CUT_FIRST_MS,function(){
+          mineSlot.className="cutslot";
+          cutTurn(mineSlot,yourCard);
+        });
+        pitAfter(CUT_FIRST_MS+CUT_FLIP_MS,function(){cutTell("you drew "+yourCard+".");});
+        /* theirs: the long wait, spent watching their card get restless */
+        pitAfter(CUT_FIRST_MS+CUT_GAP_MS-CUT_TEASE_MS,function(){
+          theirSlot.className="cutslot hot";
+          cutTell("and for them\u2026");
+        });
+        pitAfter(CUT_FIRST_MS+CUT_GAP_MS,function(){
+          theirSlot.className="cutslot";
+          cutTurn(theirSlot,theirCard);
+        });
+        pitAfter(CUT_FIRST_MS+CUT_GAP_MS+CUT_FLIP_MS,function(){
+          /* the ring lands on whichever card took it, then the words */
+          if(d.winner){
+            var w=won?mineSlot:theirSlot;
+            w.className="cutslot won";
+          }
+          cutTell(d.winner?(won?"yours is higher.":"theirs is higher."):"");
+          pitAfter(420,function(){
+            big.style.visibility="";
+            again.style.visibility="";
+            if(d.winner&&won)celebrate(d.pot,2);
+          });
+        });
+      }
     }
     pitPaintClock(d);
     if(d.state!=="done"&&!PIT.tick)PIT.tick=setInterval(function(){pitPaintClock(d);},200);
+  }
+
+  /* ---- the clash ----
+     A round is two hidden picks that become one outcome, so it is shown as
+     exactly that: the two moves slide in from opposite sides onto the same
+     line, meet in the middle, and the loser is taken out of the world — the
+     winner ends up standing alone where they met. A tie has nothing to
+     resolve, so the two rebound off each other and go back where they came
+     from. The name of the move that took it is the headline; who that was
+     good news for is the line under it, because the move alone does not say. */
+  function clashFighter(move){
+    var f=el("div","cfighter");
+    var ic=el("div","cic");ic.appendChild(moveIcon(move));
+    f.appendChild(ic);
+    f.appendChild(el("span","cnm",moveName(move)));
+    return f;
+  }
+  function pitClash(d,rr,done){
+    PIT.busy=true;
+    var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
+    var v=mount(cfg.name,gameIcon("pit-"+d.game));VIEW="pit";
+    var back=v.parentNode.querySelector(".casback");
+    if(back)back.onclick=function(){pitStop();viewPit(d.game);};
+    var head=el("div","pitvs");
+    head.appendChild(el("span","pn",d.you||"you"));
+    head.appendChild(el("span","pvs","vs"));
+    head.appendChild(el("span","pn",d.theirName||"\u2026"));
+    v.appendChild(head);
+    v.appendChild(el("div","pitpot","round "+d.rounds.length));
+
+    var mineMove=d.youAreHost?rr.host:rr.guest;
+    var theirMove=d.youAreHost?rr.guest:rr.host;
+    var tie=rr.won===null;
+    var iWon=!tie&&rr.won===d.you;
+
+    var stage=el("div","clash");
+    var L=clashFighter(mineMove),R=clashFighter(theirMove);
+    var spark=el("div","cspark");
+    stage.appendChild(L);stage.appendChild(R);stage.appendChild(spark);
+    v.appendChild(stage);
+    var say=el("div","clashsay","");v.appendChild(say);
+    var sub=el("div","clashsub","");v.appendChild(sub);
+
+    var OUT=112,MEET=30;
+    function at(el2,x,extra){el2.style.transform="translate(-50%,-50%) translateX("+x+"px)"+(extra||"");}
+    at(L,-OUT);at(R,OUT);
+    void stage.offsetWidth;                 /* start from the outer marks, not from nowhere */
+
+    pitAfter(40,function(){at(L,-MEET);at(R,MEET);});
+    pitAfter(40+CL_IN_MS,function(){
+      spark.className="cspark go";
+      if(tie){
+        /* nothing gives, so they come off each other */
+        at(L,-OUT);at(R,OUT);
+      }else{
+        var win=iWon?L:R, lose=iWon?R:L;
+        win.classList.add("cwin");
+        at(win,0," scale(1.16)");
+        /* the loser is pushed through and gone */
+        at(lose,(lose===L?-1:1)*(MEET-14)," scale(.3)");
+        lose.classList.add("cgone");
+      }
+    });
+    pitAfter(40+CL_SAY_MS,function(){
+      say.textContent=tie?"tie":(moveName(iWon?mineMove:theirMove)+" wins");
+      say.className="clashsay show"+(tie?"":(iWon?" win":" lose"));
+      sub.textContent=tie
+        ?(moveName(mineMove)+" against "+moveName(theirMove)+". play it again.")
+        :(iWon?"you take the round.":"they take the round.");
+      sub.className="clashsub show";
+    });
+    pitAfter(CL_HOLD_MS,function(){done();});
   }
 
   /* every round already played, from your side of the table */

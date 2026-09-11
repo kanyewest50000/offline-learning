@@ -60,8 +60,20 @@ house: **Tung, Wood, Fire** (tung splits the wood, the wood feeds the fire, the
 fire takes tung — first to two rounds, a tie is replayed) and **The Cut** (one
 card each, high card takes it).
 
-Both stakes are debited the moment a player commits and from then on the sahurs
-live in the duel record, not in anybody's balance. Every way out — a win, a
+A round of Tung, Wood, Fire is two hidden picks resolving into one outcome, and
+it is shown as exactly that: the two moves slide in from opposite sides onto the
+same line, meet, and the loser is taken out of the world. A tie has nothing to
+resolve, so the two rebound and it is played again. The Cut has nothing to play
+at all — both cards are decided before either is shown — so its whole experience
+is the wait: the deck is cut, your card stirs and turns over slowly, and you sit
+with it for three full seconds while theirs shivers under a sheen before it
+turns. The result is held behind the second card, because knowing it early is
+the one thing that would make the pause worthless.
+
+A table nobody has joined can be taken down from the pit at any time and the
+stake comes straight back — once. Both stakes are debited the moment a player
+commits and from then on the sahurs live in the duel record, not in anybody's
+balance. Every way out — a win, a
 cancel, a table nobody joined inside ten minutes, a confirm nobody gave inside
 ten seconds, a player who wandered off mid-round — goes through one function
 that writes the settled record and the credits it implies in a single atomic

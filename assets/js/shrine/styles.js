@@ -431,6 +431,32 @@
       '.pitpicked{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}' +
       '.pitpicked .pl{font-size:12px;color:#8a6a3a}' +
       '.pitpicked .pmimg{width:44px;height:44px}' +
+      /* the clash between rounds: two moves onto one line, and one of them
+         does not leave. only transform and opacity move, so it stays smooth. */
+      '.clash{position:relative;height:150px;width:100%;max-width:420px;margin:0 auto}' +
+      '.cfighter{position:absolute;top:50%;left:50%;display:flex;flex-direction:column;align-items:center;gap:8px;' +
+      'transition:transform .52s cubic-bezier(.34,.8,.36,1),opacity .34s ease}' +
+      '.cfighter .cic{display:flex;align-items:center;justify-content:center;width:78px;height:78px;border-radius:18px;' +
+      'background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;box-shadow:0 6px 18px #0006;' +
+      'transition:border-color .3s ease,box-shadow .3s ease}' +
+      '.cfighter .cic .pmimg{width:48px;height:48px;border-radius:9px}' +
+      '.cfighter .cic .pmemoji{font-size:44px}' +
+      '.cfighter .cnm{font-size:11px;font-weight:800;letter-spacing:.07em;color:#c8823c;transition:opacity .3s ease}' +
+      '.cfighter.cwin .cic{border-color:#f2c063;box-shadow:0 0 0 3px #f2c06333,0 10px 28px #0007}' +
+      '.cfighter.cwin .cnm{color:#f2c063}' +
+      '.cfighter.cgone{opacity:0}' +
+      '.cfighter.cgone .cnm{opacity:0}' +
+      /* the moment they meet */
+      '.cspark{position:absolute;top:50%;left:50%;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;' +
+      'background:radial-gradient(circle,#fff 0%,#f2c063 38%,#f2c06300 70%);opacity:0;pointer-events:none}' +
+      '.cspark.go{animation:cspark .55s ease-out forwards}' +
+      '@keyframes cspark{0%{opacity:.95;transform:scale(.35)}100%{opacity:0;transform:scale(7.5)}}' +
+      '.clashsay{text-align:center;font-size:25px;font-weight:800;color:#f2c063;min-height:32px;line-height:1.2;' +
+      'opacity:0;transform:translateY(5px);transition:opacity .3s ease,transform .3s ease}' +
+      '.clashsay.show{opacity:1;transform:none}' +
+      '.clashsay.win{color:#6ee787}.clashsay.lose{color:#e0908a}' +
+      '.clashsub{text-align:center;font-size:12px;color:#8a6a3a;min-height:18px;opacity:0;transition:opacity .3s ease}' +
+      '.clashsub.show{opacity:1}' +
       '.pithist{display:flex;flex-direction:column;gap:5px;margin-top:4px;width:100%;max-width:280px}' +
       '.pithist .ph{display:flex;align-items:center;justify-content:center;gap:10px;padding:5px 8px;background:#1d1206;border:1px solid #3a2410;border-radius:8px}' +
       '.pithist .phn{font-size:10px;font-weight:800;color:#8a6a3a;width:12px}' +
@@ -440,10 +466,38 @@
       '.pitend{font-size:20px;font-weight:800;color:#f5efe0;line-height:1.35;max-width:420px}' +
       '.pitend.win{color:#6ee787}.pitend.lose{color:#e0908a}' +
       '.pitcards{display:flex;gap:18px;justify-content:center;flex-wrap:wrap}' +
-      '.pcut{display:flex;flex-direction:column;align-items:center;gap:6px}' +
+      '.pcut{display:flex;flex-direction:column;align-items:center;gap:8px}' +
       '.pcut b{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a}' +
-      '.cutc{display:flex;align-items:center;justify-content:center;width:78px;height:110px;border-radius:12px;' +
-      'background:#f7f2e6;color:#1d1206;border:1px solid #cfc6b0;font-size:27px;font-weight:800;box-shadow:0 8px 20px #0008}' +
+      /* The cut deals real blackjack cards (.pcard); the slot holds the space
+         they land in, fixed to the card's own height so the row is its final
+         size before anything turns over.
+         Everything below is tempo. Blackjack flips in 0.4s because it deals a
+         lot of cards; the cut deals two and has nothing else to offer, so its
+         flip is more than twice as slow and the card announces itself first. */
+      '.cutslot{position:relative;display:flex;align-items:center;justify-content:center;min-height:138px}' +
+      '.cutslot .pcard:not(.hole) .pcinner,.cutslot .pcard:not(.hole) .pcface{animation-duration:.9s}' +
+      /* a face-down card is never quite still: a slow sheen crosses its back */
+      /* overflow only — .pcface is position:absolute and that is what makes it
+         fill the card, so relative here collapses the back to a sliver. It is
+         already a containing block for the sheen without any help. */
+      '.cutslot .pcard.hole .pcback{overflow:hidden}' +
+      '.cutslot .pcard.hole .pcback::after{content:"";position:absolute;top:-40%;left:-70%;width:45%;height:180%;' +
+      'background:linear-gradient(100deg,#ffffff00,#ffffff1f,#ffffff00);transform:rotate(18deg);animation:cutsheen 2.6s ease-in-out infinite}' +
+      '@keyframes cutsheen{0%{left:-70%}60%,100%{left:140%}}' +
+      /* and the one that is about to turn gets restless */
+      '.cutslot.hot .pcard{animation:cutshiver .95s ease-in-out infinite}' +
+      '.cutslot.hot .pcard.hole .pcback{border-color:#c8823c;box-shadow:0 0 18px #c8823c55}' +
+      '.cutslot.hot .pcard.hole .pcback::after{animation-duration:1.1s;background:linear-gradient(100deg,#ffffff00,#f2c06344,#ffffff00)}' +
+      '@keyframes cutshiver{0%,100%{transform:translateY(0) rotate(0)}' +
+      '25%{transform:translateY(-4px) rotate(-1.4deg)}75%{transform:translateY(-4px) rotate(1.4deg)}}' +
+      /* the card that took it keeps a ring, thrown once */
+      '.cutslot.won .pcard .pcfront{box-shadow:0 0 0 3px #f2c063,0 10px 30px #0009}' +
+      '.cutslot.won::after{content:"";position:absolute;left:50%;top:50%;width:104px;height:144px;' +
+      'margin:-72px 0 0 -52px;border-radius:16px;border:2px solid #f2c063;opacity:0;pointer-events:none;' +
+      'animation:cutring .95s cubic-bezier(.2,.8,.3,1) forwards}' +
+      '@keyframes cutring{0%{opacity:.95;transform:scale(.86)}100%{opacity:0;transform:scale(1.35)}}' +
+      /* the running commentary under the two cards */
+      '.clashsay.cut{font-size:18px;color:#c8823c;font-weight:700;min-height:26px;margin-top:2px}' +
       '.shopitem{display:flex;align-items:center;gap:12px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:12px 14px}' +
       '.shopitem.wait{border-color:#c8823c}' +
       '.shopitem .grow{flex:1}' +
@@ -579,6 +633,17 @@
       '[data-theme="dark"] .pitmove{background:linear-gradient(155deg,#2e2e36,#1e1e23);border-color:#3a3a44;color:#d6d6de}' +
       '[data-theme="dark"] .pitmove:hover:not(:disabled){border-color:#b8b8c4}' +
       '[data-theme="dark"] .pitclock{color:#b8b8c4}' +
+      '[data-theme="dark"] .cfighter .cic{background:linear-gradient(155deg,#2e2e36,#1e1e23);border-color:#3a3a44}' +
+      '[data-theme="dark"] .cfighter .cnm{color:#9a9aa6}' +
+      '[data-theme="dark"] .cfighter.cwin .cic{border-color:#b8b8c4;box-shadow:0 0 0 3px #b8b8c433,0 10px 28px #0007}' +
+      '[data-theme="dark"] .cfighter.cwin .cnm{color:#e8e8ec}' +
+      '[data-theme="dark"] .cspark{background:radial-gradient(circle,#fff 0%,#b8b8c4 38%,#b8b8c400 70%)}' +
+      '[data-theme="dark"] .clashsay{color:#d6d6de}' +
+      '[data-theme="dark"] .clashsub{color:#8b8b96}' +
+      '[data-theme="dark"] .clashsay.cut{color:#9a9aa6}' +
+      '[data-theme="dark"] .cutslot.hot .pcard.hole .pcback{border-color:#8b8b96;box-shadow:0 0 18px #8b8b9655}' +
+      '[data-theme="dark"] .cutslot.won .pcard .pcfront{box-shadow:0 0 0 3px #d6d6de,0 10px 30px #0009}' +
+      '[data-theme="dark"] .cutslot.won::after{border-color:#d6d6de}' +
       '[data-theme="dark"] .ovcard{background:linear-gradient(160deg,#26262c,#19191d);border-color:#3a3a44}' +
       '[data-theme="dark"] .ovcard h3{color:#d6d6de}' +
       '[data-theme="dark"] .ovrow{border-top-color:#2a2a30}' +
