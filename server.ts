@@ -422,7 +422,7 @@ function rankOf(c: string): string { return c.slice(0, c.length - 1); }
 // `entry` is the ["bj", uid] read this request worked from: the hand is claimed
 // and paid in one commit, so several stands landing together settle once.
 // deno-lint-ignore no-explicit-any
-async function bjResolve(uid: string, st: any, entry: Deno.KvEntryMaybe<any>) {
+async function bjResolve(uid: string, st: any, entry: Deno.KvEntryMaybe<any>, purse: Purse) {
   const anyAlive = st.hands.some((h: any) => handValue(h.cards).total <= 21);
   if (anyAlive) while (handValue(st.dealer).total < 17) st.dealer.push(drawCard());
   const dv = handValue(st.dealer).total;
@@ -438,13 +438,16 @@ async function bjResolve(uid: string, st: any, entry: Deno.KvEntryMaybe<any>) {
     h.done = true;
     total = round2(total + h.payout);
   }
-  if (await settleGame(["bj", uid], entry, uid, total) === null) return null;
+  if (!await purse.settle(["bj", uid], entry, total)) return null;
   return st;
 }
 
 // deno-lint-ignore no-explicit-any
-async function bjRespond(uid: string, st: any, done: boolean) {
+async function bjRespond(uid: string, st: any, done: boolean, purse: Purse) {
   const bal = round2((await getCas(uid)).bal);
+  // what another stake would have to come out of — the wood in the round, or
+  // the sahurs. A double the purse cannot cover is a button that only ever fails.
+  const spend = purse.wood ? purse.left : bal;
   const act = st.hands[st.active];
   const live = !done && act && !act.done;
   const totalBet = round2(st.hands.reduce((a: number, h: any) => a + h.bet, 0));
@@ -462,9 +465,10 @@ async function bjRespond(uid: string, st: any, done: boolean) {
     dealerValue: done ? handValue(st.dealer).total : handValue([st.dealer[0]]).total,
     bet: totalBet, payout: totalPay, balance: bal,
     result: done && st.hands.length === 1 ? (st.hands[0].result || "") : "",
-    canDouble: !!live && act.cards.length === 2 && bal >= act.bet,
+    canDouble: !!live && act.cards.length === 2 && spend >= act.bet,
     canSplit: !!live && act.cards.length === 2 && rankOf(act.cards[0]) === rankOf(act.cards[1]) &&
-      st.hands.length < 4 && bal >= act.bet,
+      st.hands.length < 4 && spend >= act.bet,
+    ...purseJson(purse),
   });
 }
 
@@ -932,7 +936,7 @@ const DUEL_OPEN_MS = Number(Deno.env.get("DUEL_OPEN_MS") || 10 * 60 * 1000);   /
 const DUEL_CONFIRM_MS = Number(Deno.env.get("DUEL_CONFIRM_MS") || 10 * 1000);  // both players must confirm within this of the join
 const DUEL_MOVE_MS = Number(Deno.env.get("DUEL_MOVE_MS") || 30 * 1000);        // a player who does not move inside this forfeits the duel
 const DUEL_COMP_MS = Number(Deno.env.get("DUEL_COMP_MS") || 3 * 60 * 1000);    // how long a round of Competitive Gambling runs
-const DUEL_COMP_STACK = Number(Deno.env.get("DUEL_COMP_STACK") || 1000);       // clay each player is handed for it
+const DUEL_COMP_STACK = Number(Deno.env.get("DUEL_COMP_STACK") || 1000);       // wood each player is handed for it
 const DUEL_TTL = 24 * 60 * 60 * 1000;  // a finished record lingers a day so both sides can read it
 
 // KV:
@@ -979,6 +983,31 @@ function findSide(d: Duel, uid: string): DuelSide | null {
 function chipsOf(p: DuelSide | null): number {
   return p && Number.isFinite(p.chips) ? p.chips : 0;
 }
+// The three tables that can be holding a stake of this player's after the
+// request that placed it has gone home: a hand, a board, a walk. An empty stack
+// does not mean an empty player while any of them is still live, because a game
+// that has not been read yet can still pay.
+//
+// This is read off the records rather than counted on the duel, so it cannot
+// drift: two starts racing, a game replaced by another, a record that expired —
+// none of them can leave a phantom stake behind that makes a player unbustable.
+// The entries come back with it so the commit can check them, and a game that
+// appears between the reading and the committing takes the bust with it.
+const STAKE_KEYS = ["bj", "mines", "beef"] as const;
+async function stakesOpen(uid: string, duelId: string, skip?: Deno.KvKey): Promise<{
+  any: boolean;
+  guard: Deno.KvEntryMaybe<unknown>[];
+}> {
+  const guard: Deno.KvEntryMaybe<unknown>[] = [];
+  let any = false;
+  for (const name of STAKE_KEYS) {
+    if (skip && skip[0] === name) continue;   // that one is being retired by this very commit
+    const e = await kv.get<{ w?: unknown }>([name, uid]);
+    if (e.value && typeof e.value.w === "string" && e.value.w === duelId) any = true;
+    guard.push(e);
+  }
+  return { any, guard };
+}
 function cutCardOf(d: Duel, i: number): string | null {
   if (!d.cards) return null;
   if (i === 0) return d.cards.host;
@@ -996,7 +1025,7 @@ const DUEL_GAMES: Record<string, { name: string; moves: string[]; target: number
   // no moves at all: the server cuts the deck the moment both players confirm
   cut: { name: "The Cut", moves: [], target: 1 },
   // no moves either: for three minutes the floor IS the game, and the stacks
-  // are the scoreboard. See the clay block further down.
+  // are the scoreboard. See the wood block further down.
   comp: { name: "Competitive Gambling", moves: [], target: 1 },
 };
 
@@ -1038,7 +1067,7 @@ function duelView(d: Duel, uid: string | null) {
     youConfirmed: you ? you.confirmed : false,
     theyConfirmed: them ? them.confirmed : false,
     theyMoved: them ? (open ? them.move !== null : false) : false,
-    // A move is hidden until the round resolves; a clay stack is the opposite —
+    // A move is hidden until the round resolves; a wood stack is the opposite —
     // watching the other one climb or fall IS Competitive Gambling, so every
     // stack at the table is public the whole way through.
     stack: DUEL_COMP_STACK,
@@ -1067,13 +1096,25 @@ function duelView(d: Duel, uid: string | null) {
 
 // The single door the escrow leaves by. `credits` is what each side is owed;
 // the checks make the whole thing all-or-nothing against concurrent writers.
+// `retire` is a game record (a hand, a board, a walk) whose stake was wood:
+// settling it moves wood and deletes the record, and those cannot be two
+// commits or the same hand could be cashed out twice for two payouts. It rides
+// the same all-or-nothing commit as the stack it pays into.
 async function commitDuel(
   entry: Deno.KvEntryMaybe<Duel>,
   next: Duel,
   credits: { id: string; amount: number }[],
+  // deno-lint-ignore no-explicit-any
+  retire?: { key: Deno.KvKey; entry: Deno.KvEntryMaybe<any> },
+  // records that must still be exactly as they were read for `next` to be true
+  // — see stakesOpen(): a game started in the meantime unmakes a bust
+  guard?: Deno.KvEntryMaybe<unknown>[],
 ): Promise<boolean> {
   if (entry.value?.settled) return false;   // already paid; never pay again
+  if (retire && !retire.entry.value) return false;  // that game is already gone
   let op = kv.atomic().check(entry);
+  if (retire) op = op.check(retire.entry).delete(retire.key);
+  if (guard) for (const g of guard) op = op.check(g);
   const seen = new Set<string>();
   for (const c of credits) {
     if (seen.has(c.id) || !(c.amount > 0)) continue;
@@ -1196,24 +1237,27 @@ function cutDealFor(people: DuelSide[]): { cards: CutCards; winnerId: string } {
 }
 
 // ---------------------------------------------------------------------------
-// CLAY — the money inside a round of Competitive Gambling.
+// WOOD — the money inside a round of Competitive Gambling.
 //
-// A round hands both players an identical stack of clay and, until the clock
+// A round hands both players an identical stack of wood chips and, until the clock
 // stops, every wager on the floor comes out of that stack instead of their
-// sahurs. Clay is not sahurs and never becomes sahurs. It is handed out by the
+// sahurs. Wood is not sahurs and never becomes sahurs. It is handed out by the
 // round, spent against the house inside it, and swept when the round ends; the
 // only thing that crosses back is the pot, which is the two real stakes,
 // escrowed before the round began and released by the same commitDuel() every
 // other table in the pit pays through. So three minutes of this cannot move a
-// sahur in either direction, and a player who finds a way to print clay has
+// sahur in either direction, and a player who finds a way to print wood has
 // printed something that expires in under three minutes and buys nothing.
 //
 // WHICH purse a wager rides on is the server's to decide and is read off the
 // player's own duel lock on every bet — there is no "demo mode" flag a client
 // could send, so a wager cannot be aimed at the cheap money, and one cannot be
 // aimed at somebody's sahurs from inside a round either.
-const CLAY_SLOW = "not in a round. the quick tables only \u2014 dice, limbo, roulette and plinko.";
-const CLAY_OVER = "the clock stopped. that round is over.";
+// A round cannot deal a table that is already holding real sahurs: starting a
+// game replaces whatever was on that table, and a round must never be the thing
+// that throws a sahur stake away.
+const WOOD_HELD = "you left a game open with sahurs on it. finish that one and the round will deal you another.";
+const WOOD_OVER = "the clock stopped. that round is over.";
 
 // The live round this player is inside, or null. loadDuel() sweeps first, so a
 // round whose three minutes are up settles HERE — before the wager that would
@@ -1226,13 +1270,23 @@ async function liveComp(uid: string): Promise<Duel | null> {
   return d;
 }
 
-// Move clay in a live round. `delta` may be negative (a wager) and a stack may
-// never go below zero. `last` marks the move that closes a wager out — only
-// then can an empty stack mean the player is done, because a bet is debited
-// before it is paid and so every winning bet passes through zero on its way.
-async function chipMove(duelId: string, uid: string, delta: number, last: boolean): Promise<
-  { chips: number; over: boolean } | "insufficient" | "over"
-> {
+// One movement of wood in a live round, and the only one there is.
+//
+//   delta   what the stack does. negative is a wager going onto a table.
+//   last    the wager is finished with, so an empty stack may now be believed
+//   retire  the game record to delete in the same commit as the wood it pays
+//
+// `last` is the subtle one. A bet leaves the stack before it pays, so every
+// winning bet passes through zero on the way; only the move that closes a
+// wager out can be read as the player being done. The same idea reaches across
+// requests through stakesOpen(): while a hand, a board or a walk of theirs is
+// still unread, an empty stack is not an empty player.
+type WoodMove = { chips: number; over: boolean };
+async function woodMove(duelId: string, uid: string, delta: number, opt: {
+  last?: boolean;
+  // deno-lint-ignore no-explicit-any
+  retire?: { key: Deno.KvKey; entry: Deno.KvEntryMaybe<any> };
+} = {}): Promise<WoodMove | "insufficient" | "over"> {
   if (!Number.isFinite(delta)) return "over";
   for (let attempt = 0; attempt < 8; attempt++) {
     const entry = await loadDuel(duelId);
@@ -1246,85 +1300,192 @@ async function chipMove(duelId: string, uid: string, delta: number, last: boolea
     };
     const me = findSide(next, uid);
     if (!me) return "over";
-    const was = chipsOf(me);
-    const nb = round2(was + delta);
+    const nb = round2(chipsOf(me) + delta);
     if (!Number.isFinite(nb)) return "over";
     if (nb < -1e-9) return "insufficient";
     me.chips = Math.max(0, nb);
-    // a player with nothing left has nothing left to play with, so the round
-    // ends the moment their last chip goes rather than running out a clock
-    // neither of them can do anything with.
-    const bust = last && me.chips <= 0;
-    if (!bust && me.chips === was) return { chips: was, over: false };
+    // Nothing on the stack and nothing on a table: there is no way back from
+    // here and no reason to make the other one sit out the clock, so the round
+    // ends on the spot and the pot goes to whoever is still standing. A stake
+    // still sitting on a table is the one thing that holds it open — the hand
+    // has not been read yet, and an unread hand can still pay.
+    let bust = !!opt.last && me.chips <= 0;
+    let guard: Deno.KvEntryMaybe<unknown>[] | undefined;
+    if (bust) {
+      const open = await stakesOpen(uid, duelId, opt.retire?.key);
+      if (open.any) bust = false;
+      else guard = open.guard;
+    }
     let credits: { id: string; amount: number }[] = [];
     if (bust) {
       const out = compResult(next, "bust", seatedPlayers(next).filter((x) => x.id !== uid));
       credits = out.credits;
       Object.assign(next, out.next);
     }
-    if (await commitDuel(entry, next, credits)) return { chips: me.chips, over: bust };
+    if (await commitDuel(entry, next, credits, opt.retire, guard)) {
+      return { chips: me.chips, over: bust };
+    }
+    // the commit can only fail because something moved under us — unless what
+    // moved was the game record itself, in which case another request has
+    // already settled this hand and we must not settle it again
+    if (opt.retire) {
+      const again = await kv.get(opt.retire.key);
+      if (again.versionstamp !== opt.retire.entry.versionstamp) return "over";
+    }
   }
   return "over";
 }
 
-// The purse a wager on the floor comes out of. Outside a round that is the
-// player's sahurs; inside one it is their clay and their sahurs are left
-// exactly where they are. Every table asks it the same two things, so the games
-// below are written once and never learn which purse answered.
+// ---------------------------------------------------------------------------
+// THE PURSE — where a wager on the casino floor comes out of.
+//
+// Outside a round that is the player's sahurs; inside one it is that round's
+// wood, and their sahurs are left exactly where they are. Every table in the
+// casino asks the purse the same handful of things, so the games are written
+// once and never learn which one answered.
+//
+// Wood is not sahurs and never becomes sahurs. It is handed out by the round,
+// spent against the house inside it, and swept when the round ends; the only
+// thing that crosses back is the pot, which is the two real stakes, escrowed
+// before the round began and released by the same commitDuel() every other
+// table in the pit pays through. So three minutes of this cannot move a sahur
+// in either direction, and a player who finds a way to print wood has printed
+// something that expires in under three minutes and buys nothing.
+//
+// WHICH purse a wager rides on is the server's to decide: for a new wager it is
+// read off the player's own duel lock, and for a game already on the table it
+// is read off the stake stamped on that game. There is no "demo mode" flag a
+// client could send, so a wager cannot be aimed at the cheap money, and one
+// cannot be aimed at somebody's sahurs from inside a round either.
 type Purse = {
-  clay: boolean;
-  bal: number;    // the player's sahurs. a round never moves this.
-  left: number;   // clay after the last move
-  over: boolean;  // that wager was the last one — the round has settled
-  take(amount: number): Promise<string>;  // "" or the error to hand back
-  give(payout: number): Promise<void>;    // pay a win; 0 is a legal payout
+  wood: boolean;   // this is a round's wood rather than the player's sahurs
+  tag: string;     // stamp this on a game staked from here, so it settles home
+  dead: boolean;   // wood whose round has ended: it may be swept, never spent
+  bal: number;     // the player's sahurs. a round never moves this.
+  left: number;    // wood on the stack, as of the last move
+  over: boolean;   // that move was the last one — the round has settled
+  /** stake a wager: an instant one, a new game, or more on a game already open. */
+  take(amount: number): Promise<string>;
+  /** pay a wager out and read the stack back. 0 is a legal payout. */
+  give(payout: number): Promise<void>;
+  /** retire a game record and pay what it owes, in one commit. false if somebody got there first. */
+  // deno-lint-ignore no-explicit-any
+  settle(key: Deno.KvKey, entry: Deno.KvEntryMaybe<any>, payout: number): Promise<boolean>;
 };
-// `want` is the round the CLIENT believes it is betting into. A wager somebody
-// meant as clay must never quietly land on their sahurs because the buzzer went
+
+// `meant` is the round the CLIENT believes it is betting into. A wager somebody
+// meant as wood must never quietly land on their sahurs because the buzzer went
 // while they were reaching for the button, so naming a round that is no longer
 // live refuses the bet instead of re-aiming it. Note which way this points: it
-// can only ever stop a wager. Which purse a wager rides on is still read off
-// the duel lock, so naming a round cannot send a bet to the cheap money, and
-// naming none cannot send one to somebody's sahurs from inside a round.
-async function purseFor(uid: string, want?: unknown): Promise<Purse> {
-  const round = await liveComp(uid);
-  const id = round ? round.id : "";
-  const meant = typeof want === "string" ? clip(want, 32) : "";
-  const p: Purse = {
-    clay: !!round,
-    bal: 0,
-    left: round ? chipsOf(findSide(round, uid)) : 0,
-    over: false,
-    async take(amount) {
-      if (meant && meant !== id) { p.over = true; return CLAY_OVER; }
-      if (!id) return (await adjustBalance(uid, -amount)) === null ? "insufficient" : "";
-      const r = await chipMove(id, uid, -amount, false);
-      if (r === "insufficient") return "insufficient";
-      if (r === "over") { p.over = true; return CLAY_OVER; }
-      p.left = r.chips;
-      return "";
-    },
-    async give(payout) {
-      if (!id) {
-        const nb = payout > 0 ? await adjustBalance(uid, payout) : null;
-        p.bal = round2(nb ?? (await getCas(uid)).bal);
-        return;
-      }
-      // the buzzer can go while a bet is in the air. the clay it would have
-      // paid is swept with the rest of it; the sahurs were never in play.
-      const r = await chipMove(id, uid, payout, true);
+// can only ever stop a wager. Which purse a wager rides on is still the
+// server's, so naming a round cannot send a bet to the cheap money, and naming
+// none cannot send one to somebody's sahurs from inside a round.
+function purseOn(uid: string, id: string, dead: boolean, left: number, meant: string): Purse {
+  const wood = !!id;
+  async function sahurs(delta: number): Promise<string> {
+    return (await adjustBalance(uid, -delta)) === null ? "insufficient" : "";
+  }
+  async function stake(amount: number): Promise<string> {
+    if (meant && meant !== id) { p.over = true; return WOOD_OVER; }
+    if (!wood) return await sahurs(amount);
+    if (dead) { p.over = true; return WOOD_OVER; }
+    const r = await woodMove(id, uid, -amount);
+    if (r === "insufficient") return "insufficient";
+    if (r === "over") { p.over = true; return WOOD_OVER; }
+    p.left = r.chips;
+    return "";
+  }
+  async function pay(payout: number): Promise<void> {
+    if (!wood) {
+      const nb = payout > 0 ? await adjustBalance(uid, payout) : null;
+      p.bal = round2(nb ?? (await getCas(uid)).bal);
+      return;
+    }
+    // the buzzer can go while a bet is in the air. the wood it would have paid
+    // is swept with the rest of it; the sahurs were never in play.
+    if (!dead) {
+      const r = await woodMove(id, uid, payout, { last: true });
       if (r === "over") p.over = true;
       else if (r !== "insufficient") { p.left = r.chips; p.over = r.over; }
+    } else p.over = true;
+    p.bal = round2((await getCas(uid)).bal);
+  }
+  const p: Purse = {
+    wood, tag: id, dead, bal: 0, left, over: false,
+    take: stake,
+    give: pay,
+    async settle(key, entry, payout) {
+      if (!wood) {
+        if (payout > 0) {
+          const nb = await settleGame(key, entry, uid, payout);
+          if (nb === null) return false;
+          p.bal = round2(nb);
+          return true;
+        }
+        if (!await claimGame(key, entry)) return false;
+        p.bal = round2((await getCas(uid)).bal);
+        return true;
+      }
+      // a game staked in a round that has since ended: the record still has to
+      // go, but there is no stack left for it to pay into
+      if (dead) {
+        if (!await claimGame(key, entry)) return false;
+        p.over = true;
+        p.bal = round2((await getCas(uid)).bal);
+        return true;
+      }
+      const r = await woodMove(id, uid, payout, { last: true, retire: { key, entry } });
+      if (r === "over") {
+        // the buzzer went while this game was being read. its wood is swept
+        // with the rest, but the record still has to go, or the table stays
+        // laid out and every later click is told there is no game.
+        if (!await claimGame(key, entry)) return false;
+        p.over = true;
+        p.bal = round2((await getCas(uid)).bal);
+        return true;
+      }
+      if (r === "insufficient") return false;
+      p.left = r.chips;
+      p.over = r.over;
       p.bal = round2((await getCas(uid)).bal);
+      return true;
     },
   };
   return p;
+}
+
+// The purse a NEW wager comes out of: the round the player is in, or sahurs.
+async function purseFor(uid: string, want?: unknown): Promise<Purse> {
+  const round = await liveComp(uid);
+  const meant = typeof want === "string" ? clip(want, 32) : "";
+  if (!round) return purseOn(uid, "", false, 0, meant);
+  return purseOn(uid, round.id, false, chipsOf(findSide(round, uid)), meant);
+}
+// The purse a game ALREADY on the table was staked from, read off the stamp it
+// carries. A hand dealt in sahurs settles in sahurs even if a round has started
+// on top of it, and a hand dealt in a round that has since ended settles into
+// nothing — its wood was swept with the rest.
+async function purseOfStake(uid: string, w: unknown): Promise<Purse> {
+  const tag = typeof w === "string" ? clip(w, 32) : "";
+  if (!tag) return purseOn(uid, "", false, 0, "");
+  const round = await liveComp(uid);
+  if (round && round.id === tag) return purseOn(uid, tag, false, chipsOf(findSide(round, uid)), "");
+  return purseOn(uid, tag, true, 0, "");
+}
+// Starting a game replaces whatever was on that table. That is fine when both
+// were staked from the same purse, and fine when the old one is wood from a
+// round that is over (it is worth nothing now) — but a round must never
+// overwrite a game that is holding real sahurs.
+function stakeClash(rec: { w?: unknown } | null, purse: Purse): string {
+  if (!rec) return "";
+  const was = typeof rec.w === "string" ? rec.w : "";
+  return !was && purse.wood ? WOOD_HELD : "";
 }
 // What a table says about the purse it just played out of. `balance` stays the
 // player's sahurs on every reply in the casino, round or no round, so the
 // number in the header is never once a lie.
 function purseJson(p: Purse) {
-  return p.clay ? { clay: round2(p.left), roundOver: p.over } : {};
+  return p.wood ? { wood: round2(p.left), roundOver: p.over } : {};
 }
 
 const listenPort = Number(Deno.env.get("PORT") || "8000") || 8000;
@@ -1846,7 +2007,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         credits = done.credits;
         Object.assign(next, done.next);
       } else if (allIn && d.game === "comp") {
-        // three minutes on the clock and a stack of clay each, dealt in the
+        // three minutes on the clock and a stack of wood chips each, dealt in the
         // same commit as the last yes so nobody starts a tick early
         next.state = "live";
         next.deadline = Date.now() + DUEL_COMP_MS;
@@ -2478,14 +2639,17 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
-    // a hand can outlive the buzzer, and a player sitting on one is not out of
-    // clay however empty their stack reads — a round deals the quick tables only
-    if (await liveComp(u.id)) return json({ error: CLAY_SLOW }, 409);
-    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const purse = await purseFor(u.id, b.round);
+    // deno-lint-ignore no-explicit-any
+    const held = await kv.get<any>(["bj", u.id]);
+    const clash = stakeClash(held.value, purse);
+    if (clash) return json({ error: clash }, 409);
+    const no = await purse.take(bet);
+    if (no) return json({ error: no }, no === "insufficient" ? 402 : 409);
     const player = [drawCard(), drawCard()];
     const dealer = [drawCard(), drawCard()];
     const pv = handValue(player), dv = handValue(dealer);
-    const st = { hands: [{ cards: player, bet, done: false, result: "", payout: 0 }], active: 0, dealer, split: false, base: bet };
+    const st = { hands: [{ cards: player, bet, done: false, result: "", payout: 0 }], active: 0, dealer, split: false, base: bet, w: purse.tag };
     if (pv.total === 21 || dv.total === 21) {
       // natural(s) resolve immediately, before any split is possible
       let result = "", payout = 0;
@@ -2494,11 +2658,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       else { result = "dealer_blackjack"; payout = 0; }
       st.hands[0].done = true; st.hands[0].result = result; st.hands[0].payout = payout;
       // never stored, so there is no record to claim — pay it straight out
-      if (payout > 0) await adjustBalance(u.id, payout);
-      return await bjRespond(u.id, st, true);
+      await purse.give(payout);
+      return await bjRespond(u.id, st, true, purse);
     }
     await kv.set(["bj", u.id], st, { expireIn: GAME_TTL });
-    return await bjRespond(u.id, st, false);
+    return await bjRespond(u.id, st, false, purse);
   }
   if (req.method === "POST" && (path === "/cas/bj/hit" || path === "/cas/bj/stand" ||
       path === "/cas/bj/double" || path === "/cas/bj/split")) {
@@ -2516,6 +2680,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const st = g.value;
     const h = st.hands[st.active];
     if (!h || h.done) return json({ error: "no hand" }, 400);
+    // the hand settles into whatever staked it, whatever the player is in now
+    const purse = await purseOfStake(u.id, st.w);
 
     if (path === "/cas/bj/hit") {
       h.cards.push(drawCard());
@@ -2524,7 +2690,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       h.done = true;
     } else if (path === "/cas/bj/double") {
       if (h.cards.length !== 2) return json({ error: "can only double on the first move" }, 400);
-      if (await adjustBalance(u.id, -h.bet) === null) return json({ error: "insufficient" }, 402);
+      const more = await purse.take(h.bet);
+      if (more) return json({ error: more }, more === "insufficient" ? 402 : 409);
       h.bet = round2(h.bet * 2);          // the extra stake rides on this hand only
       h.cards.push(drawCard());
       h.done = true;
@@ -2532,7 +2699,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // split: the pair becomes two hands, each carrying its own stake
       if (h.cards.length !== 2 || rankOf(h.cards[0]) !== rankOf(h.cards[1])) return json({ error: "not a pair" }, 400);
       if (st.hands.length >= 4) return json({ error: "too many hands" }, 400);
-      if (await adjustBalance(u.id, -h.bet) === null) return json({ error: "insufficient" }, 402);
+      const more = await purse.take(h.bet);
+      if (more) return json({ error: more }, more === "insufficient" ? 402 : 409);
       const moved = h.cards.pop();
       const wasAces = rankOf(h.cards[0]) === "A";
       h.cards.push(drawCard());
@@ -2546,14 +2714,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
 
     while (st.active < st.hands.length && st.hands[st.active].done) st.active++;
     if (st.active >= st.hands.length) {
-      const done = await bjResolve(u.id, st, g);
+      const done = await bjResolve(u.id, st, g, purse);
       if (!done) return json({ error: "no hand" }, 400);   // another request settled it
-      return await bjRespond(u.id, done, true);
+      return await bjRespond(u.id, done, true, purse);
     }
     if (!(await kv.atomic().check(g).set(["bj", u.id], st, { expireIn: GAME_TTL }).commit()).ok) {
       return json({ error: "no hand" }, 400);   // a concurrent action moved the hand
     }
-    return await bjRespond(u.id, st, false);
+    return await bjRespond(u.id, st, false, purse);
   }
 
   // ---------- MINES (start / pick / cashout) ----------
@@ -2566,14 +2734,19 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const count = Math.floor(Number(b.mines));
     if (!(count >= 1 && count <= 24)) return json({ error: "mines 1–24" }, 400);
-    if (await liveComp(u.id)) return json({ error: CLAY_SLOW }, 409);
-    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const purse = await purseFor(u.id, b.round);
+    // deno-lint-ignore no-explicit-any
+    const held = await kv.get<any>(["mines", u.id]);
+    const clash = stakeClash(held.value, purse);
+    if (clash) return json({ error: clash }, 409);
+    const no = await purse.take(bet);
+    if (no) return json({ error: no }, no === "insufficient" ? 402 : 409);
     // choose `count` distinct mine cells out of 25
     const cells = [...Array(25).keys()];
     for (let i = cells.length - 1; i > 0; i--) { const j = rndInt(i + 1); [cells[i], cells[j]] = [cells[j], cells[i]]; }
     const mines = cells.slice(0, count).sort((a, c) => a - c);
-    await kv.set(["mines", u.id], { mines, bet, count, revealed: [] }, { expireIn: GAME_TTL });
-    return json({ ok: true, state: "playing", mines: count, revealed: [], multiplier: 1, nextMultiplier: minesMult(count, 1) });
+    await kv.set(["mines", u.id], { mines, bet, count, revealed: [], w: purse.tag }, { expireIn: GAME_TTL });
+    return json({ ok: true, state: "playing", mines: count, revealed: [], multiplier: 1, nextMultiplier: minesMult(count, 1), ...purseJson(purse) });
   }
   if (req.method === "POST" && path === "/cas/mines/pick") {
     // deno-lint-ignore no-explicit-any
@@ -2584,12 +2757,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const g = await kv.get<any>(["mines", u.id]);
     if (!g.value) return json({ error: "no game" }, 400);
     const st = g.value;
+    const purse = await purseOfStake(u.id, st.w);
     const tile = Math.floor(Number(b.tile));
     if (!(tile >= 0 && tile <= 24) || st.revealed.includes(tile)) return json({ error: "bad tile" }, 400);
     if (st.mines.includes(tile)) {
-      if (!await claimGame(["mines", u.id], g)) return json({ error: "no game" }, 400);
-      const bal = (await getCas(u.id)).bal;
-      return json({ ok: true, state: "boom", tile, mines: st.mines, balance: round2(bal) });
+      // a board that pays nothing still has to be read back: the stake stops
+      // being in play, and only then can an empty stack mean an empty player
+      if (!await purse.settle(["mines", u.id], g, 0)) return json({ error: "no game" }, 400);
+      return json({ ok: true, state: "boom", tile, mines: st.mines, balance: purse.bal, ...purseJson(purse) });
     }
     st.revealed.push(tile);
     const safe = st.revealed.length;
@@ -2597,9 +2772,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // auto-win once every safe tile is uncovered
     if (safe === 25 - st.count) {
       const payout = payoutOf(st.bet, minesMultExact(st.count, safe));
-      const bal = await settleGame(["mines", u.id], g, u.id, payout);
-      if (bal === null) return json({ error: "no game" }, 400);
-      return json({ ok: true, state: "cashout", tile, multiplier: mult, payout, revealed: st.revealed, mines: st.mines, balance: round2(bal) });
+      if (!await purse.settle(["mines", u.id], g, payout)) return json({ error: "no game" }, 400);
+      return json({ ok: true, state: "cashout", tile, multiplier: mult, payout, revealed: st.revealed, mines: st.mines, balance: purse.bal, ...purseJson(purse) });
     }
     if (!(await kv.atomic().check(g).set(["mines", u.id], st, { expireIn: GAME_TTL }).commit()).ok) {
       return json({ error: "no game" }, 400);   // a concurrent pick or cashout moved it
@@ -2616,11 +2790,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!g.value) return json({ error: "no game" }, 400);
     const st = g.value;
     if (!st.revealed.length) return json({ error: "reveal a tile first" }, 400);
+    const purse = await purseOfStake(u.id, st.w);
     const mult = minesMult(st.count, st.revealed.length);
     const payout = payoutOf(st.bet, minesMultExact(st.count, st.revealed.length));
-    const bal = await settleGame(["mines", u.id], g, u.id, payout);
-    if (bal === null) return json({ error: "no game" }, 400);   // already cashed out
-    return json({ ok: true, state: "cashout", multiplier: mult, payout, mines: st.mines, balance: round2(bal) });
+    if (!await purse.settle(["mines", u.id], g, payout)) return json({ error: "no game" }, 400);   // already cashed out
+    return json({ ok: true, state: "cashout", multiplier: mult, payout, mines: st.mines, balance: purse.bal, ...purseJson(purse) });
   }
 
   // ---------- BEEF (crash-chicken: start / step / cashout) ----------
@@ -2634,14 +2808,19 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const diff = clip(b.difficulty, 10);
     const cfg = pick(BEEF, diff);
     if (!cfg) return json({ error: "difficulty easy/medium/hard/daredevil" }, 400);
-    if (await liveComp(u.id)) return json({ error: CLAY_SLOW }, 409);
-    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const purse = await purseFor(u.id, b.round);
+    // deno-lint-ignore no-explicit-any
+    const held = await kv.get<any>(["beef", u.id]);
+    const clash = stakeClash(held.value, purse);
+    if (clash) return json({ error: clash }, 409);
+    const no = await purse.take(bet);
+    if (no) return json({ error: no }, no === "insufficient" ? 402 : 409);
     // pre-roll the death lane NOW so the outcome is fixed server-side and the
     // client cannot influence any step. deathStep = first lane the chicken dies on.
     let deathStep = cfg.lanes + 1; // survives the whole road unless rolled sooner
     for (let s = 1; s <= cfg.lanes; s++) { if (rnd() >= cfg.q) { deathStep = s; break; } }
-    await kv.set(["beef", u.id], { bet, q: cfg.q, lanes: cfg.lanes, deathStep, step: 0 }, { expireIn: GAME_TTL });
-    return json({ ok: true, state: "playing", step: 0, lanes: cfg.lanes, multiplier: 1, nextMultiplier: beefMult(cfg.q, 1) });
+    await kv.set(["beef", u.id], { bet, q: cfg.q, lanes: cfg.lanes, deathStep, step: 0, w: purse.tag }, { expireIn: GAME_TTL });
+    return json({ ok: true, state: "playing", step: 0, lanes: cfg.lanes, multiplier: 1, nextMultiplier: beefMult(cfg.q, 1), ...purseJson(purse) });
   }
   if (req.method === "POST" && path === "/cas/beef/step") {
     // deno-lint-ignore no-explicit-any
@@ -2658,20 +2837,19 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       await kv.delete(["beef", u.id]);
       return json({ error: "no game" }, 400);
     }
+    const purse = await purseOfStake(u.id, st.w);
     const nextStep = st.step + 1;
     if (nextStep >= st.deathStep) {
-      if (!await claimGame(["beef", u.id], g)) return json({ error: "no game" }, 400);
-      const bal = (await getCas(u.id)).bal;
-      return json({ ok: true, state: "dead", step: nextStep, deathStep: st.deathStep, balance: round2(bal) });
+      if (!await purse.settle(["beef", u.id], g, 0)) return json({ error: "no game" }, 400);
+      return json({ ok: true, state: "dead", step: nextStep, deathStep: st.deathStep, balance: purse.bal, ...purseJson(purse) });
     }
     st.step = nextStep;
     const mult = beefMult(st.q, nextStep);
     if (nextStep >= st.lanes) {
       // reached the far side — auto cash out at the top multiplier
       const payout = payoutOf(st.bet, beefMultExact(st.q, nextStep));
-      const bal = await settleGame(["beef", u.id], g, u.id, payout);
-      if (bal === null) return json({ error: "no game" }, 400);
-      return json({ ok: true, state: "cashout", step: nextStep, multiplier: mult, payout, balance: round2(bal) });
+      if (!await purse.settle(["beef", u.id], g, payout)) return json({ error: "no game" }, 400);
+      return json({ ok: true, state: "cashout", step: nextStep, multiplier: mult, payout, balance: purse.bal, ...purseJson(purse) });
     }
     if (!(await kv.atomic().check(g).set(["beef", u.id], st, { expireIn: GAME_TTL }).commit()).ok) {
       return json({ error: "no game" }, 400);   // a concurrent step or cashout moved it
@@ -2692,11 +2870,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       return json({ error: "no game" }, 400);
     }
     if (st.step < 1) return json({ error: "take a step first" }, 400);
+    const purse = await purseOfStake(u.id, st.w);
     const mult = beefMult(st.q, st.step);
     const payout = payoutOf(st.bet, beefMultExact(st.q, st.step));
-    const bal = await settleGame(["beef", u.id], g, u.id, payout);
-    if (bal === null) return json({ error: "no game" }, 400);   // already cashed out
-    return json({ ok: true, state: "cashout", step: st.step, multiplier: mult, payout, balance: round2(bal) });
+    if (!await purse.settle(["beef", u.id], g, payout)) return json({ error: "no game" }, 400);   // already cashed out
+    return json({ ok: true, state: "cashout", step: st.step, multiplier: mult, payout, balance: purse.bal, ...purseJson(purse) });
   }
 
   // ---------- SHOP: list active items + redeem ----------

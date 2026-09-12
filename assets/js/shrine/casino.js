@@ -107,7 +107,7 @@
   function paintBroke(){
     var w=screen.querySelector(".caswrap");
     if(!w||VIEW==="shrine"){hideBroke();return;}      // no point nagging at the shrine itself
-    if(ROUND.live){hideBroke();return;}               // nor mid-round: they have clay to spend and their sahurs are in the pot
+    if(ROUND.live){hideBroke();return;}               // nor mid-round: they have wood to spend and their sahurs are in the pot
     if(BAL>0.0001){hideBroke();return;}
     if(VIEW==="lobby"){
       var seen=false;try{seen=localStorage.getItem(BROKE_KEY)==="1";}catch(e){}
@@ -117,24 +117,26 @@
     if(!brokeEl)brokeEl=buildBroke();
     if(brokeEl.parentNode!==w)w.insertBefore(brokeEl,w.firstChild);
   }
-  function clearTimer(){if(claimTimer){clearInterval(claimTimer);claimTimer=null;}pitStop();}
+  /* leaving a table stops holding its wager: from here on the server's own
+     number is the honest one, whatever the table was in the middle of showing */
+  function clearTimer(){if(claimTimer){clearInterval(claimTimer);claimTimer=null;}ROUND.hold=false;pitStop();}
   /* the two strips that ride above whatever screen is open */
   function paintBars(){paintBroke();paintRound();}
 
   /* ---- a round of Competitive Gambling, from anywhere in the casino ----
      A round is the one thing in here that is not a screen. The player is not
      sat at the pit's table for those three minutes, they are out on the floor
-     spending clay, and the floor is every other page in the casino. So the
+     spending wood, and the floor is every other page in the casino. So the
      round gets a bar of its own that rides above whatever they have open —
      both stacks and the clock — and a poll that outlives every navigation,
      because the three minutes do not care which table they are standing at.
-     The clay itself is the server's: this only paints what it is told. */
-  var ROUND={live:null,poll:null,tick:null,bar:null,done:null};
+     The wood itself is the server's: this only paints what it is told. */
+  var ROUND={live:null,poll:null,tick:null,bar:null,done:null,mine:0,hold:false};
   function hideRound(){if(ROUND.bar&&ROUND.bar.parentNode)ROUND.bar.parentNode.removeChild(ROUND.bar);}
   function roundStop(){
     if(ROUND.poll){clearInterval(ROUND.poll);ROUND.poll=null;}
     if(ROUND.tick){clearInterval(ROUND.tick);ROUND.tick=null;}
-    ROUND.live=null;hideRound();
+    ROUND.live=null;ROUND.hold=false;hideRound();
   }
   function buildRound(){
     var e=el("div","roundbar");
@@ -147,7 +149,7 @@
     theirs._v=el("span","rv","-");theirs.appendChild(theirs._v);
     /* the unit sits between the two stacks, exactly as it does on the big
        scoreboard, so the bar and the table's page read as the same thing */
-    e.appendChild(mine);e.appendChild(el("span","rvs","clay"));e.appendChild(theirs);
+    e.appendChild(mine);e.appendChild(el("span","rvs","wood"));e.appendChild(theirs);
     e._clock=el("span","rclock","");e.appendChild(e._clock);
     var go=el("button","cbtn sec","the table");
     go.onclick=function(){if(ROUND.live){var v=ROUND.live;clearTimer();pitEnter(v);}};
@@ -167,11 +169,12 @@
   function paintRoundClock(){
     var d=ROUND.live,b=ROUND.bar;
     if(!d||!b||!b.isConnected)return;
-    b._mine._v.textContent=money(d.yourChips);
+    var mine=ROUND.mine;
+    b._mine._v.textContent=money(mine);
     b._theirs._n.textContent=d.theirName||"them";
     b._theirs._v.textContent=money(d.theirChips);
-    b._mine.className="rside"+(d.yourChips>d.theirChips?" up":(d.yourChips<d.theirChips?" down":""));
-    b._theirs.className="rside"+(d.theirChips>d.yourChips?" up":(d.theirChips<d.yourChips?" down":""));
+    b._mine.className="rside"+(mine>d.theirChips?" up":(mine<d.theirChips?" down":""));
+    b._theirs.className="rside"+(d.theirChips>mine?" up":(d.theirChips<mine?" down":""));
     var ms=pitLeft(d.deadline);
     b._clock.textContent=pitClockText(ms);
     b._clock.className="rclock"+(ms<=15000?" hot":"");
@@ -180,7 +183,11 @@
      bar, the poll, and the moment it stops being live. */
   function roundSync(v){
     if(v&&v.game==="comp"&&v.state==="live"){
+      var fresh=!ROUND.live;
       ROUND.live=v;
+      /* while a table is still playing a wager out, the number it is going to
+         land on is not ours to paint yet — see roundBet below */
+      if(fresh||!ROUND.hold)ROUND.mine=v.yourChips;
       if(!ROUND.poll)ROUND.poll=setInterval(roundPoll,1400);
       if(!ROUND.tick)ROUND.tick=setInterval(paintRoundClock,250);
       paintRound();
@@ -212,15 +219,39 @@
   }
   /* Every wager on the floor names the round it believes it is in. The server
      decides which purse it comes out of either way — this can only ever stop a
-     bet, never aim one — so a roll meant as clay cannot land on real sahurs
+     bet, never aim one — so a roll meant as wood cannot land on real sahurs
      because the buzzer went while they were reaching for the button. */
   function wager(body){if(ROUND.live)body.round=ROUND.live.id;return body;}
-  /* the clay a bet left behind, straight off its own reply, so the bar moves
-     with the roll rather than on the next poll */
+
+  /* ---- a wager is not over until the table has finished showing it ----
+     The server answers a bet with the stack it landed on, and it answers the
+     instant the bet is decided — which on every table here is well before the
+     player has seen it happen. Painting that number as it arrives would give
+     the wheel away while it was still spinning, the cow away mid-lane and the
+     dealer's hole card away before he turned it. So the stack is held from the
+     moment a stake leaves it until the table says it has finished: roundBet()
+     takes the stake off the pile, roundSaw() lands whatever came back. The poll
+     keeps its hands off in between, since all it knows is the answer. */
+  function roundBet(amount){
+    if(!ROUND.live)return;
+    ROUND.hold=true;
+    var n=Number(amount);
+    if(isFinite(n)&&n>0)ROUND.mine=Math.max(0,Math.round((ROUND.mine-n)*100)/100);
+    paintRoundClock();pitPaintClock();
+  }
+  /* a stake is out and the table is holding it — a board dealt, a hand in
+     motion. The stack is the server's number now, but it is still held: what
+     that stake is worth has not been decided yet. */
+  function roundStaked(d){
+    if(!ROUND.live||!d||typeof d.wood!=="number")return;
+    ROUND.mine=d.wood;paintRoundClock();pitPaintClock();
+  }
   function roundSaw(d){
-    if(!ROUND.live||!d)return;
-    if(typeof d.clay==="number"){ROUND.live.yourChips=d.clay;paintRoundClock();}
-    if(d.roundOver)roundPoll();
+    if(!ROUND.live)return;
+    ROUND.hold=false;
+    ROUND.mine=(d&&typeof d.wood==="number")?d.wood:ROUND.live.yourChips;
+    paintRoundClock();pitPaintClock();
+    if(d&&d.roundOver)roundPoll();
   }
 
   /* the win celebration: a box that pops over the whole casino showing what you
@@ -241,7 +272,7 @@
       winpop.addEventListener("animationend",hideWin);
       casEl.appendChild(winpop);
     }
-    winpop._a.textContent="+"+money(payout)+(ROUND.live?" clay":" sahurs");
+    winpop._a.textContent="+"+money(payout)+(ROUND.live?" wood":" sahurs");
     winpop._m.textContent=mult(m);
     winpop.classList.remove("show");
     void winpop.offsetWidth;            /* restart the keyframes */
@@ -427,10 +458,18 @@
     });
     w.appendChild(pit);
     w.appendChild(el("div","seclabel","the floor — you against tung"));
-    var grid=el("div","casmenu");
-    [["Blackjack","blackjack"],["Roulette","roulette"],["Mines","mines"],
-     ["Beef","beef"],["Limbo","limbo"],["Dice","dice"],
-     ["Plinko","plinko"]].forEach(function(g){
+    w.appendChild(floorMenu(""));
+    paintBars();
+    w.appendChild(el("div","casnote","Sahurs have no cash value and can never be bought, sold, or cashed out."));
+  }
+
+  /* The house's own tables. The lobby and a live round both lay these out, and
+     they lay out the same ones: a round is the whole floor, not a corner of it. */
+  var FLOOR=[["Blackjack","blackjack"],["Roulette","roulette"],["Mines","mines"],
+    ["Beef","beef"],["Limbo","limbo"],["Dice","dice"],["Plinko","plinko"]];
+  function floorMenu(cls){
+    var grid=el("div","casmenu"+(cls?" "+cls:""));
+    FLOOR.forEach(function(g){
       var b=el("button","casgame");
       var ci=el("div","ci");ci.appendChild(gameIcon(g[1]));
       b.appendChild(ci);
@@ -438,9 +477,7 @@
       b.onclick=function(){openPlay(g[1]);};
       grid.appendChild(b);
     });
-    w.appendChild(grid);
-    paintBars();
-    w.appendChild(el("div","casnote","Sahurs have no cash value and can never be bought, sold, or cashed out."));
+    return grid;
   }
 
   function openPlay(name){
@@ -548,8 +585,9 @@
 
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="";
+      roundBet(bet.value);
       jpost("/cas/dice",wager({bet:Number(bet.value),target:TARGET,over:OVER})).then(function(d){if(refused(d)){refusedGate();return;}
-        if(d.error){go.disabled=false;bad(r,d.error);return;}
+        if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
         // slide the marker to the rolled spot while the number counts up to it
         var from=parseFloat(mark.style.left)||0, to=d.roll, t0=Date.now(), dur=520;
         mark.style.background=d.win?"#6ee787":"#ff8080";
@@ -569,7 +607,7 @@
             else bad(r,"rolled "+d.roll.toFixed(2)+"  —  needed "+(d.over?"above ":"below ")+d.target+". lost.");
           }
         })();
-      }).catch(function(){go.disabled=false;bad(r,"network error");});
+      }).catch(function(){go.disabled=false;roundSaw(null);bad(r,"network error");});
     };
   }
 
@@ -588,9 +626,10 @@
     var go=el("button","cbtn go","play");v.appendChild(go);
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="";
+      roundBet(bet.value);
       jpost("/cas/limbo",wager({bet:Number(bet.value),target:Number(tgt.value)})).then(function(d){if(refused(d)){refusedGate();return;}
-        if(d.error){go.disabled=false;bad(r,d.error);return;}
-        setBal(d.balance);roundSaw(d);
+        if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
+        setBal(d.balance);
         var target=d.crash,t0=Date.now(),dur=750;
         big.style.color="#f5efe0";
         (function tick(){
@@ -600,12 +639,12 @@
           else{
             big.textContent=target.toFixed(2)+"x";
             big.style.color=d.win?"#6ee787":"#e0908a";
-            go.disabled=false;
+            go.disabled=false;roundSaw(d);
             if(d.win){ok(r,"crashed at "+mult(d.crash)+"  —  WIN");celebrate(d.payout,d.multiplier);}
             else bad(r,"crashed at "+mult(d.crash)+"  —  needed "+mult(d.target)+". lost.");
           }
         })();
-      }).catch(function(){go.disabled=false;bad(r,"network error");});
+      }).catch(function(){go.disabled=false;roundSaw(null);bad(r,"network error");});
     };
   }
 
@@ -683,8 +722,9 @@
     var rot=0, brot=0;
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="spinning...";
+      roundBet(bet.value);
       jpost("/cas/roulette",wager({bet:Number(bet.value),kind:SEL.kind,value:SEL.value})).then(function(d){if(refused(d)){refusedGate();return;}
-        if(d.error){go.disabled=false;bad(r,d.error);return;}
+        if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
         var idx=WHEEL.indexOf(d.spin);
         // wheel forward so the winning pocket ends at the top, under the ball
         rot += 360*5 + (((-idx*step - rot) % 360) + 360) % 360;
@@ -701,7 +741,7 @@
           if(d.win){ok(r,label+"  —  WIN "+mult(d.multiplier));celebrate(d.payout,d.multiplier);}
           else bad(r,label+"  —  lost.");
         },4150);
-      }).catch(function(){go.disabled=false;bad(r,"network error");});
+      }).catch(function(){go.disabled=false;roundSaw(null);bad(r,"network error");});
     };
   }
 
@@ -756,8 +796,9 @@
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="";
       Array.prototype.forEach.call(buckets.children,function(b){b.classList.remove("hit");});
+      roundBet(bet.value);
       jpost("/cas/plinko",wager({bet:Number(bet.value),risk:risk.value,rows:R})).then(function(d){if(refused(d)){refusedGate();return;}
-        if(d.error){go.disabled=false;bad(r,d.error);return;}
+        if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
         var rights=0,k=0;
         ball.setAttribute("cx",cx);ball.setAttribute("cy",6);
         function stepDown(){
@@ -775,7 +816,7 @@
         }
         ball.style.transition="none";
         setTimeout(function(){ball.style.transition="cx .09s linear, cy .09s linear";stepDown();},20);
-      }).catch(function(){go.disabled=false;bad(r,"network error");});
+      }).catch(function(){go.disabled=false;roundSaw(null);bad(r,"network error");});
     };
   }
 
@@ -1004,14 +1045,16 @@
         var hit=bjBtn("hit","hit",icoHit());hit.onclick=function(){act("/cas/bj/hit");};
         var stand=bjBtn("stand","stand",icoStand());stand.onclick=function(){act("/cas/bj/stand");};
         acts.appendChild(hit);acts.appendChild(stand);
-        if(d.canDouble){var db=bjBtn("dbl","double",icoDouble());db.onclick=function(){act("/cas/bj/double");};acts.appendChild(db);}
-        if(d.canSplit){var sp=bjBtn("split","split",icoSplit());sp.onclick=function(){act("/cas/bj/split");};acts.appendChild(sp);}
+        var stake=(d.hands[d.active]||{}).bet||0;
+        if(d.canDouble){var db=bjBtn("dbl","double",icoDouble());db.onclick=function(){act("/cas/bj/double",stake);};acts.appendChild(db);}
+        if(d.canSplit){var sp=bjBtn("split","split",icoSplit());sp.onclick=function(){act("/cas/bj/split",stake);};acts.appendChild(sp);}
         setRes("",multi?("playing hand "+(d.active+1)+" of "+d.hands.length):"");
         return;
       }
       // the server sends the new balance with the first reply, but the header and
       // the win toast have to wait until the dealer has finished taking cards
       if(typeof d.balance==="number")setBal(d.balance);
+      roundSaw(d);
       if(multi){
         // a split round is summarised by what came back versus what was staked
         var net=Math.round((d.payout-d.bet)*100)/100;
@@ -1046,6 +1089,7 @@
     function paint(d){
       stopDeal();
       live=d;
+      if(d.state==="playing")roundStaked(d);   /* the stake is out; the hand is not read */
       var q=bjDealQueue(shown,d);
       shown=bjPrepareShown(shown,d);
       renderShown();
@@ -1056,18 +1100,23 @@
         settle(d);
       });
     }
-    function act(p){
+    /* the second argument is the extra stake a double or a split pushes out;
+       hit and stand cost nothing, and either way what the hand is worth is not
+       settled until the dealer is done */
+    function act(p,more){
       Array.prototype.forEach.call(acts.querySelectorAll("button"),function(b){b.disabled=true;});
-      jpost(p,{}).then(function(d){if(refused(d)){refusedGate();return;}if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
-        .catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
+      if(more)roundBet(more);
+      jpost(p,{}).then(function(d){if(refused(d)){refusedGate();return;}if(d.error){if(more)roundSaw(d);setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}paint(d);})
+        .catch(function(){if(more)roundSaw(null);setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     }
     deal.onclick=function(){
       deal.disabled=true;bet.disabled=true;
       clearTable();setRes("","");        // a new round deals every card fresh
-      jpost("/cas/bj/start",{bet:Number(bet.value)}).then(function(d){if(refused(d)){refusedGate();return;}
-        if(d.error){setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}
+      roundBet(bet.value);
+      jpost("/cas/bj/start",wager({bet:Number(bet.value)})).then(function(d){if(refused(d)){refusedGate();return;}
+        if(d.error){roundSaw(d);setRes("lose",d.error);deal.disabled=false;bet.disabled=false;return;}
         paint(d);
-      }).catch(function(){setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
+      }).catch(function(){roundSaw(null);setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     };
   }
 
@@ -1115,10 +1164,10 @@
         if(d.state==="boom"){
           c.className="cell mine";c.textContent="💣";
           (d.mines||[]).forEach(function(m){if(cells[m]){cells[m].className="cell mine";cells[m].textContent="💣";}});
-          setBal(d.balance);bad(r,"boom. you lost.");endRound();return;
+          setBal(d.balance);roundSaw(d);bad(r,"boom. you lost.");endRound();return;
         }
         c.className="cell safe dis";c.textContent="💎";
-        if(d.state==="cashout"){setBal(d.balance);ok(r,"cleared the board! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);endRound();return;}
+        if(d.state==="cashout"){setBal(d.balance);roundSaw(d);ok(r,"cleared the board! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);endRound();return;}
         setPanel(mult(d.multiplier),mult(d.nextMultiplier),d.revealed.length);
         cash.textContent="cash out "+mult(d.multiplier);
         live=true;enableHidden();
@@ -1126,23 +1175,27 @@
     }
     start.onclick=function(){
       start.disabled=true;
-      jpost("/cas/mines/start",{bet:Number(bet.value),mines:Number(mn.value)}).then(function(d){if(refused(d)){refusedGate();return;}
+      /* the stake is on the board from the moment it is dealt; what it is worth
+         is the thing that waits for the board to be read */
+      roundBet(bet.value);
+      jpost("/cas/mines/start",wager({bet:Number(bet.value),mines:Number(mn.value)})).then(function(d){if(refused(d)){refusedGate();return;}
         start.disabled=false;
-        if(d.error){bad(r,d.error);return;}
+        if(d.error){roundSaw(d);bad(r,d.error);return;}
+        roundStaked(d);
         setBal(BAL-Number(bet.value));
         safeTotal=25-Number(mn.value);
         start.style.display="none";cash.style.display="";bet.disabled=true;mn.disabled=true;
         r.className="casres";r.textContent="";build(true);live=true;
         setPanel("1.00x",mult(d.nextMultiplier),0);
         cash.textContent="cash out";
-      }).catch(function(){start.disabled=false;bad(r,"network error");});
+      }).catch(function(){start.disabled=false;roundSaw(null);bad(r,"network error");});
     };
     cash.onclick=function(){
       cash.disabled=true;
       jpost("/cas/mines/cashout",{}).then(function(d){if(refused(d)){refusedGate();return;}
         cash.disabled=false;
         if(d.error){bad(r,d.error);return;}
-        setBal(d.balance);(d.mines||[]).forEach(function(m){if(cells[m]&&!cells[m].classList.contains("safe")){cells[m].className="cell mine";cells[m].textContent="💣";}});
+        setBal(d.balance);roundSaw(d);(d.mines||[]).forEach(function(m){if(cells[m]&&!cells[m].classList.contains("safe")){cells[m].className="cell mine";cells[m].textContent="💣";}});
         ok(r,"cashed out "+mult(d.multiplier));celebrate(d.payout,d.multiplier);endRound();
       }).catch(function(){cash.disabled=false;bad(r,"network error");});
     };
@@ -1196,14 +1249,16 @@
     function running(on){start.style.display=on?"none":"";step.style.display=on?"":"none";cash.style.display=on?"":"none";bet.disabled=on;diff.disabled=on;}
     start.onclick=function(){
       start.disabled=true;
-      jpost("/cas/beef/start",{bet:Number(bet.value),difficulty:diff.value}).then(function(d){if(refused(d)){refusedGate();return;}
+      roundBet(bet.value);
+      jpost("/cas/beef/start",wager({bet:Number(bet.value),difficulty:diff.value})).then(function(d){if(refused(d)){refusedGate();return;}
         start.disabled=false;
-        if(d.error){bad(r,d.error);return;}
+        if(d.error){roundSaw(d);bad(r,d.error);return;}
+        roundStaked(d);
         setBal(BAL-Number(bet.value));
         LANES=d.lanes;STEP=0;build(LANES,Q[diff.value]||0.92);running(true);
         r.className="casres";r.textContent="";cash.style.display="none";
         pLane.val.textContent="0 / "+LANES;pCur.val.textContent="1.00x";pNext.val.textContent=mult(d.nextMultiplier);
-      }).catch(function(){start.disabled=false;bad(r,"network error");});
+      }).catch(function(){start.disabled=false;roundSaw(null);bad(r,"network error");});
     };
     step.onclick=function(){
       step.disabled=true;
@@ -1217,7 +1272,7 @@
           if(car){car.style.display="block";car.className="car hit";}
           setTimeout(function(){
             if(L){L.classList.remove("cur");L.classList.add("boom");L.querySelector(".lc").textContent="💥";}
-            step.disabled=false;setBal(d.balance);
+            step.disabled=false;setBal(d.balance);roundSaw(d);
             bad(r,"splat. the cow didn't make it.");running(false);
           },560);
           return;
@@ -1225,7 +1280,7 @@
         step.disabled=false;
         STEP=d.step;placeAnimal(STEP-1);
         road.children[STEP-1].classList.add("done");
-        if(d.state==="cashout"){setBal(d.balance);ok(r,"made it across! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);return;}
+        if(d.state==="cashout"){setBal(d.balance);roundSaw(d);ok(r,"made it across! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);return;}
         cash.style.display="";cash.textContent="cash out "+mult(d.multiplier);
         pLane.val.textContent=STEP+" / "+LANES;pCur.val.textContent=mult(d.multiplier);pNext.val.textContent=mult(d.nextMultiplier);
       }).catch(function(){step.disabled=false;bad(r,"network error");});
@@ -1235,7 +1290,7 @@
       jpost("/cas/beef/cashout",{}).then(function(d){if(refused(d)){refusedGate();return;}
         cash.disabled=false;
         if(d.error){bad(r,d.error);return;}
-        setBal(d.balance);ok(r,"cashed out "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);
+        setBal(d.balance);roundSaw(d);ok(r,"cashed out "+mult(d.multiplier));celebrate(d.payout,d.multiplier);running(false);
       }).catch(function(){cash.disabled=false;bad(r,"network error");});
     };
   }
@@ -1274,8 +1329,8 @@
       blurb:"one card each. the high card takes the pot.",
       sub:"nothing to play. the deck is cut the moment everyone at the table says yes. a tie is re-cut."},
     comp:{name:"Competitive Gambling",moves:[],
-      blurb:"three minutes on the floor. a stack of clay each. the bigger pile at the buzzer takes the pot.",
-      sub:"the clay is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends. your sahurs sit in the pot the whole time. run the clay out and the round ends there and then."}
+      blurb:"three minutes on the floor. a stack of wood each. the bigger pile at the buzzer takes the pot.",
+      sub:"the whole floor, played in wood. it is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends, while your sahurs sit in the pot the whole time. run the wood out with nothing left on a table and the round ends there and then."}
   };
   function pitStop(){
     if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;}
@@ -1346,7 +1401,7 @@
     v.appendChild(el("div","casnote",game==="cut"
       ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, it does not fill within 10 minutes, or anyone does not confirm."
       :(game==="comp"
-        ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm. the clay inside the round is worth nothing outside it \u2014 the stakes are the only sahurs on the table."
+        ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm. the wood inside the round is worth nothing outside it \u2014 the stakes are the only sahurs on the table."
         :"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm.")));
 
     open.onclick=function(){
@@ -1537,7 +1592,7 @@
         body.appendChild(yes);
       }
       if(d.game==="comp"){
-        body.appendChild(el("p","pitsub","say yes and you are each handed "+money(d.stack)+" clay and three minutes to do something with it."));
+        body.appendChild(el("p","pitsub","say yes and you are each handed "+money(d.stack)+" wood and three minutes to do something with it."));
       }
       body.appendChild(el("p","pitsub",many
         ?"if anyone does not confirm, every stake comes straight back."
@@ -1546,18 +1601,9 @@
       /* the scoreboard is both stacks, and they are both public: watching
          theirs move is the game as much as moving your own is. */
       body.appendChild(compScore(d,false));
-      body.appendChild(el("p","pitsub","clay. not sahurs, and never sahurs \u2014 it is swept when the clock stops. the pot is what is actually on the table."));
-      var floor=el("div","casmenu comp");
-      [["Dice","dice"],["Limbo","limbo"],["Roulette","roulette"],["Plinko","plinko"]].forEach(function(g){
-        var tile=el("button","casgame");
-        var ci=el("div","ci");ci.appendChild(gameIcon(g[1]));
-        tile.appendChild(ci);
-        tile.appendChild(el("div",null,g[0]));
-        tile.onclick=function(){openPlay(g[1]);};
-        floor.appendChild(tile);
-      });
-      body.appendChild(floor);
-      body.appendChild(el("p","pitsub","the quick tables only \u2014 a hand of blackjack outlives the buzzer. the round follows you onto whichever one you pick, and ends the moment either of you runs the clay out."));
+      body.appendChild(el("p","pitsub","wood. not sahurs, and never sahurs \u2014 it is swept when the clock stops. the pot is what is actually on the table."));
+      body.appendChild(floorMenu("comp"));
+      body.appendChild(el("p","pitsub","the whole floor, and the round follows you onto whatever you pick. a hand still open when the clock stops is a stake you paid and never played, so finish what you start \u2014 and while one is still open you are not out, however empty the stack reads."));
     }else if(d.state==="live"){
       var score=el("div","pitscore");
       score.appendChild(el("span","sv",String(d.yourWins)));
@@ -1627,8 +1673,8 @@
         big.textContent=!d.winner
           ?"a dead heat. neither of you is ahead, so both stakes are back."
           :(won
-            ?(ranOut?"they ran the clay out. the pot is yours.":"you finish on the bigger pile. you take the pot.")
-            :(ranOut?"you ran the clay out. the pot went to "+d.winner+".":d.winner+" finishes on the bigger pile and takes the pot."));
+            ?(ranOut?"they ran the wood out. the pot is yours.":"you finish on the bigger pile. you take the pot.")
+            :(ranOut?"you ran the wood out. the pot went to "+d.winner+".":d.winner+" finishes on the bigger pile and takes the pot."));
       }else big.textContent=!d.winner
         ?(d.reason==="cancelled"?"table taken down. your stake is back."
           :d.reason==="expired"?(many?"the table never filled. your stake is back.":"nobody came. your stake is back.")
@@ -1774,7 +1820,7 @@
     var theirs=el("div","cstack"+(fin&&d.theirChips>d.yourChips?" up":""));
     theirs.appendChild(el("b",null,d.theirName||"them"));
     var tv=el("span","cv",money(d.theirChips));theirs.appendChild(tv);
-    sc.appendChild(mine);sc.appendChild(el("span","cvs","clay"));sc.appendChild(theirs);
+    sc.appendChild(mine);sc.appendChild(el("span","cvs","wood"));sc.appendChild(theirs);
     if(!fin)PIT.chips={you:mv,them:tv};
     return sc;
   }
@@ -1801,7 +1847,7 @@
     var d=PIT.last;
     if(!d)return;
     if(PIT.chips&&PIT.chips.you.isConnected){
-      PIT.chips.you.textContent=money(d.yourChips);
+      PIT.chips.you.textContent=money(ROUND.live&&ROUND.live.id===d.id?ROUND.mine:d.yourChips);
       PIT.chips.them.textContent=money(d.theirChips);
     }
     if(!PIT.left||!PIT.left.isConnected)return;

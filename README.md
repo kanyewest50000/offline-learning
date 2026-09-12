@@ -59,7 +59,7 @@ Three tables in the casino where the opponent is another member rather than the
 house: **Tung, Wood, Fire** (tung splits the wood, the wood feeds the fire, the
 fire takes tung — first to two rounds, a tie is replayed), **The Cut** (one
 card each, high card takes it) and **Competitive Gambling** (three minutes on
-the casino floor, a stack of clay each, biggest pile at the buzzer).
+the casino floor, a stack of wood each, biggest pile at the buzzer).
 
 A round of Tung, Wood, Fire is two hidden picks resolving into one outcome, and
 it is shown as exactly that: the two moves slide in from opposite sides onto the
@@ -72,13 +72,23 @@ turns. The result is held behind the second card, because knowing it early is
 the one thing that would make the pause worthless.
 
 Competitive Gambling is the one where the pit is not the game. Both players are
-handed the same stack of clay and turned loose on the floor for three minutes,
-and whoever is sitting on the bigger pile when the clock stops takes the pot.
-Run the clay out and the round ends there and then — there is nothing left to
-play with, so there is nothing left to wait for. A dead heat is nobody's win and
-both stakes go home.
+handed the same stack of wood and turned loose on the whole floor for three
+minutes — every table, not a sprint corner of them — and whoever is sitting on
+the bigger pile when the clock stops takes the pot. A dead heat is nobody's win
+and both stakes go home.
 
-Clay is not sahurs and never becomes sahurs. It is handed out by the round,
+Running the wood out ends the round there and then, with one exception that
+matters: a stake still sitting on a table is not spent, it is unread. A player
+who puts their last wood on a mines board is on zero and still in it, because
+the board can pay; the round ends when the board is read, not when it is dealt.
+That is taken off the game records themselves rather than off a counter, so two
+deals racing each other, a hand replaced by another, or a record that expired
+cannot leave a phantom stake behind that makes somebody unbustable. The flip
+side is the buzzer: a hand still open when the clock stops is a stake paid and
+never played, and it scores as spent. Otherwise the last ten seconds of every
+round would be worth a free look at a hand you could abandon.
+
+Wood is not sahurs and never becomes sahurs. It is handed out by the round,
 spent against the house inside it, and swept when the round ends; the only thing
 that crosses back is the pot, which is the two real stakes and was escrowed
 before the round began, so three minutes of this cannot move a sahur in either
@@ -86,17 +96,33 @@ direction. Which purse a wager comes out of is read off the player's own duel
 lock on every bet rather than sent with it, so a wager cannot be aimed at the
 cheap money — and one cannot be aimed at somebody's sahurs from inside a round
 either. A bet does name the round it believes it is in, but that can only ever
-refuse a wager: it is there so a roll meant as clay does not land on real sahurs
-because the buzzer went while the player was reaching for the button. A round
-deals the quick tables only — dice, limbo, roulette, plinko — because a hand of
-blackjack can outlive the buzzer, and a player still holding one is not out of
-clay however empty their stack reads.
+refuse a wager: it is there so a roll meant as wood does not land on real sahurs
+because the buzzer went while the player was reaching for the button.
+
+A hand, a board or a walk outlives the request that dealt it, so each one
+carries the stake it was dealt from and settles back into that: a hand dealt in
+sahurs still pays sahurs after a round has started on top of it, and a hand
+dealt in a round that has since ended pays into nothing, because its wood was
+swept with the rest. A round will not deal over a game that is holding real
+sahurs — it says so and asks you to finish that one first — since replacing it
+is how the casino has always started a fresh game, and a round must never be the
+thing that throws a real stake away. Retiring one of those records and moving
+the wood it owes is a single commit, so a hand cannot be cashed out twice.
 
 The round follows the player rather than waiting on the table's page: a strip
 over every casino screen carries both stacks and the clock, both live, and the
 result finds them wherever in the casino they are standing when it stops. The
 header keeps showing sahurs the whole time, because that number is never once a
 lie.
+
+The stack on that strip is held while a table is still showing a wager. The
+server answers a bet the instant it is decided, which on every table here is
+well before the player has seen it happen, and painting that number as it
+arrived would give the wheel away while it was still spinning, the cow away
+mid-lane and the dealer's hole card away before he turned it. So the stake comes
+off the pile when it goes out and the rest lands when the table says it has
+finished — and the poll keeps its hands off in between, since all it knows is
+the answer.
 
 Opening a table takes you to its own page, and the way to take it down is on
 that page: a countdown to when it closes itself and a button that hands the
