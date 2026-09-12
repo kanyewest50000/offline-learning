@@ -15,7 +15,7 @@
 //   POST /login         {token}                          -> {token, status, username}
 //   GET  /status?token=                                   -> {status, username}
 //   GET  /events?since=&token=                            -> {events, cursor}
-//   POST /send          {token, id, text, reply}          -> {ok}
+//   POST /send          {token, id, text, reply}          -> {ok, ts}
 //   POST /react         {token, id, e, op, eid}           -> {ok}
 //   GET  /tip/profile?token=&user=                        -> {username, createdAt, balance}
 //   POST /tip           {token, to, amount}               -> {ok, amount, fromBalance, toBalance, to}
@@ -736,6 +736,12 @@ type MsgRef = { name: string; text: string; from: string | null };
 async function appendEvent(ev: Record<string, unknown>) {
   const seq = await nextSeq();
   ev.seq = seq;
+  // Display time is the server's, never the sender's. The client may paint an
+  // optimistic clock on its own bubble; the event that lands in KV overwrites
+  // whatever they claimed. Expiry is still expireIn, not this field — old
+  // lines disappear on Deno KV's TTL with no sweep job and no cron. The
+  // monotonic seq still orders what remains.
+  if (ev.type === "msg") ev.ts = Date.now();
   if (ev.type === "msg" && typeof ev.id === "string") {
     await kv.set(
       ["msg", ev.id],
@@ -743,9 +749,6 @@ async function appendEvent(ev: Record<string, unknown>) {
       { expireIn: TTL_MS },
     );
   }
-  // expireIn gives the key a native TTL: Deno KV deletes it ~2 weeks later on
-  // its own, so old chat lines disappear with no per-message timestamp, no
-  // sweep job, and no cron. The monotonic seq still orders what remains.
   await kv.set(["ev", seq], ev, { expireIn: TTL_MS });
   if (seq > HISTORY) await kv.delete(["ev", seq - HISTORY]);
   return seq;
@@ -793,6 +796,7 @@ async function listChatMessages(): Promise<unknown[]> {
       from: ev.from ?? null,
       gift: ev.gift ?? null,
       seq: ev.seq,
+      ts: typeof ev.ts === "number" ? ev.ts : 0,
     });
   }
   return messages;
@@ -1713,11 +1717,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       .set(["msg", id], { name: user.username, text, from: null } as MsgRef, { expireIn: TTL_MS })
       .commit();
     if (!claim.ok) return json({ error: "duplicate" }, 409);
-    await appendEvent({ type: "msg", id, name: user.username, text, reply });
+    const posted: Record<string, unknown> = { type: "msg", id, name: user.username, text, reply };
+    await appendEvent(posted);
     // tung occasionally has something to add. only ever after a real message,
     // so the room is never talking to itself.
     await maybeWisdom();
-    return json({ ok: true });
+    return json({ ok: true, ts: posted.ts });
   }
 
   // ---------- react ----------
@@ -3127,6 +3132,8 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .tmsg{padding:7px 11px;border-radius:10px;font-size:.86rem;max-width:85%;white-space:pre-wrap;word-break:break-word}
 .tmsg.admin{align-self:flex-end;background:#c8823c;color:#1d1206}
 .tmsg.applicant{align-self:flex-start;background:#241505;border:1px solid #3a2410}
+.tmsg .twhen{display:block;font-size:10px;opacity:.8;margin-bottom:3px}
+.app h3 .when{margin-left:8px;font-size:11px;font-weight:500;color:#c8823c;letter-spacing:0;text-transform:none}
 .danger p{color:#e9d9c2;line-height:1.45}
 </style></head><body>
 <header>Shrine of Tung — admin</header>
@@ -3318,6 +3325,7 @@ function dumpChat(){
       var el=document.createElement("div");el.className="app";
       var h=document.createElement("h3");h.textContent=m.name||"";
       if(m.from==="tung"){var tg=document.createElement("span");tg.className="tungtag";tg.textContent="the shrine";h.appendChild(tg);el.classList.add("tungline");}
+      if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();h.appendChild(tm);}
       el.appendChild(h);
       if(m.reply&&m.reply.text){
         var rp=document.createElement("small");rp.textContent="reply to "+(m.reply.name||"")+" — "+m.reply.text;el.appendChild(rp);
@@ -3361,7 +3369,10 @@ function renderPending(){
       var th=document.createElement("div");th.className="thread";
       a.thread.forEach(function(m){
         var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"applicant");
-        b.textContent=(m.from==="admin"?"tung: ":a.username+": ")+m.text;
+        var tw=document.createElement("div");tw.className="twhen";
+        tw.textContent=(m.from==="admin"?"tung":a.username)+(m.ts?" · "+new Date(m.ts).toLocaleString():"");
+        var tx=document.createElement("div");tx.textContent=m.text;
+        b.appendChild(tw);b.appendChild(tx);
         th.appendChild(b);
       });
       el.appendChild(th);

@@ -111,6 +111,7 @@ const messages = (dump.body.messages || []) as {
   text: string;
   reply?: { id?: string; name?: string; text?: string } | null;
   seq: number;
+  ts?: number;
 }[];
 if (dump.body.count !== messages.length) {
   fail("count mismatch: " + dump.body.count + " vs " + messages.length);
@@ -131,6 +132,12 @@ if (messages.some((m) => (m as { type?: string }).type === "react")) {
 }
 if (ours.some((m) => m.name !== username)) {
   fail("unexpected name in dump");
+}
+if (ours.some((m) => typeof m.ts !== "number" || m.ts <= 0)) {
+  fail("dumped messages must carry a server timestamp");
+}
+if (!html.includes('tm.className="when"') || !html.includes("toLocaleString()")) {
+  fail("admin chat dump must render each line's timestamp");
 }
 
 const gate = await fetch(API + "/admin");

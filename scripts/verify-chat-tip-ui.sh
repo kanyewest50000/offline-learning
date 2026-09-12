@@ -17,6 +17,9 @@ need=(
   'your generosity is appealing in the eyes of tung tung god'
   'this key spends sahurs and opens every gate'
   'w.className="who"'
+  'function fmtWhen('
+  'className="when"'
+  'stampWhen'
 )
 for n in "${need[@]}"; do
   if ! grep -F -q -- "$n" "${files[@]}"; then

@@ -34,6 +34,8 @@
       '#appThread .tmsg{padding:7px 11px;border-radius:10px;font-size:13px;max-width:90%;white-space:pre-wrap;word-break:break-word}' +
       '#appThread .tmsg.admin{align-self:flex-start;background:#241505;border:1px solid #3a2410}' +
       '#appThread .tmsg.me{align-self:flex-end;background:#c8823c;color:#1d1206}' +
+      '#appThread .twhen{display:block;font-size:10px;color:#8a6a3a;margin-bottom:3px}' +
+      '#appThread .tmsg.me .twhen{color:#5a3a14}' +
       '#respBox{display:none;flex-direction:column;gap:8px;margin:12px 0 0}' +
       '#respText{resize:vertical}' +
       '#gate .row{display:flex;gap:8px;justify-content:center}' +
@@ -44,9 +46,12 @@
       '#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}' +
       '.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}' +
       '.msg.me{align-self:flex-end;background:#8a5a28}' +
-      '.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px;background:transparent;border:0;padding:0;cursor:pointer;font-family:inherit;font-weight:600;text-align:left;line-height:1.2}' +
+      '.meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}' +
+      '.who{display:block;font-size:11px;color:#c8823c;margin-bottom:0;background:transparent;border:0;padding:0;cursor:pointer;font-family:inherit;font-weight:600;text-align:left;line-height:1.2}' +
       '.who:hover{color:#f2c063;text-decoration:underline}' +
       '.msg.me .who{color:#f2c063}' +
+      '.when{font-size:10px;font-weight:500;color:#8a6a3a;letter-spacing:.02em;white-space:nowrap;line-height:1.2}' +
+      '.msg.me .when{color:#d4b48a}' +
       /* tung does not post as a member and should not read as one: his line runs
          the full width of the log as a notice rather than sitting in the left
          column with everyone else, and carries a mark next to the name. */
@@ -617,6 +622,8 @@
       '[data-theme="dark"] .msg.me{background:#3d3d4a}' +
       '[data-theme="dark"] .who{color:#9a9aa6}' +
       '[data-theme="dark"] .msg.me .who,[data-theme="dark"] .who:hover{color:#d6d6de}' +
+      '[data-theme="dark"] .when{color:#8b8b96}' +
+      '[data-theme="dark"] .msg.me .when{color:#b8b8c4}' +
       /* tung stays gold in every theme: he is not part of the decor */
       '[data-theme="dark"] .msg.tung{background:linear-gradient(160deg,#26262c,#19191d);border-color:#5a4a24;border-left-color:#f2c063}' +
       '[data-theme="dark"] .act,[data-theme="dark"] .chip{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
@@ -696,6 +703,8 @@
       '[data-theme="dark"] .ovrow span{color:#e8e8ec}' +
       '[data-theme="dark"] #appThread .tmsg.admin{background:#232328;border-color:#3a3a44}' +
       '[data-theme="dark"] #appThread .tmsg.me{background:#5a5a68;color:#f2f2f6}' +
+      '[data-theme="dark"] #appThread .twhen{color:#8b8b96}' +
+      '[data-theme="dark"] #appThread .tmsg.me .twhen{color:#d6d6de}' +
       /* every muted label in the sheet is the same wood brown (#8a6a3a). On a
          grey ground that reads as a stain rather than as quiet text, so they all
          go neutral together — one rule, so a new label picks it up by being

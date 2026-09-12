@@ -32,8 +32,13 @@ header small{font-weight:400;color:#c8823c;margin-left:auto}
 #log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
 .msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word;position:relative}
 .msg.me{align-self:flex-end;background:#8a5a28}
-.who{display:block;font-size:11px;color:#c8823c;margin-bottom:2px}
+.meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+.who{display:block;font-size:11px;color:#c8823c;margin-bottom:0}
 .msg.me .who{color:#f2c063}
+.when{font-size:10px;font-weight:500;color:#8a6a3a;letter-spacing:.02em;white-space:nowrap;line-height:1.2}
+.msg.me .when{color:#d4b48a}
+#appThread .twhen{display:block;font-size:10px;color:#8a6a3a;margin-bottom:3px}
+#appThread .tmsg.me .twhen{color:#5a3a14}
 form{display:flex;gap:8px}
 #f{padding:12px;background:#2b1a0a;border-top:1px solid #3a2410}
 input,textarea{padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit}
@@ -236,6 +241,27 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   function saveToken(t){ try { localStorage.setItem(TKEY, t); } catch(e) {} }
   function clearToken(){ try { localStorage.removeItem(TKEY); } catch(e) {} }
   function mkId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+  function fmtWhen(ts){
+    ts = Number(ts); if (!ts) return "";
+    var d = new Date(ts); if (isNaN(d.getTime())) return "";
+    var now = new Date();
+    var t = d.toLocaleTimeString(undefined, { hour:"numeric", minute:"2-digit" });
+    if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) return t;
+    var y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    if (d.getFullYear() === y.getFullYear() && d.getMonth() === y.getMonth() && d.getDate() === y.getDate()) return "yesterday " + t;
+    if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(undefined, { month:"short", day:"numeric" }) + " " + t;
+    return d.toLocaleDateString(undefined, { year:"numeric", month:"short", day:"numeric" }) + " " + t;
+  }
+  function stampWhen(el, ts){
+    if (!el) return;
+    var old = el.querySelector("time.when");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var label = fmtWhen(ts); if (!label) return;
+    var d = new Date(Number(ts)); if (isNaN(d.getTime())) return;
+    var tm = document.createElement("time");
+    tm.className = "when"; tm.dateTime = d.toISOString(); tm.title = d.toLocaleString(); tm.textContent = label;
+    el.appendChild(tm);
+  }
   function paintKey(){
     if (myhash) myhash.textContent = TOKEN || "";
     if (exportKeyBtn) exportKeyBtn.style.display = TOKEN ? "inline-block" : "none";
@@ -335,8 +361,9 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     var row = document.createElement("div");
     row.className = m.mine ? "msg me" : "msg";
     if (m.id) row.setAttribute("data-id", m.id);
+    var meta = document.createElement("div"); meta.className = "meta";
     var w = document.createElement("span"); w.className = "who"; w.textContent = m.name;
-    row.appendChild(w);
+    meta.appendChild(w); stampWhen(meta, m.ts); row.appendChild(meta);
     if (m.reply) {
       var q = document.createElement("div"); q.className = "quote";
       var qn = document.createElement("b"); qn.textContent = m.reply.name + ": ";
@@ -357,7 +384,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     pb.addEventListener("click", function(ev){ ev.stopPropagation(); setReply(m); input.focus(); });
     acts.appendChild(rb); acts.appendChild(pb); row.appendChild(acts);
     var rc = document.createElement("div"); rc.className = "reacts"; row.appendChild(rc);
-    MSGS[m.id] = { reactEl:rc, counts:{}, mine:{} };
+    MSGS[m.id] = { reactEl:rc, counts:{}, mine:{}, meta:meta };
     log.appendChild(row);
     log.scrollTop = log.scrollHeight;
   }
@@ -385,7 +412,10 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   function applyEvent(ev){
     if (!ev) return;
     if (ev.type === "react") { if (seenEids[ev.eid]) return; seenEids[ev.eid] = 1; applyReact(ev.id, ev.e, ev.op); return; }
-    if (ev.type === "msg") { if (MSGS[ev.id]) return; add({ id:ev.id, name:ev.name, text:ev.text, mine:ev.name === ME, reply:ev.reply || null }); }
+    if (ev.type === "msg") {
+      if (MSGS[ev.id]) { if (MSGS[ev.id].meta) stampWhen(MSGS[ev.id].meta, ev.ts); return; }
+      add({ id:ev.id, name:ev.name, text:ev.text, mine:ev.name === ME, reply:ev.reply || null, ts:ev.ts || null });
+    }
   }
   function poll(){
     if (!polling || pageHidden()) return;
@@ -411,7 +441,10 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     thread.forEach(function(m){
       var b = document.createElement("div");
       b.className = "tmsg " + (m.from === "admin" ? "admin" : "me");
-      b.textContent = (m.from === "admin" ? "tung: " : "you: ") + m.text;
+      var tw = document.createElement("div"); tw.className = "twhen";
+      tw.textContent = (m.from === "admin" ? "tung" : "you") + (m.ts ? " · " + fmtWhen(m.ts) : "");
+      var tx = document.createElement("div"); tx.textContent = m.text;
+      b.appendChild(tw); b.appendChild(tx);
       appThread.appendChild(b);
       if (m.from === "admin") hasAdmin = true;
     });
@@ -475,8 +508,10 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     var id = mkId();
     var rep = replyTo ? { id:replyTo.id, name:replyTo.name, text:replyTo.text } : null;
     input.value = "";
-    add({ id:id, name:ME, text:text, mine:true, reply:rep });
-    apiPost("/send", { token:TOKEN, id:id, text:text, reply:rep });
+    add({ id:id, name:ME, text:text, mine:true, reply:rep, ts:Date.now() });
+    apiPost("/send", { token:TOKEN, id:id, text:text, reply:rep }).then(function(r){
+      if (r && r.ts && MSGS[id] && MSGS[id].meta) stampWhen(MSGS[id].meta, r.ts);
+    });
     cancelReply();
   });
   pick.addEventListener("click", function(ev){ ev.stopPropagation(); picker.style.display = picker.style.display === "flex" ? "none" : "flex"; rpal.style.display = "none"; });
