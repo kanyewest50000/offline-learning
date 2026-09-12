@@ -177,7 +177,7 @@ a holding page instead — the same page in two wordings, one for a shut veil an
 one for a veil that is open but not to them. With `PROXY_URL` unset the veil
 stays shut whatever the switch says, so it can never open a blank tab.
 
-`WISDOM_MIN_MS` and `WISDOM_MAX_MS` (default 45m / 3h) bound the gap between two
+`WISDOM_MIN_MS` and `WISDOM_MAX_MS` (default 45m / 2h) bound the gap between two
 Wisdoms of Tung — the lines he drops into the chat on his own. He only speaks
 into a room that is already talking, so the roll happens on a real message and
 a dead chat stays dead. Set both to a couple of seconds to watch one happen.

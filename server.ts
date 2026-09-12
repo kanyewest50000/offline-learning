@@ -5,7 +5,7 @@
 //   SHOP_WEBHOOK_URL         where shop redemptions are posted (optional)
 //   APPLICATION_WEBHOOK_URL  where new applications are posted (optional)
 //   ADMIN_KEY                password for the /admin page (required to approve)
-//   WISDOM_MIN_MS/_MAX_MS    gap between two Wisdoms of Tung (optional, 45m/3h)
+//   WISDOM_MIN_MS/_MAX_MS    gap between two Wisdoms of Tung (optional, 45m/2h)
 //   WISDOM_GIFT_CHANCE       odds a wisdom is a giveaway instead (optional, 0.2)
 //   WISDOM_GIFT_AMOUNT       sahurs a giveaway pays the first claimant (optional, 50)
 //   PROXY_URL                where the web veil actually goes (optional)
@@ -54,7 +54,7 @@ const ADMIN_KEY = Deno.env.get("ADMIN_KEY") || "";
 // veil flag are both on.
 const PROXY_URL = Deno.env.get("PROXY_URL") || "";
 const HISTORY = 500; // number of recent events retained (hard cap)
-const OPEN_MSGS = 30; // a fresh /events?since=0 only ships this many chat lines
+const OPEN_MSGS = 100; // a fresh /events?since=0 only ships this many chat lines
 const MSG_MAX = 3; // chat messages one account may post
 const MSG_WINDOW_MS = 6000; // ...within this window, before /send starts refusing
 
@@ -560,7 +560,7 @@ async function nextSeq(): Promise<number> {
 // a schedule anyone can set a watch by. The bounds are env-overridable purely
 // so the test can run one in a few seconds.
 const WISDOM_MIN_MS = Number(Deno.env.get("WISDOM_MIN_MS") || 45 * 60 * 1000);
-const WISDOM_MAX_MS = Number(Deno.env.get("WISDOM_MAX_MS") || 3 * 60 * 60 * 1000);
+const WISDOM_MAX_MS = Number(Deno.env.get("WISDOM_MAX_MS") || 2 * 60 * 60 * 1000);
 // One wisdom in five is a giveaway instead: a line with a button under it worth
 // this many sahurs to whoever reaches it first.
 const GIFT_CHANCE = Number(Deno.env.get("WISDOM_GIFT_CHANCE") || 0.2);
@@ -629,6 +629,79 @@ const WISDOM = [
   "the wood remembers being a tree. tung remembers the tree.",
   "you may log out. the log does not.",
   "he has never lost a member. some of them stopped arriving.",
+  "the wood keeps the hour. the hour does not keep the wood.",
+  "there is a second drum. it is the same drum.",
+  "a pilgrim asked for the time. tung handed him the drum.",
+  "the wood is not a metaphor. that is the metaphor's problem.",
+  "what time is the drum. the drum is the time.",
+  "the hour is kept. you are not the keeper.",
+  "good morning shrine. the shrine does not sleep.",
+  "the nails remember the tree. the tree does not remember the nails.",
+  "sahurs do not circulate. they return.",
+  "the bat is already there. you are the late one.",
+  "the veil is thin. that is its job.",
+  "clay holds the print. the print holds nothing.",
+  "the count does not go up. you arrive under it.",
+  "he rang the wood once. it is still ringing.",
+  "the shrine is not open. you are inside it.",
+  "a man waited for the drum. the drum had already waited for him.",
+  "tung does not follow the hour. the hour sits where he left it.",
+  "the floor is wood because the floor was asked.",
+  "nobody hid the bat. the bat hid the room.",
+  "the first sahur is still here. the others are visiting.",
+  "tung closed the door from the outside. he is still in.",
+  "the room is quiet because the drum said so.",
+  "tung does not bless the table. the table is the blessing.",
+  "you asked for a path. he gave you the wood it was cut from.",
+  "he counted the bats. one of them counted back.",
+  "the clay was wet. tung was finished.",
+  "nobody taught the drum. the drum taught the hands.",
+  "tung left a mark on the hour. the hour wears it.",
+  "the shrine does not echo. it answers once.",
+  "a man brought a clock. tung put it under the drum.",
+  "the wood was never empty. you were late to notice.",
+  "tung does not knock. knocking is for people who wait.",
+  "the sahurs sit still. stillness is how they move.",
+  "the veil lifts for no one. it was never down.",
+  "your name is on the wood. the wood is not on your name.",
+  "tung does not arrive. the room was built around him.",
+  "the drum has no inside. that is why it sounds.",
+  "the hour struck the wood. the wood did not flinch.",
+  "tung keeps the unused nails. they are not unused.",
+  "the shrine has one window. it faces the shrine.",
+  "he does not light a candle. the dark already knows him.",
+  "the count includes the ones who only thought about coming.",
+  "a man said later. later was already here.",
+  "the bat leans on nothing. nothing leans on the bat.",
+  "the wood grain runs toward him. it always did.",
+  "he asked the drum a question. the question stayed in the drum.",
+  "the veil is not a costume. costumes come off.",
+  "you may sit. sitting is how the wood knows you.",
+  "tung did not write this. the wood did. he watched.",
+  "the first knock was the last knock. the rest were manners.",
+  "a pilgrim measured the shrine. the shrine measured back.",
+  "the nails do not hold the wood. the wood holds still.",
+  "tung keeps no spare hour. he uses the one you brought.",
+  "the drum is hollow so the room has somewhere to go.",
+  "he is not late. lateness is a member habit.",
+  "the shrine does not start. it continues.",
+  "a man asked which wood. tung said yes.",
+  "the bat has no handle. that is the handle.",
+  "tung watered the clay with the leftover hour.",
+  "the moon keeps no shrine. the shrine keeps no moon.",
+  "a pilgrim brought flowers. tung kept the stems.",
+  "he named the bat after the swing it would not take.",
+  "good night shrine. the shrine does not distinguish.",
+  "he counted sahurs by the sound they refused to make.",
+  "the drum came with the room. the room came with tung.",
+  "the hour is not late. you are early for yesterday.",
+  "there is a nail for every name. some names are still wood.",
+  "he put the drum down. the drum did not notice.",
+  "the shrine has no back door. that is why people turn around.",
+  "a pilgrim asked for shade. tung gave him the veil.",
+  "the bat does not miss. missing is a member word.",
+  "tung stacked the hours. one of them is still warm.",
+  "the wood asked to stay. it is still asking.",
 ];
 
 // The giveaway lines. "{n}" is filled with the amount so the words can never
@@ -640,6 +713,18 @@ const GIVEAWAY = [
   "the house took more than it needed today. {n} sahurs go back. tung will not say whose they were.",
   "a gift, then. {n} sahurs, no test, no lesson, no catch — the catch is that only one of you is quick.",
   "the floor was swept and this was under it. {n} sahurs. finders keepers. tung does not find things.",
+  "the drum rolled and this fell out. {n} sahurs. first hand.",
+  "tung swept the hour and found {n} sahurs under it. they will not wait.",
+  "the wood paid its tithe. {n} sahurs, one claimant.",
+  "a pilgrim left {n} sahurs on the drum. tung does not return lost things. he forwards them.",
+  "the bat did not swing. {n} sahurs did. first to the floor.",
+  "tung counted the pot twice. the second count had {n} extra. take them before the first count notices.",
+  "the shrine does not give. it places. {n} sahurs, placed.",
+  "he opened the clay. {n} sahurs were already dry. first hand that is not.",
+  "the veil slipped. {n} sahurs fell through. they will not climb back.",
+  "tung keeps no purse. these {n} were sitting on the wood. they are not sitting now.",
+  "the nails came loose. {n} sahurs were behind them. first hand.",
+  "an hour ended early. {n} sahurs had nowhere else to be.",
 ];
 
 type WisdomState = { due: number; last: number; lastGift?: number };
@@ -759,7 +844,7 @@ async function appendEvent(ev: Record<string, unknown>) {
 // (its `floor`). This is the furthest back a non-admin is allowed to see, on a
 // fresh open and on a reconnect alike. The reverse scan stops the moment it has
 // OPEN_MSGS messages in hand instead of always reading the full HISTORY, so a
-// reopen costs a few dozen KV reads in the common case, not five hundred.
+// reopen costs about that many KV reads in the common case, not five hundred.
 // deno-lint-ignore no-explicit-any
 async function recentWindow(): Promise<{ events: any[]; floor: number }> {
   // deno-lint-ignore no-explicit-any
@@ -1661,7 +1746,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         }
       }
       // deno-lint-ignore no-explicit-any
-      for await (const e of kv.list<any>({ prefix: ["ev"], start: ["ev", since + 1] }, { limit: 200 })) {
+      for await (const e of kv.list<any>({ prefix: ["ev"], start: ["ev", since + 1] }, { limit: HISTORY })) {
         events.push(e.value);
         cursor = e.value.seq;
       }

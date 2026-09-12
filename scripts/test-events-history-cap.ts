@@ -1,5 +1,5 @@
 #!/usr/bin/env -S deno run --allow-net --allow-env
-// A non-admin cannot reach past the public window (the last OPEN_MSGS = 30
+// A non-admin cannot reach past the public window (the last OPEN_MSGS = 100
 // messages) however they ask: since=0 and a hand-edited since=1 both stop at
 // the same floor. The admin key still walks the whole retained log.
 //
@@ -39,9 +39,9 @@ const decide = await j("/admin/decide", {
 });
 if (!decide.body?.ok) fail("approve failed");
 
-// 80 messages: comfortably more than the 30-line window
+// 130 messages: comfortably more than the 100-line window
 const tag = "h" + Date.now().toString(36);
-for (let i = 1; i <= 80; i++) {
+for (let i = 1; i <= 130; i++) {
   const sent = await j("/send", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -57,23 +57,23 @@ const msgsOf = (b: { events?: { type: string; text?: string }[] }) =>
 const scrape = await j("/events?since=1&token=" + encodeURIComponent(token));
 if (scrape.status !== 200) fail("since=1 status " + scrape.status);
 const scraped = msgsOf(scrape.body);
-if (scraped.length > 30) {
+if (scraped.length > 100) {
   fail("non-admin since=1 returned " + scraped.length + " messages — the backlog is not capped");
 }
 if (scraped.length && scraped[0].text === "hist 1") {
   fail("non-admin since=1 reached the first message; it must start no earlier than the window");
 }
-// whatever it returned must be inside the last-30 window (hist 51..80)
+// whatever it returned must be inside the last-100 window (hist 31..130)
 for (const m of scraped) {
   const n = Number(m.text.split(" ")[1]);
-  if (n < 51) fail("non-admin saw message " + n + ", older than the 30-line window");
+  if (n < 31) fail("non-admin saw message " + n + ", older than the 100-line window");
 }
 
 // a fresh open agrees on the floor
 const fresh = msgsOf((await j("/events?since=0&token=" + encodeURIComponent(token))).body);
-if (fresh.length !== 30) fail("fresh open should be 30, got " + fresh.length);
-if (fresh[0].text !== "hist 51" || fresh[29].text !== "hist 80") {
-  fail("window should be hist 51..80, got " + fresh[0].text + " .. " + fresh[29].text);
+if (fresh.length !== 100) fail("fresh open should be 100, got " + fresh.length);
+if (fresh[0].text !== "hist 31" || fresh[99].text !== "hist 130") {
+  fail("window should be hist 31..130, got " + fresh[0].text + " .. " + fresh[99].text);
 }
 
 // admin walks everything through the dedicated dump
@@ -81,18 +81,18 @@ const dump = await j("/admin/chat?key=" + encodeURIComponent(ADMIN));
 const dumpMsgs = (dump.body.messages || []).filter((m: { text?: string }) =>
   typeof m.text === "string" && m.text.startsWith("hist ")
 );
-if (dumpMsgs.length < 80) {
-  fail("admin dump should hold all 80, got " + dumpMsgs.length);
+if (dumpMsgs.length < 130) {
+  fail("admin dump should hold all 130, got " + dumpMsgs.length);
 }
 
 // admin key on /events itself is not clamped
 const adminEv = await j("/events?since=1&key=" + encodeURIComponent(ADMIN) + "&token=" + encodeURIComponent(token));
 const adminMsgs = msgsOf(adminEv.body);
-if (adminMsgs.length <= 30) {
+if (adminMsgs.length <= 100) {
   fail("admin /events since=1 should not be clamped, got " + adminMsgs.length);
 }
 
 console.log(
   "PASS non-admin capped at " + scraped.length + " msgs from since=1; " +
-    "fresh open 30; admin dump " + dumpMsgs.length + "; admin /events " + adminMsgs.length,
+    "fresh open 100; admin dump " + dumpMsgs.length + "; admin /events " + adminMsgs.length,
 );

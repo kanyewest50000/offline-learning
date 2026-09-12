@@ -99,8 +99,8 @@ if (!react.body?.ok) fail("react failed: " + JSON.stringify(react.body));
 
 const fresh = await j("/events?since=0&token=" + encodeURIComponent(token));
 const openMsgs = (fresh.body.events || []).filter((e: { type: string }) => e.type === "msg");
-if (openMsgs.length !== 30) {
-  fail("public reopen should still be 30 msgs, got " + openMsgs.length);
+if (openMsgs.length !== 41) {
+  fail("public reopen should still be all 41 seeded msgs (under the 100-line window), got " + openMsgs.length);
 }
 
 const dump = await j("/admin/chat?key=" + encodeURIComponent(ADMIN));
