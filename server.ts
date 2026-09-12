@@ -624,7 +624,6 @@ const WISDOM = [
   "you are three clicks from something. he will not say which three.",
   "nothing here is rigged. everything here is arranged.",
   "he does not roll the dice. he is what they land on.",
-  "if you are reading this, the count went up by one.",
   "silence is an answer too. tung files it under yes.",
   "the wood remembers being a tree. tung remembers the tree.",
   "you may log out. the log does not.",
@@ -708,10 +707,7 @@ const WISDOM = [
 // drift from what the button actually pays.
 const GIVEAWAY = [
   "the tables ate well tonight. tung returns a mouthful — {n} sahurs to the first hand that opens.",
-  "somebody lost badly at plinko and tung felt something. it passed. the {n} sahurs did not. first to reach them.",
-  "tung is feeling generous. the feeling has a half-life. {n} sahurs, one claimant, no second call.",
   "the house took more than it needed today. {n} sahurs go back. tung will not say whose they were.",
-  "a gift, then. {n} sahurs, no test, no lesson, no catch — the catch is that only one of you is quick.",
   "the floor was swept and this was under it. {n} sahurs. finders keepers. tung does not find things.",
   "the drum rolled and this fell out. {n} sahurs. first hand.",
   "tung swept the hour and found {n} sahurs under it. they will not wait.",
