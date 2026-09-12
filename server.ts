@@ -643,7 +643,6 @@ const WISDOM = [
   "the count does not go up. you arrive under it.",
   "he rang the wood once. it is still ringing.",
   "the shrine is not open. you are inside it.",
-  "a man waited for the drum. the drum had already waited for him.",
   "tung does not follow the hour. the hour sits where he left it.",
   "the floor is wood because the floor was asked.",
   "nobody hid the bat. the bat hid the room.",
@@ -701,6 +700,18 @@ const WISDOM = [
   "the bat does not miss. missing is a member word.",
   "tung stacked the hours. one of them is still warm.",
   "the wood asked to stay. it is still asking.",
+  "tung does not keep score. the score keeps arriving.",
+  "the clay took a name. it still has it.",
+  "you brought a question. tung kept the wrapping.",
+  "the nails are in order. the order is not yours.",
+  "tung does not share the bat. the bat shares the room.",
+  "he folded the veil once. once was enough.",
+  "tung left the count on the table. the table is the count now.",
+  "there is a spare bat. it is not spare.",
+  "sahurs have no reverse. that is why they come back.",
+  "he sanded the hour until it fit the shrine.",
+  "the moon came in through the wood. it did not go back out.",
+  "your seat was wood before it was a seat.",
 ];
 
 // The giveaway lines. "{n}" is filled with the amount so the words can never
@@ -721,6 +732,16 @@ const GIVEAWAY = [
   "tung keeps no purse. these {n} were sitting on the wood. they are not sitting now.",
   "the nails came loose. {n} sahurs were behind them. first hand.",
   "an hour ended early. {n} sahurs had nowhere else to be.",
+  "the count came out uneven. {n} sahurs are the difference. first hand.",
+  "tung turned the wood over. {n} sahurs were on the underside.",
+  "the veil had a pocket. {n} sahurs, one claimant.",
+  "a pilgrim set {n} sahurs by the bat. the bat does not keep things. first hand.",
+  "tung does not make change. these {n} were already the right size.",
+  "the shrine swept itself. {n} sahurs stayed. first hand that does not.",
+  "he stacked the nails and {n} sahurs were the leftover height.",
+  "the hour overflowed. {n} sahurs came with it. they will not go back in.",
+  "tung pointed at the floor. {n} sahurs were already there. first hand.",
+  "nobody asked for {n} sahurs. tung had already set them down.",
 ];
 
 type WisdomState = { due: number; last: number; lastGift?: number };
