@@ -391,8 +391,8 @@
       '.card{min-width:38px;height:54px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;background:#f5efe0;color:#1d1206;border-radius:6px;border:1px solid #ccc}' +
       '.card.red{color:#b3261e}' +
       /* ---- the pit: player against player ---- */
-      /* the pit inherits .casmenu's four columns so its two tiles are the same
-         size as the house games below them, rather than two banners */
+      /* the pit inherits .casmenu's four columns so its tiles are the same
+         size as the house games below them, rather than a row of banners */
       '.casgame.pvp{border-color:#7a5a1a}' +
       '.casgame.pvp{border-color:#7a5a1a;background:linear-gradient(155deg,#3a2410,#241505)}' +
       '.casgame.pvp:hover{border-color:#f2c063}' +
@@ -518,6 +518,39 @@
       '.brokex{position:absolute;top:8px;right:10px;background:transparent;border:0;color:#8a6a3a;font-size:14px;cursor:pointer;padding:2px 6px;line-height:1}' +
       '.brokex:hover{color:#f2c063}' +
       '@media(max-width:560px){.brokebar{flex-wrap:wrap}.brokebar .cbtn{width:auto;margin-left:auto}}' +
+      /* ---- a round of Competitive Gambling, riding over every other screen.
+         Same strip as the broke bar so it reads as the casino talking rather
+         than as a game: both stacks, the clock, and the way back to the
+         table. The leader's number goes gold, the other one goes quiet. ---- */
+      '.roundbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;' +
+      'background:linear-gradient(135deg,#3a2410,#241505);border:1px solid #c8823c;border-radius:14px;padding:12px 16px;' +
+      'box-shadow:0 6px 20px #0006}' +
+      '.roundbar .rtag{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8a6a3a;flex:0 0 auto}' +
+      '.roundbar .rside{display:flex;flex-direction:column;gap:1px;min-width:0}' +
+      '.roundbar .rside b{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8a6a3a;' +
+      'max-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.roundbar .rv{font-size:19px;font-weight:800;color:#c8823c;font-variant-numeric:tabular-nums;line-height:1.1}' +
+      '.roundbar .rside.up .rv{color:#f2c063}' +
+      '.roundbar .rside.down .rv{color:#8a6a3a}' +
+      '.roundbar .rvs{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8a6a3a}' +
+      '.roundbar .rclock{margin-left:auto;font-size:20px;font-weight:800;color:#f5efe0;font-variant-numeric:tabular-nums}' +
+      '.roundbar .rclock.hot{color:#e0908a}' +
+      '.roundbar .cbtn{flex:0 0 auto;white-space:nowrap}' +
+      '@media(max-width:560px){.roundbar .rclock{margin-left:0}}' +
+      /* the same two stacks, big, on the table's own page */
+      '.compscore{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap}' +
+      '.compscore .cstack{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}' +
+      '.compscore .cstack b{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a;' +
+      'max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.compscore .cv{font-size:32px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums;line-height:1}' +
+      '.compscore .cvs{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a}' +
+      '.compscore.fin .cstack .cv{color:#8a6a3a}' +
+      '.compscore.fin .cstack.up .cv{color:#f2c063}' +
+      /* the floor, reprinted inside the round so the quick tables are one
+         click from the scoreboard rather than back through the lobby */
+      '.casmenu.comp{width:100%;grid-template-columns:repeat(4,1fr)}' +
+      '.casmenu.comp .casgame{min-height:92px;font-size:12px}' +
+      '@media(max-width:560px){.casmenu.comp{grid-template-columns:repeat(2,1fr)}}' +
       /* ---- the gear, and the settings page behind it ---- */
       '#choose{position:relative}' +
       '.gearbtn{position:absolute;top:16px;left:16px;width:40px;height:40px;padding:0;display:flex;align-items:center;justify-content:center;' +
@@ -633,7 +666,12 @@
       '[data-theme="dark"] .godimg{border-color:#5a5a68}' +
       '[data-theme="dark"] .godsub{color:#9a9aa6}' +
       '[data-theme="dark"] #casclaim{background:#5a5a68;color:#f2f2f6}' +
-      '[data-theme="dark"] .brokebar,[data-theme="dark"] .pitrow.mine{background:linear-gradient(135deg,#2e2e36,#1e1e23);border-color:#8b8b96}' +
+      '[data-theme="dark"] .brokebar,[data-theme="dark"] .roundbar,' +
+      '[data-theme="dark"] .pitrow.mine{background:linear-gradient(135deg,#2e2e36,#1e1e23);border-color:#8b8b96}' +
+      '[data-theme="dark"] .roundbar .rv,[data-theme="dark"] .compscore .cv{color:#c6c6d2}' +
+      '[data-theme="dark"] .roundbar .rside.up .rv,[data-theme="dark"] .compscore.fin .cstack.up .cv{color:#e8e8ec}' +
+      '[data-theme="dark"] .roundbar .rside.down .rv,[data-theme="dark"] .compscore.fin .cstack .cv{color:#8b8b96}' +
+      '[data-theme="dark"] .roundbar .rclock{color:#e8e8ec}' +
       '[data-theme="dark"] .brokebar h4{color:#e8e8ec}' +
       '[data-theme="dark"] .brokebar p,[data-theme="dark"] .pitrow p{color:#9a9aa6}' +
       '[data-theme="dark"] .pitblurb,[data-theme="dark"] .pitpot,[data-theme="dark"] .pitscore .sv,' +
@@ -669,7 +707,10 @@
       '[data-theme="dark"] .sethint,[data-theme="dark"] .setlock,[data-theme="dark"] .setfield>span,' +
       '[data-theme="dark"] .themecard .tnote,[data-theme="dark"] .pitsub,[data-theme="dark"] .pitscore .sl,' +
       '[data-theme="dark"] .pitpicked .pl,[data-theme="dark"] .pithist .phn,[data-theme="dark"] .pcut b,' +
-      '[data-theme="dark"] .pitvs .pvs,[data-theme="dark"] .origlead{color:#8b8b96}' +
+      '[data-theme="dark"] .pitvs .pvs,[data-theme="dark"] .roundbar .rtag,' +
+      '[data-theme="dark"] .roundbar .rside b,[data-theme="dark"] .roundbar .rvs,' +
+      '[data-theme="dark"] .compscore .cstack b,[data-theme="dark"] .compscore .cvs,' +
+      '[data-theme="dark"] .origlead{color:#8b8b96}' +
       '[data-theme="dark"] .pithist .phv,[data-theme="dark"] .stat span,[data-theme="dark"] .pcell span{color:#c6c6d2}' +
       '[data-theme="dark"] .pcell.gem span{color:#6ee787}';
 

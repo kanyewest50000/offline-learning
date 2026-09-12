@@ -931,13 +931,15 @@ async function allowGlobal(key: string, limit: number, windowMs: number): Promis
 const DUEL_OPEN_MS = Number(Deno.env.get("DUEL_OPEN_MS") || 10 * 60 * 1000);   // an open table nobody joins refunds itself
 const DUEL_CONFIRM_MS = Number(Deno.env.get("DUEL_CONFIRM_MS") || 10 * 1000);  // both players must confirm within this of the join
 const DUEL_MOVE_MS = Number(Deno.env.get("DUEL_MOVE_MS") || 30 * 1000);        // a player who does not move inside this forfeits the duel
+const DUEL_COMP_MS = Number(Deno.env.get("DUEL_COMP_MS") || 3 * 60 * 1000);    // how long a round of Competitive Gambling runs
+const DUEL_COMP_STACK = Number(Deno.env.get("DUEL_COMP_STACK") || 1000);       // clay each player is handed for it
 const DUEL_TTL = 24 * 60 * 60 * 1000;  // a finished record lingers a day so both sides can read it
 
 // KV:
 //   ["duel", id]    -> Duel
 //   ["duelof", uid] -> the id of the one duel that player is in (one at a time)
 
-type DuelSide = { id: string; name: string; confirmed: boolean; move: string | null; wins: number };
+type DuelSide = { id: string; name: string; confirmed: boolean; move: string | null; wins: number; chips: number };
 type CutCards = { host: string; guest: string; extra?: string[] };
 type Duel = {
   id: string;
@@ -971,6 +973,12 @@ function seatedPlayers(d: Duel): DuelSide[] {
 function findSide(d: Duel, uid: string): DuelSide | null {
   return seatedPlayers(d).find((p) => p.id === uid) ?? null;
 }
+// A side dealt before Competitive Gambling existed has no stack at all, and a
+// missing stack must read as nothing rather than as NaN — which would compare
+// false against every number and quietly make a player unbeatable.
+function chipsOf(p: DuelSide | null): number {
+  return p && Number.isFinite(p.chips) ? p.chips : 0;
+}
 function cutCardOf(d: Duel, i: number): string | null {
   if (!d.cards) return null;
   if (i === 0) return d.cards.host;
@@ -987,10 +995,13 @@ const DUEL_GAMES: Record<string, { name: string; moves: string[]; target: number
   tung: { name: "Tung, Wood, Fire", moves: ["tung", "wood", "fire"], target: 2 },
   // no moves at all: the server cuts the deck the moment both players confirm
   cut: { name: "The Cut", moves: [], target: 1 },
+  // no moves either: for three minutes the floor IS the game, and the stacks
+  // are the scoreboard. See the clay block further down.
+  comp: { name: "Competitive Gambling", moves: [], target: 1 },
 };
 
 function duelSide(u: { id: string; username: string }): DuelSide {
-  return { id: u.id, name: u.username, confirmed: false, move: null, wins: 0 };
+  return { id: u.id, name: u.username, confirmed: false, move: null, wins: 0, chips: 0 };
 }
 
 // What a player is allowed to see of a duel. Crucially it never ships the
@@ -1027,10 +1038,17 @@ function duelView(d: Duel, uid: string | null) {
     youConfirmed: you ? you.confirmed : false,
     theyConfirmed: them ? them.confirmed : false,
     theyMoved: them ? (open ? them.move !== null : false) : false,
+    // A move is hidden until the round resolves; a clay stack is the opposite —
+    // watching the other one climb or fall IS Competitive Gambling, so every
+    // stack at the table is public the whole way through.
+    stack: DUEL_COMP_STACK,
+    yourChips: chipsOf(you),
+    theirChips: chipsOf(them),
     players: people.map((p) => ({
       name: p.name,
       you: !!uid && p.id === uid,
       confirmed: p.confirmed,
+      chips: chipsOf(p),
     })),
     winner: d.winner,
     reason: d.reason,
@@ -1100,6 +1118,27 @@ function finishDuel(d: Duel, winnerId: string | null, reason: string): {
   return { next, credits };
 }
 
+// The biggest stack, or nobody. A dead heat has no winner to hand the pot to,
+// so it is not one: both stakes go home the same way an unconfirmed table's do.
+function topStack(people: DuelSide[]): DuelSide | null {
+  let best = -Infinity;
+  for (const p of people) best = Math.max(best, chipsOf(p));
+  const top = people.filter((p) => chipsOf(p) === best);
+  return top.length === 1 ? top[0] : null;
+}
+// How a round of Competitive Gambling ends. `among` narrows the field to the
+// players still standing — on a bust the player who ran out is not a candidate
+// for the pot even if everyone else is sitting on nothing.
+function compResult(d: Duel, reason: string, among?: DuelSide[]): {
+  next: Duel;
+  credits: { id: string; amount: number }[];
+} {
+  const people = seatedPlayers(d);
+  if (people.length < 2) return finishDuel(d, null, reason);
+  const w = topStack(among ?? people);
+  return w ? finishDuel(d, w.id, reason) : finishDuel(d, null, "draw");
+}
+
 // Deadlines are enforced lazily: nothing here runs on a timer, so every read of
 // a duel passes through this first and an overdue one settles on the spot. The
 // lobby sweeps open tables too, so an abandoned stake always finds its way home
@@ -1115,6 +1154,10 @@ async function sweepDuel(entry: Deno.KvEntryMaybe<Duel>): Promise<Deno.KvEntryMa
     } else if (d.state === "confirm") {
       // one side sat on their hands: nobody plays and nobody loses anything
       out = finishDuel(d, null, "unconfirmed");
+    } else if (d.game === "comp") {
+      // the buzzer. nothing to play out — the stacks have been the score all
+      // along, and the clock stopping is simply when they are read.
+      out = compResult(d, "clock");
     } else {
       // live: whoever failed to move forfeits. both asleep and it is a wash.
       const hostMoved = d.host.move !== null;
@@ -1150,6 +1193,138 @@ function cutDealFor(people: DuelSide[]): { cards: CutCards; winnerId: string } {
       winnerId: people[ranks.indexOf(hi)].id,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// CLAY — the money inside a round of Competitive Gambling.
+//
+// A round hands both players an identical stack of clay and, until the clock
+// stops, every wager on the floor comes out of that stack instead of their
+// sahurs. Clay is not sahurs and never becomes sahurs. It is handed out by the
+// round, spent against the house inside it, and swept when the round ends; the
+// only thing that crosses back is the pot, which is the two real stakes,
+// escrowed before the round began and released by the same commitDuel() every
+// other table in the pit pays through. So three minutes of this cannot move a
+// sahur in either direction, and a player who finds a way to print clay has
+// printed something that expires in under three minutes and buys nothing.
+//
+// WHICH purse a wager rides on is the server's to decide and is read off the
+// player's own duel lock on every bet — there is no "demo mode" flag a client
+// could send, so a wager cannot be aimed at the cheap money, and one cannot be
+// aimed at somebody's sahurs from inside a round either.
+const CLAY_SLOW = "not in a round. the quick tables only \u2014 dice, limbo, roulette and plinko.";
+const CLAY_OVER = "the clock stopped. that round is over.";
+
+// The live round this player is inside, or null. loadDuel() sweeps first, so a
+// round whose three minutes are up settles HERE — before the wager that would
+// otherwise have landed inside it.
+async function liveComp(uid: string): Promise<Duel | null> {
+  const lock = await kv.get<string>(["duelof", uid]);
+  if (!lock.value) return null;
+  const d = (await loadDuel(lock.value)).value;
+  if (!d || d.settled || d.game !== "comp" || d.state !== "live") return null;
+  return d;
+}
+
+// Move clay in a live round. `delta` may be negative (a wager) and a stack may
+// never go below zero. `last` marks the move that closes a wager out — only
+// then can an empty stack mean the player is done, because a bet is debited
+// before it is paid and so every winning bet passes through zero on its way.
+async function chipMove(duelId: string, uid: string, delta: number, last: boolean): Promise<
+  { chips: number; over: boolean } | "insufficient" | "over"
+> {
+  if (!Number.isFinite(delta)) return "over";
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const entry = await loadDuel(duelId);
+    const d = entry.value;
+    if (!d || d.settled || d.game !== "comp" || d.state !== "live") return "over";
+    const next: Duel = {
+      ...d,
+      host: { ...d.host },
+      guest: d.guest ? { ...d.guest } : null,
+      extra: extraOf(d).map((x) => ({ ...x })),
+    };
+    const me = findSide(next, uid);
+    if (!me) return "over";
+    const was = chipsOf(me);
+    const nb = round2(was + delta);
+    if (!Number.isFinite(nb)) return "over";
+    if (nb < -1e-9) return "insufficient";
+    me.chips = Math.max(0, nb);
+    // a player with nothing left has nothing left to play with, so the round
+    // ends the moment their last chip goes rather than running out a clock
+    // neither of them can do anything with.
+    const bust = last && me.chips <= 0;
+    if (!bust && me.chips === was) return { chips: was, over: false };
+    let credits: { id: string; amount: number }[] = [];
+    if (bust) {
+      const out = compResult(next, "bust", seatedPlayers(next).filter((x) => x.id !== uid));
+      credits = out.credits;
+      Object.assign(next, out.next);
+    }
+    if (await commitDuel(entry, next, credits)) return { chips: me.chips, over: bust };
+  }
+  return "over";
+}
+
+// The purse a wager on the floor comes out of. Outside a round that is the
+// player's sahurs; inside one it is their clay and their sahurs are left
+// exactly where they are. Every table asks it the same two things, so the games
+// below are written once and never learn which purse answered.
+type Purse = {
+  clay: boolean;
+  bal: number;    // the player's sahurs. a round never moves this.
+  left: number;   // clay after the last move
+  over: boolean;  // that wager was the last one — the round has settled
+  take(amount: number): Promise<string>;  // "" or the error to hand back
+  give(payout: number): Promise<void>;    // pay a win; 0 is a legal payout
+};
+// `want` is the round the CLIENT believes it is betting into. A wager somebody
+// meant as clay must never quietly land on their sahurs because the buzzer went
+// while they were reaching for the button, so naming a round that is no longer
+// live refuses the bet instead of re-aiming it. Note which way this points: it
+// can only ever stop a wager. Which purse a wager rides on is still read off
+// the duel lock, so naming a round cannot send a bet to the cheap money, and
+// naming none cannot send one to somebody's sahurs from inside a round.
+async function purseFor(uid: string, want?: unknown): Promise<Purse> {
+  const round = await liveComp(uid);
+  const id = round ? round.id : "";
+  const meant = typeof want === "string" ? clip(want, 32) : "";
+  const p: Purse = {
+    clay: !!round,
+    bal: 0,
+    left: round ? chipsOf(findSide(round, uid)) : 0,
+    over: false,
+    async take(amount) {
+      if (meant && meant !== id) { p.over = true; return CLAY_OVER; }
+      if (!id) return (await adjustBalance(uid, -amount)) === null ? "insufficient" : "";
+      const r = await chipMove(id, uid, -amount, false);
+      if (r === "insufficient") return "insufficient";
+      if (r === "over") { p.over = true; return CLAY_OVER; }
+      p.left = r.chips;
+      return "";
+    },
+    async give(payout) {
+      if (!id) {
+        const nb = payout > 0 ? await adjustBalance(uid, payout) : null;
+        p.bal = round2(nb ?? (await getCas(uid)).bal);
+        return;
+      }
+      // the buzzer can go while a bet is in the air. the clay it would have
+      // paid is swept with the rest of it; the sahurs were never in play.
+      const r = await chipMove(id, uid, payout, true);
+      if (r === "over") p.over = true;
+      else if (r !== "insufficient") { p.left = r.chips; p.over = r.over; }
+      p.bal = round2((await getCas(uid)).bal);
+    },
+  };
+  return p;
+}
+// What a table says about the purse it just played out of. `balance` stays the
+// player's sahurs on every reply in the casino, round or no round, so the
+// number in the header is never once a lie.
+function purseJson(p: Purse) {
+  return p.clay ? { clay: round2(p.left), roundOver: p.over } : {};
 }
 
 const listenPort = Number(Deno.env.get("PORT") || "8000") || 8000;
@@ -1521,6 +1696,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       ok: true, balance: round2(c.bal), open, mine, now: Date.now(),
       games: Object.keys(DUEL_GAMES).map((k) => ({ id: k, name: DUEL_GAMES[k].name })),
       openMs: DUEL_OPEN_MS, confirmMs: DUEL_CONFIRM_MS, moveMs: DUEL_MOVE_MS,
+      compMs: DUEL_COMP_MS, compStack: DUEL_COMP_STACK,
     });
   }
 
@@ -1669,6 +1845,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         done.next.cards = cut.cards;
         credits = done.credits;
         Object.assign(next, done.next);
+      } else if (allIn && d.game === "comp") {
+        // three minutes on the clock and a stack of clay each, dealt in the
+        // same commit as the last yes so nobody starts a tick early
+        next.state = "live";
+        next.deadline = Date.now() + DUEL_COMP_MS;
+        for (const pl of seatedPlayers(next)) pl.chips = DUEL_COMP_STACK;
       } else if (allIn) {
         next.state = "live";
         next.deadline = Date.now() + DUEL_MOVE_MS;
@@ -2092,12 +2274,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/cas/me") {
     const u = await casUser(url.searchParams.get("token"));
     if (!u) return json({ error: "unauthorized" }, 401);
+    // ask about the round FIRST: it may be overdue, and settling it pays a pot
+    // that the balance below has to already know about
+    const round = await liveComp(u.id);
     const c = await getCas(u.id);
     const next = c.lastClaim + FAUCET_INTERVAL;
     return json({
       username: u.username, balance: round2(c.bal),
       canClaim: Date.now() >= next, nextClaim: c.lastClaim ? next : 0,
       faucetAmount: FAUCET_AMOUNT, faucetInterval: FAUCET_INTERVAL,
+      round: round ? duelView(round, u.id) : null,
     });
   }
 
@@ -2184,14 +2370,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // winning span as a percentage of the 0–100 roll range
     const chance = over ? 100 - target : target;
     if (!(chance >= 2 && chance <= 98)) return json({ error: "bad target" }, 400);
-    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const purse = await purseFor(u.id, b.round);
+    const no = await purse.take(bet);
+    if (no) return json({ error: no }, no === "insufficient" ? 402 : 409);
     const roll = round2(rnd() * 100);
     const win = over ? roll > target : roll < target;
     const exact = (100 / chance) * HOUSE;
     const mult = win ? round2(exact) : 0;
     const payout = win ? payoutOf(bet, exact) : 0;
-    const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
-    return json({ ok: true, roll, target, over, chance, win, multiplier: mult, payout, balance: round2(bal!) });
+    await purse.give(payout);
+    return json({ ok: true, roll, target, over, chance, win, multiplier: mult, payout, balance: purse.bal, ...purseJson(purse) });
   }
 
   // ---------- LIMBO — instant ----------
@@ -2204,7 +2392,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const target = round2(Number(b.target)); // desired cash-out multiplier
     if (!(target >= 1.01 && target <= 1000000)) return json({ error: "target 1.01–1e6" }, 400);
-    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const purse = await purseFor(u.id, b.round);
+    const no = await purse.take(bet);
+    if (no) return json({ error: no }, no === "insufficient" ? 402 : 409);
     // crash point c with P(c >= t) = HOUSE/t  → fair, 0.1% edge. The win MUST be
     // decided on the exact crash: comparing the 2dp-rounded value let a 1.996
     // round up to 2.00 and clear a 2.00 target it should have missed, which
@@ -2215,8 +2405,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const win = crashExact >= target;
     const crash = floor2(crashExact);
     const payout = win ? payoutOf(bet, target) : 0;
-    const bal = win ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
-    return json({ ok: true, crash, target, win, multiplier: win ? target : 0, payout, balance: round2(bal!) });
+    await purse.give(payout);
+    return json({ ok: true, crash, target, win, multiplier: win ? target : 0, payout, balance: purse.bal, ...purseJson(purse) });
   }
 
   // ---------- ROULETTE (European single-zero) — instant ----------
@@ -2246,10 +2436,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     else if (kind === "dozen") { if (!(val >= 1 && val <= 3)) return json({ error: "dozen 1–3" }, 400); won = !zero && Math.ceil(spin / 12) === val; mult = 3; }
     else if (kind === "column") { if (!(val >= 1 && val <= 3)) return json({ error: "column 1–3" }, 400); won = !zero && spin % 3 === (val % 3); mult = 3; }
     else return json({ error: "bad kind" }, 400);
-    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const purse = await purseFor(u.id, b.round);
+    const no = await purse.take(bet);
+    if (no) return json({ error: no }, no === "insufficient" ? 402 : 409);
     const payout = won ? payoutOf(bet, mult) : 0;
-    const bal = won ? await adjustBalance(u.id, payout) : (await getCas(u.id)).bal;
-    return json({ ok: true, spin, color: zero ? "green" : (isRed ? "red" : "black"), win: won, multiplier: won ? mult : 0, payout, balance: round2(bal!) });
+    await purse.give(payout);
+    return json({ ok: true, spin, color: zero ? "green" : (isRed ? "red" : "black"), win: won, multiplier: won ? mult : 0, payout, balance: purse.bal, ...purseJson(purse) });
   }
 
   // ---------- PLINKO — instant ----------
@@ -2265,15 +2457,17 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const riskTab = pick(PLINKO, risk);
     const table = riskTab ? pick(riskTab, rows) : null;
     if (!table) return json({ error: "rows 8/12/16, risk low/medium/high" }, 400);
-    if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
+    const purse = await purseFor(u.id, b.round);
+    const no = await purse.take(bet);
+    if (no) return json({ error: no }, no === "insufficient" ? 402 : 409);
     const path2: number[] = [];
     let bucket = 0;
     for (let i = 0; i < rows; i++) { const r = rnd() < 0.5 ? 1 : 0; path2.push(r); bucket += r; }
     // correct the raw table to exactly HOUSE (risk/rows validated above)
     const exact = table[bucket] * PLINKO_CORR[risk][rows];
     const payout = payoutOf(bet, exact);
-    const bal = await adjustBalance(u.id, payout);
-    return json({ ok: true, path: path2, bucket, multiplier: round2(exact), payout, balance: round2(bal!) });
+    await purse.give(payout);
+    return json({ ok: true, path: path2, bucket, multiplier: round2(exact), payout, balance: purse.bal, ...purseJson(purse) });
   }
 
   // ---------- BLACKJACK (start / hit / stand / double) ----------
@@ -2284,6 +2478,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
+    // a hand can outlive the buzzer, and a player sitting on one is not out of
+    // clay however empty their stack reads — a round deals the quick tables only
+    if (await liveComp(u.id)) return json({ error: CLAY_SLOW }, 409);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     const player = [drawCard(), drawCard()];
     const dealer = [drawCard(), drawCard()];
@@ -2369,6 +2566,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const count = Math.floor(Number(b.mines));
     if (!(count >= 1 && count <= 24)) return json({ error: "mines 1–24" }, 400);
+    if (await liveComp(u.id)) return json({ error: CLAY_SLOW }, 409);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     // choose `count` distinct mine cells out of 25
     const cells = [...Array(25).keys()];
@@ -2436,6 +2634,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const diff = clip(b.difficulty, 10);
     const cfg = pick(BEEF, diff);
     if (!cfg) return json({ error: "difficulty easy/medium/hard/daredevil" }, 400);
+    if (await liveComp(u.id)) return json({ error: CLAY_SLOW }, 409);
     if (await adjustBalance(u.id, -bet) === null) return json({ error: "insufficient" }, 402);
     // pre-roll the death lane NOW so the outcome is fixed server-side and the
     // client cannot influence any step. deathStep = first lane the chicken dies on.

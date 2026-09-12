@@ -9,7 +9,7 @@
 // Run the app with short duel clocks so the ten-minute and ten-second waits
 // happen in a second:
 //   ADMIN_KEY=devadminkey DUEL_OPEN_MS=1200 DUEL_CONFIRM_MS=1200 DUEL_MOVE_MS=1200 \
-//     deno run --allow-net --allow-env --unstable-kv server.ts
+//     DUEL_COMP_MS=1200 deno run --allow-net --allow-env --unstable-kv server.ts
 //   ADMIN_KEY=devadminkey API=... deno run --allow-net --allow-env --allow-read scripts/test-duel.ts
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
@@ -18,6 +18,7 @@ const ADMIN = Deno.env.get("ADMIN_KEY") || "devadminkey";
 const OPEN_MS = Number(Deno.env.get("DUEL_OPEN_MS") || 1200);
 const CONFIRM_MS = Number(Deno.env.get("DUEL_CONFIRM_MS") || 1200);
 const MOVE_MS = Number(Deno.env.get("DUEL_MOVE_MS") || 1200);
+const COMP_MS = Number(Deno.env.get("DUEL_COMP_MS") || 1200);
 
 function must(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
@@ -44,6 +45,16 @@ must(/if \(ranks\.filter\(\(r\) => r === hi\)\.length !== 1\) continue/.test(src
   "a high-card tie must be re-cut at any table size, not split or pushed");
 must(/if \(entry\.value\?\.settled\) return false;/.test(src),
   "commitDuel must refuse to pay a duel that is already settled");
+// Competitive Gambling mints a few thousand clay per round. None of it may ever
+// reach a balance, and which purse a wager rides on is never the client's call.
+must([...src.matchAll(/await purseFor\(u\.id, b\.round\)/g)].length === 4,
+  "dice, limbo, roulette and plinko must all take their wager from the purse");
+must(/async function liveComp\(/.test(src) && /kv\.get<string>\(\["duelof", uid\]\)/.test(src),
+  "the purse must be read off the player's own duel lock, not off the request");
+must(/if \(meant && meant !== id\) \{ p\.over = true; return CLAY_OVER; \}/.test(src),
+  "naming a round that is not live must refuse a wager rather than re-aim it at sahurs");
+must(/const bust = last && me\.chips <= 0;/.test(src),
+  "an empty stack may only end a round once the wager that emptied it has been paid");
 // every release of the escrow has to ride the same guarded commit
 const commits = [...src.matchAll(/kv\.atomic\(\)/g)].length;
 must(commits > 0, "no atomic commits found at all — did the file move?");
@@ -517,8 +528,149 @@ await conserved(A.token, B.token, "a full duel", async () => {
     "an expired filling cut must refund every seated stake once");
 }
 
+// ---------------------------------------------------------------------------
+// 7. COMPETITIVE GAMBLING. Two stakes in, a stack of clay each, and for three
+//    minutes the floor decides it. Everything above is about one pot being
+//    paid exactly once, and that still has to hold here. What is new is the
+//    other half: a round MINTS a few thousand of something out of nothing, so
+//    if any of it could reach a balance the pit would be a printing press.
+//    Nothing below ever lets it: the clay moves, the sahurs do not, and the
+//    only thing that crosses at the end is the pot that went in.
+{
+  const M = await member("cmpM"), N = await member("cmpN");
+  const lobby = (await j("/duel/list?token=" + encodeURIComponent(M.token))).body;
+  const STACK = Number(lobby.compStack);
+  must(STACK > 0, "the lobby must say what a round is played with");
+  must((lobby.games || []).some((g: { id: string }) => g.id === "comp"),
+    "Competitive Gambling must be on offer in the pit");
+
+  // open a round and get both players into it
+  async function live(bet: number): Promise<string> {
+    const id = await table(M.token, "comp", bet);
+    must((await post("/duel/join", { token: N.token, id })).body?.ok === true, "nobody could sit down");
+    await post("/duel/confirm", { token: M.token, id });
+    const go = await post("/duel/confirm", { token: N.token, id });
+    must(go.body?.duel?.state === "live", "two yeses must start the round: " + JSON.stringify(go.body));
+    must(go.body.duel.yourChips === STACK && go.body.duel.theirChips === STACK,
+      "both players must start a round on the same clay");
+    return id;
+  }
+  const dice = (t: string, bet: number, id?: string) =>
+    post("/cas/dice", { token: t, bet, target: 50, over: false, ...(id ? { round: id } : {}) });
+  // a limbo target that high comes in about once in a million, so a stake put
+  // on it is a loss you can write a test around
+  const sink = (t: string, bet: number, id: string) =>
+    post("/cas/limbo", { token: t, bet, target: 1000000, round: id });
+
+  // -- inside a round the floor spends clay, and only clay
+  {
+    await fund(M, 100); await fund(N, 100);
+    const id = await live(5);
+    must((await bal(M.token)) === 95 && (await bal(N.token)) === 95,
+      "a round holds its stakes like any other table");
+    const r = await dice(M.token, 10, id);
+    must(r.body?.ok === true, "a wager inside a round must play: " + JSON.stringify(r.body));
+    must(typeof r.body.clay === "number", "and must answer in clay");
+    must(r.body.balance === 95, "and must not touch a single sahur");
+    must((await bal(M.token)) === 95, "nor may the balance have moved behind the reply");
+    // not naming the round is not a way to bet the good money instead
+    const quiet = await dice(M.token, 10);
+    must(quiet.body?.ok === true && typeof quiet.body.clay === "number" && quiet.body.balance === 95,
+      "a wager that names no round must still come out of the clay");
+    // and the other player watches the stack move in real time
+    const seen = await j("/duel/state?token=" + encodeURIComponent(N.token) + "&id=" + id);
+    must(seen.body.duel.theirChips === quiet.body.clay,
+      "the opponent must see the live stack: " + seen.body.duel.theirChips + " vs " + quiet.body.clay);
+    must(seen.body.duel.yourChips === STACK, "and their own, untouched");
+    // a hand, a board or a walk can outlive the buzzer, so a round does not deal them
+    for (const slow of [
+      { path: "/cas/bj/start", body: { token: M.token, bet: 1 } },
+      { path: "/cas/mines/start", body: { token: M.token, bet: 1, mines: 3 } },
+      { path: "/cas/beef/start", body: { token: M.token, bet: 1, difficulty: "easy" } },
+    ]) {
+      const no = await post(slow.path, slow.body);
+      must(no.status === 409, slow.path + " must be refused inside a round");
+      must((await bal(M.token)) === 95, slow.path + " must not have charged anything");
+    }
+    await sleep(COMP_MS + 400);
+    await j("/duel/state?token=" + encodeURIComponent(M.token) + "&id=" + id);
+    must(money((await bal(M.token)) + (await bal(N.token))) === 200,
+      "a whole round of wagering must leave the two balances adding up to what went in");
+  }
+
+  // -- the buzzer pays the bigger pile, once, however many readers hear it
+  {
+    await fund(M, 100); await fund(N, 100);
+    const id = await live(6);
+    const down = await sink(N.token, 100, id);
+    must(down.body?.ok === true && down.body.clay === money(STACK - 100),
+      "a lost wager must cost exactly its stake in clay");
+    await sleep(COMP_MS + 400);
+    await Promise.all(new Array(12).fill(0).map(() =>
+      j("/duel/state?token=" + encodeURIComponent(M.token) + "&id=" + id)
+    ));
+    const st = await j("/duel/state?token=" + encodeURIComponent(M.token) + "&id=" + id);
+    must(st.body.duel.reason === "clock", "a round that runs its clock out must end on the clock");
+    must(st.body.duel.winner === M.name, "the bigger pile must take the pot");
+    must((await bal(M.token)) === 106 && (await bal(N.token)) === 94,
+      "the pot must be paid exactly once: " + (await bal(M.token)) + " / " + (await bal(N.token)));
+  }
+
+  // -- nobody ahead is nobody's pot
+  {
+    await fund(M, 100); await fund(N, 100);
+    const id = await live(9);
+    await sleep(COMP_MS + 400);
+    await Promise.all(new Array(8).fill(0).map(() =>
+      j("/duel/state?token=" + encodeURIComponent(N.token) + "&id=" + id)
+    ));
+    const st = await j("/duel/state?token=" + encodeURIComponent(N.token) + "&id=" + id);
+    must(st.body.duel.reason === "draw" && st.body.duel.winner === null,
+      "two untouched stacks are a dead heat, not a win");
+    must((await bal(M.token)) === 100 && (await bal(N.token)) === 100,
+      "a dead heat must send both stakes home exactly once");
+  }
+
+  // -- the last chip ends it there and then
+  {
+    await fund(M, 100); await fund(N, 100);
+    const id = await live(8);
+    const bust = await sink(N.token, STACK, id);
+    must(bust.body?.ok === true, "the whole stack must be stakeable");
+    must(bust.body.clay === 0 && bust.body.roundOver === true,
+      "running the clay out must end the round on the spot");
+    const st = await j("/duel/state?token=" + encodeURIComponent(M.token) + "&id=" + id);
+    must(st.body.duel.state === "done" && st.body.duel.reason === "bust", "and must read as a bust");
+    must(st.body.duel.winner === M.name, "the pot goes to the one still standing");
+    must((await bal(M.token)) === 108 && (await bal(N.token)) === 92,
+      "a bust must pay the pot exactly once: " + (await bal(M.token)) + " / " + (await bal(N.token)));
+    // and with the round done the floor takes sahurs again
+    const after = await dice(M.token, 1);
+    must(after.body?.ok === true && after.body.clay === undefined,
+      "once a round is over the floor must be back on sahurs");
+    must((await bal(M.token)) !== 108, "and that wager must have moved the balance");
+  }
+
+  // -- a wager aimed at a round that has stopped is refused, never re-aimed.
+  //    This is the one that would hurt: a player mid-round clicks roll, the
+  //    buzzer went a moment ago, and without this their clay bet lands on the
+  //    sahurs they have been keeping out of it all along.
+  {
+    await fund(M, 100); await fund(N, 100);
+    const id = await live(4);
+    await sleep(COMP_MS + 400);
+    await j("/duel/state?token=" + encodeURIComponent(M.token) + "&id=" + id);
+    const held = await bal(M.token);
+    const late = await dice(M.token, 25, id);
+    must(late.status === 409 && late.body?.ok !== true, "a wager naming a dead round must be refused");
+    must((await bal(M.token)) === held,
+      "and must never land on sahurs instead: " + held + " -> " + (await bal(M.token)));
+  }
+}
+
 console.log(
   "the pit: stakes escrowed on commit and released exactly once — cancel, expiry, " +
     "unconfirmed, forfeit, double-forfeit and a played hand all pay once; seat races " +
-    "debit one player; no rake, no minting, no double refunds; the cut seats 2, 3 or 4",
+    "debit one player; no rake, no minting, no double refunds; the cut seats 2, 3 or 4; " +
+    "and a round of Competitive Gambling spends clay that never touches a balance",
 );

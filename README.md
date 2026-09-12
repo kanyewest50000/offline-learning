@@ -55,10 +55,11 @@ number on a reaction chip can be set by whoever sent the request.
 
 ## the pit
 
-Two tables in the casino where the opponent is another member rather than the
+Three tables in the casino where the opponent is another member rather than the
 house: **Tung, Wood, Fire** (tung splits the wood, the wood feeds the fire, the
-fire takes tung — first to two rounds, a tie is replayed) and **The Cut** (one
-card each, high card takes it).
+fire takes tung — first to two rounds, a tie is replayed), **The Cut** (one
+card each, high card takes it) and **Competitive Gambling** (three minutes on
+the casino floor, a stack of clay each, biggest pile at the buzzer).
 
 A round of Tung, Wood, Fire is two hidden picks resolving into one outcome, and
 it is shown as exactly that: the two moves slide in from opposite sides onto the
@@ -69,6 +70,33 @@ is the wait: the deck is cut, your card stirs and turns over slowly, and you sit
 with it for three full seconds while theirs shivers under a sheen before it
 turns. The result is held behind the second card, because knowing it early is
 the one thing that would make the pause worthless.
+
+Competitive Gambling is the one where the pit is not the game. Both players are
+handed the same stack of clay and turned loose on the floor for three minutes,
+and whoever is sitting on the bigger pile when the clock stops takes the pot.
+Run the clay out and the round ends there and then — there is nothing left to
+play with, so there is nothing left to wait for. A dead heat is nobody's win and
+both stakes go home.
+
+Clay is not sahurs and never becomes sahurs. It is handed out by the round,
+spent against the house inside it, and swept when the round ends; the only thing
+that crosses back is the pot, which is the two real stakes and was escrowed
+before the round began, so three minutes of this cannot move a sahur in either
+direction. Which purse a wager comes out of is read off the player's own duel
+lock on every bet rather than sent with it, so a wager cannot be aimed at the
+cheap money — and one cannot be aimed at somebody's sahurs from inside a round
+either. A bet does name the round it believes it is in, but that can only ever
+refuse a wager: it is there so a roll meant as clay does not land on real sahurs
+because the buzzer went while the player was reaching for the button. A round
+deals the quick tables only — dice, limbo, roulette, plinko — because a hand of
+blackjack can outlive the buzzer, and a player still holding one is not out of
+clay however empty their stack reads.
+
+The round follows the player rather than waiting on the table's page: a strip
+over every casino screen carries both stacks and the clock, both live, and the
+result finds them wherever in the casino they are standing when it stops. The
+header keeps showing sahurs the whole time, because that number is never once a
+lie.
 
 Opening a table takes you to its own page, and the way to take it down is on
 that page: a countdown to when it closes itself and a button that hands the
