@@ -3325,7 +3325,7 @@ function dumpChat(){
       var el=document.createElement("div");el.className="app";
       var h=document.createElement("h3");h.textContent=m.name||"";
       if(m.from==="tung"){var tg=document.createElement("span");tg.className="tungtag";tg.textContent="the shrine";h.appendChild(tg);el.classList.add("tungline");}
-      if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();h.appendChild(tm);}
+      if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=" · "+new Date(m.ts).toLocaleString();h.appendChild(tm);}
       el.appendChild(h);
       if(m.reply&&m.reply.text){
         var rp=document.createElement("small");rp.textContent="reply to "+(m.reply.name||"")+" — "+m.reply.text;el.appendChild(rp);
