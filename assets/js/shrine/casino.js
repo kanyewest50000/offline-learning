@@ -276,9 +276,8 @@
       if(!text||!ROUND.live)return;
       inp.value="";TALK.draft="";
       send.disabled=true;
-      jpost("/duel/say",{id:ROUND.live.id,text:text}).then(function(d){
+      jpost("/duel/say",{id:ROUND.live.id,text:text}).then(function(d){if(refused(d)){refusedGate();return;}
         send.disabled=false;
-        if(refused(d)){refusedGate();return;}
         if(d&&d.talk)talkSync(d.talk);
       }).catch(function(){send.disabled=false;});
     });
@@ -878,19 +877,29 @@
     var r=res(v);
     var go=el("button","cbtn go","drop");v.appendChild(go);
 
-    var W=300,ball=null,svg=null,cx=W/2,bw=0,rowH=0,topY=22,R=12;
+    /* ---- the board ----
+       One fixed-width box holds the pegs and the buckets, so a ball's landing x
+       and a bucket's centre are measured on the same scale. A ball that has
+       taken k hops sits at x = cx + (2*rights - k)*bw/2, and after the last row
+       that works out to exactly (bucket + 0.5)*bw, the centre of its bucket. */
+    var W=300,svg=null,cx=W/2,bw=0,rowH=0,topY=22,R=12,PEGS=[],ballLayer=null;
     function build(){
       R=Number(rows.value);bw=W/(R+1);rowH=Math.min(20,240/R);
-      var H=topY+R*rowH+14;
-      boardWrap.innerHTML="";
+      var H=topY+R*rowH+20;
+      boardWrap.innerHTML="";PEGS=[];BALLS=[];
       // no width/height attributes: CSS gives it width:100%;height:auto so the
       // viewBox scales uniformly to the shared board width (x maps 1:1 to buckets)
       svg=sv("svg",{viewBox:"0 0 "+W+" "+H,preserveAspectRatio:"xMidYMid meet"});
-      for(var rr=0;rr<R;rr++)for(var i=0;i<=rr;i++){
-        svg.appendChild(sv("circle",{cx:cx+(i-rr/2)*bw,cy:topY+rr*rowH,r:2.2,fill:"#7a5a1a"}));
+      for(var rr=0;rr<R;rr++){
+        PEGS[rr]=[];
+        for(var i=0;i<=rr;i++){
+          var peg=sv("circle",{cx:cx+(i-rr/2)*bw,cy:topY+rr*rowH,r:2.2,fill:"#7a5a1a"});
+          svg.appendChild(peg);PEGS[rr][i]=peg;
+        }
       }
-      ball=sv("circle",{cx:cx,cy:6,r:4.5,fill:"#f2c063",stroke:"#1d1206","stroke-width":"1"});
-      svg.appendChild(ball);
+      /* the balls go in a layer above the pegs, so one is never swallowed by a
+         peg it is bouncing off */
+      ballLayer=sv("g",{});svg.appendChild(ballLayer);
       boardWrap.appendChild(svg);
       var tab=TABLES[risk.value][R];
       buckets.innerHTML="";
@@ -900,32 +909,128 @@
         buckets.appendChild(b);
       });
     }
+
+    /* ---- the fall ----
+       Where a ball ends up is the server's: its path is a left or a right per row
+       and the ball has to land on the bucket they add up to. Everything here is
+       about making the fall look like one, and none of it can move the landing:
+       the waypoints are computed straight from that path, and the animation
+       only decides how long the ball takes to get between them.
+
+       Each hop is one peg row. The ball slides across at a steady rate, falls
+       with y going as t squared so it accelerates the way a dropped thing does,
+       and kicks a little off the peg it just clipped. That kick is what reads
+       as a bounce rather than a bead running down a wire. */
+    var HOP_MS=115, POP=0.34, MAX_BALLS=8;
+    var BALLS=[],raf=null,flying=0,issued=0,applied=0,pending=null;
+    function pegFlash(rr,i){
+      var peg=PEGS[rr]&&PEGS[rr][i];
+      if(!peg)return;
+      peg.setAttribute("fill","#f2c063");peg.setAttribute("r","3.2");
+      setTimeout(function(){peg.setAttribute("fill","#7a5a1a");peg.setAttribute("r","2.2");},150);
+    }
+    /* every point the ball passes through, worked out from the server's path
+       before a single frame is drawn: waypoint k is the peg it clips on row k,
+       and the last one is the floor of the bucket it belongs in */
+    function wayPoints(path){
+      var pts=[],rights=0,k;
+      for(k=0;k<=path.length;k++){
+        pts.push({x:cx+(2*rights-k)*bw/2,y:topY+k*rowH,peg:k<path.length?rights:-1,row:k});
+        if(k<path.length)rights+=path[k];
+      }
+      var last=pts[pts.length-1];
+      pts.push({x:last.x,y:last.y+14,peg:-1,row:-1});   // into the bucket
+      return {pts:pts,bucket:rights};
+    }
+    function spawn(d){
+      var w=wayPoints(d.path);
+      var node=sv("circle",{cx:w.pts[0].x,cy:w.pts[0].y-rowH*1.6,r:4.5,fill:"#f2c063",stroke:"#1d1206","stroke-width":"1"});
+      ballLayer.appendChild(node);
+      BALLS.push({
+        d:d,node:node,pts:w.pts,bucket:w.bucket,i:0,
+        x0:w.pts[0].x,y0:w.pts[0].y-rowH*1.6,t0:0,done:false
+      });
+      flying++;
+      if(!raf)raf=requestAnimationFrame(tick);
+    }
+    function land(b){
+      b.done=true;
+      var bel=buckets.children[b.bucket];
+      if(bel){bel.classList.add("hit");setTimeout(function(){bel.classList.remove("hit");},420);}
+      if(b.node.parentNode)b.node.parentNode.removeChild(b.node);
+      var d=b.d;
+      flying--;
+      /* the balance is whichever answer the server issued LAST, not whichever
+         ball landed last: two drops in the air can come back out of order */
+      if(d.seq>applied){applied=d.seq;setBal(d.balance);}
+      if(!pending||d.seq>=pending.seq)pending=d;
+      /* a wager is not over until the table has finished showing it, and with
+         several in the air that is when the last of them lands */
+      if(flying<=0){
+        if(pending){roundSaw(pending);pending=null;}
+        rows.disabled=false;risk.disabled=false;
+      }
+      if(d.multiplier>1){ok(r,"landed "+mult(d.multiplier));celebrate(d.payout,d.multiplier);}
+      else bad(r,"landed "+mult(d.multiplier)+"  (+"+money(d.payout)+")");
+    }
+    function tick(now){
+      raf=null;
+      var alive=false;
+      for(var n=0;n<BALLS.length;n++){
+        var b=BALLS[n];
+        if(b.done)continue;
+        if(!b.t0)b.t0=now;
+        var to=b.pts[b.i];
+        var t=(now-b.t0)/HOP_MS;
+        if(t>=1){
+          b.node.setAttribute("cx",to.x);b.node.setAttribute("cy",to.y);
+          if(to.peg>=0)pegFlash(to.row,to.peg);
+          b.x0=to.x;b.y0=to.y;b.t0=now;b.i++;
+          if(b.i>=b.pts.length){land(b);continue;}
+          t=0;
+          to=b.pts[b.i];
+        }
+        /* x slides across at a steady rate; y goes as t squared, so the ball
+           accelerates downward; the sine term is the kick off the peg */
+        var x=b.x0+(to.x-b.x0)*t;
+        var y=b.y0+(to.y-b.y0)*t*t-Math.sin(Math.PI*t)*rowH*POP*(1-t*0.45);
+        b.node.setAttribute("cx",x);b.node.setAttribute("cy",y);
+        alive=true;
+      }
+      BALLS=BALLS.filter(function(x){return !x.done;});
+      if(alive||BALLS.length)raf=requestAnimationFrame(tick);
+    }
+
     rows.onchange=build;risk.onchange=build;build();
 
     go.onclick=function(){
-      go.disabled=true;r.className="casres";r.textContent="";
-      Array.prototype.forEach.call(buckets.children,function(b){b.classList.remove("hit");});
+      /* the board takes several balls at once, so the button does not lock —
+         it only refuses to put up more than can be read at a glance */
+      if(BALLS.length>=MAX_BALLS){bad(r,"let a few of those land first.");return;}
+      r.className="casres";r.textContent="";
+      /* the row and risk pickers rebuild the board, which would strand a ball
+         mid-air, so they are held while any is falling */
+      rows.disabled=true;risk.disabled=true;
       roundBet(bet.value);
-      jpost("/cas/plinko",wager({bet:Number(bet.value),risk:risk.value,rows:R})).then(function(d){if(refused(d)){refusedGate();return;}
-        if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
-        var rights=0,k=0;
-        ball.setAttribute("cx",cx);ball.setAttribute("cy",6);
-        function stepDown(){
-          if(k>=d.path.length){
-            var bel=buckets.children[rights];if(bel)bel.classList.add("hit");
-            go.disabled=false;setBal(d.balance);roundSaw(d);
-            if(d.multiplier>1){ok(r,"landed "+mult(d.multiplier));celebrate(d.payout,d.multiplier);}
-            else bad(r,"landed "+mult(d.multiplier)+"  (+"+money(d.payout)+")");
-            return;
-          }
-          rights+=d.path[k];k++;
-          ball.setAttribute("cx",cx+(2*rights-k)*bw/2);
-          ball.setAttribute("cy",topY+k*rowH);
-          setTimeout(stepDown,Math.max(40,320/R));
+      var seq=++issued, drop=R;
+      jpost("/cas/plinko",wager({bet:Number(bet.value),risk:risk.value,rows:drop})).then(function(d){if(refused(d)){refusedGate();return;}
+        if(d.error){
+          if(!flying){rows.disabled=false;risk.disabled=false;roundSaw(d);}
+          bad(r,d.error);return;
         }
-        ball.style.transition="none";
-        setTimeout(function(){ball.style.transition="cx .09s linear, cy .09s linear";stepDown();},20);
-      }).catch(function(){go.disabled=false;roundSaw(null);bad(r,"network error");});
+        /* the board was rebuilt under this drop: pay it, but do not try to
+           animate it down a board it was never dropped on */
+        if(drop!==R){
+          setBal(d.balance);if(!flying)roundSaw(d);
+          ok(r,"landed "+mult(d.multiplier));
+          return;
+        }
+        d.seq=seq;
+        spawn(d);
+      }).catch(function(){
+        if(!flying){rows.disabled=false;risk.disabled=false;roundSaw(null);}
+        bad(r,"network error");
+      });
     };
   }
 

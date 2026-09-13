@@ -40,7 +40,22 @@ must(/ts:ev\.ts\|\|null/.test(shrine), "the event mapping must pass ts through t
 must(/add\(\{id:id,name:ME,text:text,mine:true,reply:rep,ts:Date\.now\(\)\}/.test(shrine),
   "an optimistic send must carry a local clock so the bubble is not blank");
 must(/#appThread \.twhen/.test(shrine), "application-thread times need a style");
-must(/\[data-theme="dark"\] \.when/.test(shrine), "dark mode must repaint the clock");
+// A skin is a palette now and its rules are generated, so the clock's dark
+// colour is no longer a literal in any source file — it is in the stylesheet
+// the shrine actually serves. Check that, which is the stronger question.
+{
+  // deno-lint-ignore no-explicit-any
+  const win: any = { Shrine: { LBL: {} } };
+  new Function("window", "location", await Deno.readTextFile(`${ROOT}/assets/js/shrine/config.js`))(
+    win,
+    { href: "https://example.test/", search: "" },
+  );
+  new Function("window", await Deno.readTextFile(`${ROOT}/assets/js/shrine/styles.js`))(win);
+  const css = String(win.Shrine.CSS);
+  must(/\[data-theme="dark"\] \.when\{color:#[0-9a-f]{6}\}/.test(css), "dark mode must repaint the clock");
+  must(/\[data-theme="dark"\] \.msg\.me \.when\{color:#[0-9a-f]{6}\}/.test(css),
+    "and repaint it again on your own line");
+}
 
 const embed = await Deno.readTextFile(`${ROOT}/embed/chat.html`);
 must(embed.includes("function fmtWhen("), "the embed must format message times");

@@ -230,6 +230,17 @@ atomic commit, so exactly one person can ever win a given gift and the winner is
 paid exactly once — `scripts/test-gift-claim.ts` throws a dozen simultaneous
 claims at one gift and counts the money.
 
+Plinko's board takes several balls at once. Each drop is its own request and
+the server holds no plinko state, so they cannot interfere; the client just
+stopped locking its button. The fall is a frame loop rather than a slide down a
+wire — a ball crosses at a steady rate, falls with y going as t squared so it
+accelerates the way a dropped thing does, and kicks off each peg it clips, which
+is the part that reads as a bounce. None of that can move a ball: the waypoints
+are computed from the server's own left/right path before a frame is drawn, and
+the last of them is the exact centre of the bucket that path adds up to.
+`scripts/test-plinko-balls.ts` checks every one of the 256 paths through an
+8-row board and a few hundred each at 12 and 16, all landing dead on centre.
+
 ## settings and skins
 
 A boxed gear in the top-left of the main menu opens the settings page: the
