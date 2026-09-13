@@ -220,6 +220,24 @@ member's name, or as tung, who posts with his own mark. It is the one place in
 the app where a message's author is not the account that sent the request —
 key-gated, and the name still has to belong to somebody real.
 
+There are two bans on the **Manage users** pane and they are not the same ban.
+**ban** shuts the whole shrine: chat, casino, the pit, the veil, everything.
+**ban from chat** shuts the room and only the room — they cannot read a line and
+cannot post one, while the casino, the pit, the catalog, the shop, tips and the
+veil keep working exactly as before. Server-side the two are separate flags on
+the account and separate gates: `blockState()` is the wide one every other part
+of the app asks, `chatBlock()` is the one every chat route asks, and the chat
+routes are the only ones allowed to use it. Nothing else may reach `chatBlock()`
+and no chat route may skip it — that is what keeps a chat ban from quietly
+becoming a full one, or a full one from leaving the room open. Setting one flag
+never touches the other, and lifting one never lifts the other; a live timeout
+or a full ban outranks the chat ban in what the banned member is told, and the
+chat ban is still there when either is lifted. `scripts/test-chat-ban.ts` walks
+all of it — both halves of the room shut (including a giveaway claim, which
+announces the claimant by name, and including a request that pads itself with
+the admin key to try to widen the history window), everything else still open,
+and the room handed back when the ban is lifted.
+
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a
 chunk moves file. `scripts/refresh-games.sh` re-vendors the gn-math loader

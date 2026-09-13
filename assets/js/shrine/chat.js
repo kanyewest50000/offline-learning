@@ -357,11 +357,20 @@
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- view switching + application/token auth against the backend ---- */
     'function show(v){gate.style.display=(v==="apply"||v==="pending")?"flex":"none";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";banEl.style.display=v==="ban"?"flex":"none";var lb=document.getElementById("loginBox");if(lb)lb.style.display=(v==="apply"&&!TOKEN)?"flex":"none";}' +
-    /* banned/timed-out users get a blank screen instead of the chat. a permanent
-       ban shows no "until"; a timeout shows the deadline and re-checks /status so
-       access lifts on its own once the clock passes it. */
+    /* banned/timed-out/chat-banned users get a blank screen instead of the chat.
+       a permanent ban shows no "until"; a timeout shows the deadline; a chat ban
+       says so in as many words, because only the room is shut and the casino,
+       the pit and the games are still open one view up. a timeout and a chat ban
+       both re-check /status so access comes back on its own — the timeout when
+       its clock passes, the chat ban when tung lifts it. */
     'function pageHidden(){return !!document.hidden;}' +
-    'function showBan(info){polling=false;var isTo=info&&info.reason==="timeout";banTitle.textContent=isTo?"you are timed out":"you are banned";if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}else{banUntil.style.display="none";}show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}if(isTo&&!pageHidden())statusT=setTimeout(refreshGate,5000);}' +
+    'function showBan(info){polling=false;var why=(info&&info.reason)||"";var isTo=why==="timeout";var isChat=why==="chatban";' +
+    'banTitle.textContent=isTo?"you are timed out":(isChat?"the room is shut to you":"you are banned");' +
+    'if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}' +
+    'else if(isChat){banUntil.textContent="tung has barred you from the chat. you cannot read it and you cannot speak in it. everything else is still yours — the casino, the pit, the games, the shop.";banUntil.style.display="";}' +
+    'else{banUntil.style.display="none";}' +
+    'show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}' +
+    'if((isTo||isChat)&&!pageHidden())statusT=setTimeout(refreshGate,isChat?15000:5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
     'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id]){if(MSGS[ev.id].meta)stampWhen(MSGS[ev.id].meta,ev.ts);return;}add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null,ts:ev.ts||null});}}' +
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 8s. */
@@ -371,7 +380,7 @@
     /* render tung<->applicant follow-up messages on the pending screen; show the
        reply box only once tung has actually asked something. */
     'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");var tw=document.createElement("div");tw.className="twhen";tw.textContent=(m.from==="admin"?"tung":"you")+(m.ts?" · "+fmtWhen(m.ts):"");var tx=document.createElement("div");tx.textContent=m.text;b.appendChild(tw);b.appendChild(tx);appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
-    'function refreshGate(){TOKEN=loadToken();paintKey();if(!TOKEN){show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(!s||typeof s.status!=="string")return;if(s.status==="approved"){if(s.blocked){showBan(s);}else{startChat(s.username||"");}}else if(s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else if(s.status==="none"||s.status==="rejected"){clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){});}' +
+    'function refreshGate(){TOKEN=loadToken();paintKey();if(!TOKEN){show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(!s||typeof s.status!=="string")return;if(s.status==="approved"){if(s.blocked){showBan(s);}else if(s.chatBanned){showBan({reason:"chatban"});}else{startChat(s.username||"");}}else if(s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else if(s.status==="none"||s.status==="rejected"){clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'if(copyHashBtn)copyHashBtn.addEventListener("click",function(){copyKey(copyHashBtn);});' +

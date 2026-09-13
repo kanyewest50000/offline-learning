@@ -42,7 +42,7 @@
       '#chat{flex:1;display:none;flex-direction:column;min-height:0}' +
       '#banView{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;padding:24px;background:#160d04}' +
       '#banTitle{font-size:22px;font-weight:800}' +
-      '#banUntil{color:#c8823c;font-size:14px}' +
+      '#banUntil{color:#c8823c;font-size:14px;line-height:1.45;max-width:40ch}' +
       '#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}' +
       '.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}' +
       '.msg.me{align-self:flex-end;background:#8a5a28}' +

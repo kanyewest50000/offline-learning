@@ -11,7 +11,7 @@ in this folder (or `Deno.openKv(connectUrl)` + `kv.list` yourself).
 
 | Prefix | Meaning | TTL on write |
 | --- | --- | --- |
-| `["app", id]` | Application: username, text, `status`, `ts`, `thread`, `banned`, `note`, `timeoutUntil` | none |
+| `["app", id]` | Application: username, text, `status`, `ts`, `thread`, `banned` (whole shrine), `chatBanned` (chat only), `note`, `timeoutUntil` | none |
 | `["name", lowercase]` | Username reservation → app id | none |
 | `["tok", token]` | **Session secret** → app id | none |
 | `["seq"]` | Chat event counter | none |

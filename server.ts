@@ -24,6 +24,8 @@
 //   GET  /admin/chat?key=                                 -> {messages:[...]} last HISTORY chat lines
 //   POST /admin/clearchat {key}                           -> {ok, cleared}
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
+//   POST /admin/ban     {key, id, banned}                 -> {ok, banned}      (whole shrine)
+//   POST /admin/chatban {key, id, chatBanned}             -> {ok, chatBanned}  (chat only)
 //   GET  /veil?token=                                     -> {live, allowed, url?}
 //   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
@@ -898,6 +900,26 @@ async function listChatMessages(): Promise<unknown[]> {
   return messages;
 }
 
+// Change some fields on an application record without clobbering whatever else
+// moved in the meantime. The read-then-set used by the older admin routes can
+// lose a write when two edits land together — a note saved at the same moment
+// would put the old flag back. A moderation flag that quietly un-sets itself is
+// not a moderation flag, so this re-reads and retries on a failed check and
+// reports "busy" rather than writing blind.
+// deno-lint-ignore no-explicit-any
+async function patchApp(id: string, patch: Record<string, unknown>): Promise<any | "missing" | "busy"> {
+  if (!id) return "missing";
+  for (let attempt = 0; attempt < 8; attempt++) {
+    // deno-lint-ignore no-explicit-any
+    const cur = await kv.get<any>(["app", id]);
+    if (!cur.value) return "missing";
+    const next = { ...cur.value, ...patch };
+    const res = await kv.atomic().check(cur).set(["app", id], next).commit();
+    if (res.ok) return next;
+  }
+  return "busy";
+}
+
 // deno-lint-ignore no-explicit-any
 async function authUser(token: string | null): Promise<any | null> {
   if (!token) return null;
@@ -909,15 +931,36 @@ async function authUser(token: string | null): Promise<any | null> {
   return app.value;
 }
 
-// is this approved user currently blocked from the chat?
+// is this approved user currently shut out of the WHOLE shrine?
 //   banned  -> permanent (no "until")
 //   timeout -> blocked until app.timeoutUntil (ms epoch); expires on its own
+// This is the wide gate: the casino, the pit, the veil and the chat all sit
+// behind it. The chat-only ban is deliberately NOT here — see chatBlock().
 // deno-lint-ignore no-explicit-any
 function blockState(u: any): { blocked: boolean; reason?: string; until?: number } {
   if (u.banned) return { blocked: true, reason: "banned", until: 0 };
   if (u.timeoutUntil && u.timeoutUntil > Date.now()) {
     return { blocked: true, reason: "timeout", until: u.timeoutUntil };
   }
+  return { blocked: false };
+}
+
+// is this approved user shut out of THE CHAT? A full ban or a live timeout
+// closes the room along with everything else, and on top of those sits
+// `chatBanned`: the room alone is shut — the casino, the pit, the catalog, the
+// shop, the tables and the veil carry on untouched.
+//
+// This is the ONLY gate the chat routes may use. Anything that reads a line,
+// writes one, or puts a member's name into the room goes through here; anything
+// that does not touch the room stays on blockState(). Keeping the two apart is
+// what makes a chat ban a chat ban and not a quieter version of the full one.
+// The flag is read truthily, not `=== true`, so a record that somehow carries a
+// non-boolean still fails closed.
+// deno-lint-ignore no-explicit-any
+function chatBlock(u: any): { blocked: boolean; reason?: string; until?: number } {
+  const bs = blockState(u);
+  if (bs.blocked) return bs;
+  if (u.chatBanned) return { blocked: true, reason: "chatban", until: 0 };
   return { blocked: false };
 }
 
@@ -1653,6 +1696,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const app = await kv.get<any>(["app", t.value]);
     if (!app.value) return json({ error: "unauthorized" }, 401);
     const bs = blockState(app.value);
+    // `blocked` stays the shrine-wide answer — the casino client reads it and
+    // must not be told the tables are shut when only the room is. The chat ban
+    // rides alongside it in its own field.
     return json({
       token,
       status: app.value.status,
@@ -1660,6 +1706,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       blocked: bs.blocked,
       reason: bs.reason,
       until: bs.until,
+      chatBanned: !!app.value.chatBanned,
     });
   }
 
@@ -1677,7 +1724,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const bs = blockState(app.value);
     // `thread` carries the back-and-forth between tung and the applicant so the
     // pending screen can show questions and the applicant's answers.
-    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, thread: app.value.thread || [] });
+    // `blocked` is the shrine-wide verdict (the casino gate reads it too);
+    // `chatBanned` is the narrow one, so a client can shut the room without
+    // shutting anything else.
+    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, chatBanned: !!app.value.chatBanned, thread: app.value.thread || [] });
   }
 
   // ---------- respond (applicant replies to tung's follow-up question) ----------
@@ -1704,8 +1754,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/events") {
     const user = await authUser(url.searchParams.get("token"));
     if (!user) return json({ error: "unauthorized" }, 401);
-    // banned / timed-out users get a blocked payload so the client shows the ban screen
-    const bs = blockState(user);
+    // banned / timed-out / chat-banned users get a blocked payload instead of
+    // the room, so the client shows the ban screen and stops polling. This is
+    // the read half of the chat ban: no events, so no messages, no reactions,
+    // no giveaway announcements — nothing of the room reaches them at all.
+    const bs = chatBlock(user);
     if (bs.blocked) return json({ blocked: true, reason: bs.reason, until: bs.until, events: [], cursor: Number(url.searchParams.get("since") || "0") || 0 });
     let since = Number(url.searchParams.get("since") || "0") || 0;
     // The admin dashboard (and its exports) may walk the whole retained log;
@@ -1771,7 +1824,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const user = await authUser(b.token);
     if (!user) return json({ error: "unauthorized" }, 401);
-    const sbs = blockState(user);
+    const sbs = chatBlock(user);
     if (sbs.blocked) return json({ error: "blocked", reason: sbs.reason, until: sbs.until }, 403);
     const text = clip(b.text, 1000);
     if (!text) return json({ error: "empty" }, 400);
@@ -1834,7 +1887,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const user = await authUser(b.token);
     if (!user) return json({ error: "unauthorized" }, 401);
-    const rbs = blockState(user);
+    const rbs = chatBlock(user);
     if (rbs.blocked) return json({ error: "blocked", reason: rbs.reason, until: rbs.until }, 403);
     const id = clip(b.id, 32);
     const e = clip(b.e, 16);
@@ -1887,7 +1940,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const user = await authUser(b.token);
     if (!user) return json({ error: "unauthorized" }, 401);
-    if (blockState(user).blocked) return json({ error: "blocked" }, 403);
+    // a claim announces itself in the room under the claimant's name, so it is
+    // a chat write and answers to the chat gate, not the shrine-wide one
+    if (chatBlock(user).blocked) return json({ error: "blocked" }, 403);
     const id = clip(b.id, 32);
     if (!id) return json({ error: "missing" }, 400);
 
@@ -2389,7 +2444,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (e.value.status === "approved") {
         users.push({
           id: e.value.id, username: e.value.username, ts: e.value.ts,
-          banned: !!e.value.banned, timeoutUntil: e.value.timeoutUntil || 0,
+          banned: !!e.value.banned, chatBanned: !!e.value.chatBanned,
+          timeoutUntil: e.value.timeoutUntil || 0,
           note: e.value.note || "", veil: e.value.veil === true,
         });
       }
@@ -2410,6 +2466,23 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const banned = b.banned !== false; // default true; pass banned:false to unban
     await kv.set(["app", app.value.id], { ...app.value, banned });
     return json({ ok: true, banned });
+  }
+
+  // ---------- admin: chat ban / un-ban a user (the chat, and only the chat) ----------
+  // The narrow ban. `banned` shuts the whole shrine; this shuts the room and
+  // nothing else — they cannot read a line and cannot post one, while the
+  // casino, the pit, the catalog, the shop and the veil stay exactly as they
+  // were. The two flags are independent: setting one never touches the other,
+  // and lifting one never lifts the other.
+  if (req.method === "POST" && path === "/admin/chatban") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const chatBanned = b.chatBanned !== false; // default true; pass chatBanned:false to lift it
+    const next = await patchApp(clip(b.id, 32), { chatBanned });
+    if (next === "missing") return json({ error: "not found" }, 404);
+    if (next === "busy") return json({ error: "busy" }, 503);
+    return json({ ok: true, chatBanned });
   }
 
   // ---------- admin: delete a user entirely ----------
@@ -3254,7 +3327,8 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 </section>
 <section class="pane" id="pane-users">
 <h2>Manage users</h2>
-<p class="hint">Approved users: rename, ban, timeout, web-veil access, note, re-review, or delete.</p>
+<p class="hint">Approved users: rename, ban, chat-ban, timeout, web-veil access, note, re-review, or delete.
+A <b>ban</b> shuts the whole shrine — chat and casino both. A <b>chat ban</b> shuts only the chat: they cannot read it or post in it, and the casino, the pit, the games, the shop and the veil keep working normally.</p>
 <input class="search" id="search-users" placeholder="search approved users…" autocomplete="off">
 <div id="users"><div class="empty">load to see approved users.</div></div>
 </section>
@@ -3504,7 +3578,8 @@ function renderUsers(){
   var q=qOf("search-users");
   var shown=usersCache.filter(function(u){
     var st=u.banned?"banned":(u.timeoutUntil&&u.timeoutUntil>Date.now()?"timeout timed out":"active");
-    return matches(q, [u.username, u.id, u.note||"", st, u.veil?"veil approved":"veil not approved"]);
+    var cst=u.chatBanned?"chatban chat banned chat-banned":"chat open";
+    return matches(q, [u.username, u.id, u.note||"", st, cst, u.veil?"veil approved":"veil not approved"]);
   });
   if(!usersCache.length){users.innerHTML='<div class="empty">no approved users yet.</div>';return;}
   if(!shown.length){users.innerHTML='<div class="empty">no matching users.</div>';return;}
@@ -3533,6 +3608,17 @@ function renderUsers(){
     clr.onclick=function(){setTimeoutUntil(u.id,0);};
     trow.appendChild(dt);trow.appendChild(apply);trow.appendChild(clr);
     el.appendChild(trow);
+    // the narrow ban: shuts the room and leaves the rest of the shrine alone.
+    // deliberately its own row and its own wording so it is never mistaken for
+    // the full ban sitting one row above it.
+    var crow=document.createElement("div");crow.className="row";
+    var clab=document.createElement("small");clab.className=u.chatBanned?"vlab rev":"vlab";
+    clab.textContent=u.chatBanned?"chat: banned (casino + games still open)":"chat: open";
+    var cbtn=document.createElement("button");
+    if(u.chatBanned){cbtn.className="ok";cbtn.textContent="restore chat access";cbtn.title="let them back into the chat";cbtn.onclick=function(){setChatBan(u.id,false);};}
+    else{cbtn.className="no";cbtn.textContent="ban from chat";cbtn.title="chat only — they can no longer read it or post in it, but the casino, games, shop and veil keep working";cbtn.onclick=function(){setChatBan(u.id,true,u.username);};}
+    crow.appendChild(clab);crow.appendChild(cbtn);
+    el.appendChild(crow);
     var vrow=document.createElement("div");vrow.className="row";
     var vlab=document.createElement("small");vlab.className="vlab";
     vlab.textContent=u.veil?"web veil: approved":"web veil: not approved";
@@ -3550,8 +3636,10 @@ function renderUsers(){
     el.appendChild(nrow);
     var meta=document.createElement("small");
     var idline=" · id "+u.id;
-    if(u.banned){meta.textContent="banned (permanent)"+idline;meta.className="rev";}
-    else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString()+idline;meta.className="rev";}
+    var cbline=u.chatBanned?" · chat banned":"";
+    if(u.banned){meta.textContent="banned (permanent)"+cbline+idline;meta.className="rev";}
+    else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString()+cbline+idline;meta.className="rev";}
+    else if(u.chatBanned){meta.textContent="chat banned · everything else open · joined "+new Date(u.ts).toLocaleString()+idline;meta.className="rev";}
     else{meta.textContent="active · joined "+new Date(u.ts).toLocaleString()+idline;}
     el.appendChild(meta);
     users.appendChild(el);
@@ -3563,6 +3651,10 @@ function rename(id,name){
 }
 function setBan(id,banned){
   fetch("/admin/ban",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,banned:banned})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function setChatBan(id,chatBanned,name){
+  if(chatBanned&&!confirm("Ban "+name+" from the chat?\\n\\nThey will not be able to read the chat or post in it. The casino, the pit, the games, the shop and the veil stay open to them. This is not the full ban."))return;
+  fetch("/admin/chatban",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,chatBanned:chatBanned})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 function setTimeoutUntil(id,until){
   fetch("/admin/timeout",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,until:until})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
