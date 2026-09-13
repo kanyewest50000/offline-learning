@@ -78,9 +78,10 @@ three minutes — every table, not a sprint corner of them — and whoever is
 sitting on the biggest pile when the clock stops takes the pot.
 
 A cut wants a body in the other chair and there is not always one about, so the
-host can **call tung** into it. He takes one chair — a table of three is you,
-somebody else and tung, never two of him — and he is seated already confirmed,
-because he is always ready. What he is not is a member: no account, no balance,
+host can **call tung** into it. One call is one chair and he can be called again
+for as long as a chair is empty, so a four-seat cut with nobody around is the
+player against three of him. He is seated already confirmed, because he is
+always ready. What he is not is a member: no account, no balance,
 no lock. That makes a table he is sitting at a house table wearing the pit's
 clothes, and it changes exactly one thing, which is the money. His stake is the
 house's, so the pot pays the house's 0.1% edge, the same as the wheel. Between
@@ -287,6 +288,16 @@ what decides whether it is free or has to be bought; the two lists have to
 match, and that test checks it.
 
 ## admin
+
+The admin key never travels in a URL. `/admin` is a small door — it is also an
+egress guard, so a scanner that finds it gets 800 bytes rather than the 37KB
+panel — and the panel itself comes back from a POST, written into the page the
+door is already on. The address bar says `/admin` the whole way through, and
+every read the panel makes carries the key in an `x-admin-key` header, so it
+reaches no history entry, no bookmark and no access log. An old bookmark with
+`?key=` on it is redirected to the bare path rather than served. The query
+parameter is still accepted, because the scripts in `scripts/` pass it that way
+from a terminal, where none of those exposures apply.
 
 `/admin` has a **Post as…** pane: drop a line into the chat under an approved
 member's name, or as tung, who posts with his own mark. It is the one place in

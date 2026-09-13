@@ -44,6 +44,8 @@ must(/for \(const p of people\) if \(!isBot\(p\)\) credits\.push\(\{ id: p\.id, 
 must(/const pot = hasBot\(d\) \? floor2\(round2\(d\.bet \* people\.length\) \* HOUSE\) : round2\(d\.bet \* people\.length\);/.test(src),
   "a table with tung at it must pay the house edge, and one without must not");
 must(/const CAN_CALL_TUNG = new Set\(\["cut"\]\);/.test(src), "the cut is the table he sits at");
+must(/function tungSide\(n: number\): DuelSide \{[\s\S]*?id: BOT_ID \+ "#" \+ n,/.test(src),
+  "each chair he takes needs an id of its own, or two of him are one player");
 
 async function member(tag: string) {
   const n = tag + Math.random().toString(36).slice(2, 8);
@@ -85,7 +87,7 @@ const bal = async (t: string) => money((await j("/cas/me?token=" + encodeURIComp
   must(seats.length === 2 && seats[1].bot === true && seats[1].name === "tung",
     "he takes one chair, under his own name: " + JSON.stringify(seats));
   must(seats[1].confirmed === true, "and he says yes on the way in");
-  must((await post("/duel/call", { token: A.token, id })).status === 409, "there is only one of him");
+  must((await post("/duel/call", { token: A.token, id })).status === 409, "a full table has no chair for another");
   must((await bal(A.token)) === 95, "his chair costs the player nothing extra: " + (await bal(A.token)));
 
   // a player cannot take the chair he is in
@@ -115,6 +117,59 @@ const bal = async (t: string) => money((await j("/cas/me?token=" + encodeURIComp
     j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id)
   ));
   must((await bal(A.token)) === after, "a cut against tung must settle exactly once");
+}
+
+// ---------------------------------------------------------------------------
+// He fills as many chairs as are empty. One call is one chair, and the offer
+// stays up until the table is full — at four seats with nobody about that is
+// the player against three of him.
+{
+  await fund(A, 100);
+  const c = await post("/duel/create", { token: A.token, game: "cut", bet: 4, seats: 4 });
+  const id = (c.body.duel as { id: string }).id;
+  for (let want = 1; want <= 3; want++) {
+    const before = await bal(A.token);
+    const r = await post("/duel/call", { token: A.token, id });
+    must(r.body?.ok === true, "call " + want + " failed: " + JSON.stringify(r.body));
+    const v = r.body.duel as Record<string, unknown>;
+    must(v.tungs === want, "call " + want + " should seat " + want + " of him, got " + v.tungs);
+    must(v.filled === want + 1, "and fill " + (want + 1) + " chairs, got " + v.filled);
+    // the offer stays up while a chair is empty, and goes when the table fills
+    must(v.canCall === (want < 3), "after call " + want + " the offer should be " + (want < 3));
+    must(v.state === (want < 3 ? "open" : "confirm"), "state after call " + want + ": " + v.state);
+    must((await bal(A.token)) === before, "and none of his chairs costs the player anything");
+  }
+  const full = await j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id);
+  const seats = (full.body.duel as { players: { name: string; bot?: boolean }[] }).players;
+  must(seats.length === 4, "four chairs");
+  must(seats.filter((x) => x.bot).length === 3, "three of them his: " + JSON.stringify(seats));
+  must(seats[0].name === A.name && !seats[0].bot, "and the host in the first");
+  must((full.body.duel as { pot: number }).pot === 16, "the pot is every chair: " +
+    (full.body.duel as { pot: number }).pot);
+  must((await post("/duel/call", { token: A.token, id })).status === 409, "a full table has no chair left");
+
+  // one yes and it deals; the player is up against three cards, not one
+  const beforeA = await bal(A.token);
+  const done = await post("/duel/confirm", { token: A.token, id });
+  const d = done.body.duel as Record<string, unknown>;
+  must(d.state === "done" && d.reason === "play", "his yeses are already in: " + d.state);
+  const hands = d.hands as { name: string; card: string }[];
+  must(hands.length === 4, "four cards are cut: " + JSON.stringify(hands));
+  const paid = d.paid as { name: string; amount: number }[];
+  must(paid.length === 1, "one of the four takes it");
+  const want4 = Math.floor(16 * HOUSE * 100) / 100;
+  must(paid[0].amount === want4, "the four chairs less the edge: " + paid[0].amount + " wanted " + want4);
+  const afterA = await bal(A.token);
+  if (d.winner === A.name) must(afterA === money(beforeA + want4), "the player took it: " + beforeA + " -> " + afterA);
+  else {
+    must(d.winner === "tung", "otherwise it is his: " + d.winner);
+    must(afterA === beforeA, "and nothing comes back: " + beforeA + " -> " + afterA);
+  }
+  // reading it again must not pay again
+  await Promise.all(new Array(6).fill(0).map(() =>
+    j("/duel/state?token=" + encodeURIComponent(A.token) + "&id=" + id)
+  ));
+  must((await bal(A.token)) === afterA, "a table of three tungs still settles exactly once");
 }
 
 // ---------------------------------------------------------------------------
@@ -226,8 +281,9 @@ const bal = async (t: string) => money((await j("/cas/me?token=" + encodeURIComp
 }
 
 console.log(
-  "call tung: he comes to a cut and only a cut, to the host's own table, once, in one chair, " +
-    "already confirmed; he counts toward the pot without staking an account that does not exist; " +
+  "call tung: he comes to a cut and only a cut, to the host's own table, one chair per call and " +
+    "as many calls as there are empty chairs, already confirmed; each chair counts toward the pot " +
+    "without staking an account that does not exist; " +
     "a table he sits at pays the house edge where a table between players pays none; and every " +
     "exit — his win, the player's, a cancel, a table nobody confirmed — moves exactly one stake, " +
     "exactly once",

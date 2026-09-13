@@ -539,8 +539,23 @@ for (const risk of Object.keys(PLINKO)) {
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "content-type",
+  "access-control-allow-headers": "content-type, x-admin-key",
 };
+
+// Where an admin request carries its key.
+//
+// A query string is the worst place for a secret: it lands in the address bar,
+// in browser history, in every access log the request passes through, and in
+// the Referer of anything the page goes on to load. So the header is what the
+// admin page actually uses. The query parameter is still read, because the
+// scripts in scripts/ pass it that way and it is genuinely convenient from a
+// terminal, where none of those exposures apply.
+function presentedKey(req: Request, url: URL): string {
+  return req.headers.get("x-admin-key") || url.searchParams.get("key") || "";
+}
+function adminOk(req: Request, url: URL): boolean {
+  return ADMIN_KEY !== "" && presentedKey(req, url) === ADMIN_KEY;
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -1015,8 +1030,7 @@ async function hasSessionToken(token: string): Promise<boolean> {
 async function requestIsAuthed(req: Request, url: URL): Promise<boolean> {
   const qTok = clip(url.searchParams.get("token"), 64);
   if (qTok && await hasSessionToken(qTok)) return true;
-  const qKey = url.searchParams.get("key") || "";
-  if (ADMIN_KEY && qKey === ADMIN_KEY) return true;
+  if (adminOk(req, url)) return true;
   if (req.method === "POST") {
     const peek = await req.clone().json().catch(() => null) as Record<string, unknown> | null;
     if (peek && typeof peek === "object") {
@@ -1049,11 +1063,24 @@ function tooMany(retrySec = 30): Response {
   });
 }
 
-const ADMIN_GATE = `<!doctype html><html lang="en"><meta charset="utf-8"><title>admin</title>
-<body style="font-family:system-ui;background:#1d1206;color:#f5efe0;padding:24px">
-<form><input name="key" type="password" placeholder="admin key" style="padding:8px">
-<button>open</button></form>
-<script>document.querySelector("form").onsubmit=function(e){e.preventDefault();location="/admin?key="+encodeURIComponent(this.key.value)}</script>`;
+// The door. It is deliberately tiny — the full panel is ~37KB and serving that
+// to every scanner that finds /admin was free egress — and it is also the only
+// place the key is ever typed.
+//
+// It does NOT navigate anywhere with the key on it. It posts the key, gets the
+// panel back as a document, and writes it into the page it is already on. The
+// address bar says /admin the whole way through, so the key never reaches
+// history, a bookmark, a screenshot of the URL, or any access log in between.
+//
+// Kept under 800 bytes on the wire, which scripts/test-egress-guard.ts holds it
+// to — that is the whole reason there is a door rather than just the panel. It
+// is written tight for that reason and not out of taste; if it needs to grow,
+// grow the budget in that test deliberately rather than by accident.
+const ADMIN_GATE = `<!doctype html><meta charset="utf-8"><title>admin</title>
+<body style="font:16px system-ui;background:#1d1206;color:#f5efe0;padding:24px">
+<form><input name=key type=password placeholder="admin key" style="padding:8px"><button>open</button></form>
+<p id=m style="color:#e0908a"></p>
+<script>onsubmit=function(e){e.preventDefault();var k=e.target.key.value.trim(),m=document.getElementById("m");if(!k)return;m.textContent="opening\u2026";fetch("/admin",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:k})}).then(function(r){return r.ok?r.text():null}).then(function(h){if(!h){m.textContent="that key is not his.";return}window.__ADMIN_KEY=k;document.open();document.write(h);document.close()}).catch(function(){m.textContent="the shrine did not answer."})}</script>`;
 
 // A rate limit that holds across isolates. The in-memory buckets above are
 // per-isolate, so a global backstop for the few genuinely expensive operations
@@ -1219,13 +1246,18 @@ function duelSide(u: { id: string; username: string }): DuelSide {
 // other table in the casino runs. Between players there is no rake and never
 // will be; against tung there is the same edge as the wheel.
 //
-// The id cannot collide with an account: rid() is pure lowercase hex, and this
-// is not. The NAME cannot either — /apply refuses anything that reads as
-// "tung" — so neither half of him can be impersonated or mistaken for a member.
+// He can fill more than one chair — a four-seat cut called with nobody around
+// is you against three of him — so each seat he takes gets its own id. They
+// cannot collide with an account: rid() is pure lowercase hex, and these are
+// not. The NAME cannot either — /apply refuses anything that reads as "tung" —
+// so neither half of him can be impersonated or mistaken for a member.
 const BOT_ID = "tung!bot";
-function isBot(p: DuelSide | null | undefined): boolean { return !!p && (p.bot === true || p.id === BOT_ID); }
-function tungSide(): DuelSide {
-  return { id: BOT_ID, name: WISDOM_NAME, confirmed: true, move: null, wins: 0, chips: 0, bot: true };
+function isBot(p: DuelSide | null | undefined): boolean {
+  return !!p && (p.bot === true || String(p.id).indexOf(BOT_ID) === 0);
+}
+function botCount(d: Duel): number { return seatedPlayers(d).filter(isBot).length; }
+function tungSide(n: number): DuelSide {
+  return { id: BOT_ID + "#" + n, name: WISDOM_NAME, confirmed: true, move: null, wins: 0, chips: 0, bot: true };
 }
 // the people at the table who actually staked something of their own
 function stakers(d: Duel): DuelSide[] { return seatedPlayers(d).filter((p) => !isBot(p)); }
@@ -1286,7 +1318,10 @@ function duelView(d: Duel, uid: string | null) {
     // a table tung is sitting at is a house table, and says so: the pot it
     // quotes above is what would actually be paid out, edge and all
     tung: hasBot(d),
-    canCall: d.state === "open" && CAN_CALL_TUNG.has(d.game) && !hasBot(d) &&
+    tungs: people.filter(isBot).length,
+    // he can be called for as long as there is a chair, so this stays true
+    // until the table is full and the deal starts
+    canCall: d.state === "open" && CAN_CALL_TUNG.has(d.game) &&
       people.length < seats && youAreHost,
     winner: d.winner,
     paid,
@@ -1944,7 +1979,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // The admin dashboard (and its exports) may walk the whole retained log;
     // it proves itself with the admin key. Everyone else is held to the public
     // window, however they ask for it.
-    const isAdmin = ADMIN_KEY !== "" && url.searchParams.get("key") === ADMIN_KEY;
+    const isAdmin = adminOk(req, url);
     const events: unknown[] = [];
     let cursor = since;
     if (since <= 0) {
@@ -2311,9 +2346,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   }
 
   // ---------- call tung into the empty chair ----------
-  // The host's table, still filling, at a game tung actually plays. He takes
-  // ONE chair — a table of three is you, somebody else and tung, never two of
-  // him — and he is seated already confirmed, because he is always ready.
+  // The host's table, still filling, at a game tung actually plays. One call is
+  // one chair, and he can be called again for as long as a chair is empty — so
+  // a four-seat cut with nobody around is you against three of him. He is
+  // seated already confirmed, because he is always ready.
   // Nothing is debited for him: his stake is the house's, which is what makes
   // the pot pay the house edge. See finishDuel().
   if (req.method === "POST" && path === "/duel/call") {
@@ -2328,13 +2364,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (d.host.id !== u.id) return json({ error: "not yours" }, 403);
       if (d.settled || d.state !== "open") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
       if (!CAN_CALL_TUNG.has(d.game)) return json({ error: "tung does not play that one" }, 400);
-      if (hasBot(d)) return json({ error: "he is already here" }, 409);
       const seats = duelSeats(d);
       if (seatedPlayers(d).length >= seats) return json({ error: "taken" }, 409);
       const extra = extraOf(d).map((x) => ({ ...x }));
       let guest = d.guest ? { ...d.guest } : null;
-      if (!guest) guest = tungSide();
-      else extra.push(tungSide());
+      const nth = botCount(d) + 1;
+      if (!guest) guest = tungSide(nth);
+      else extra.push(tungSide(nth));
       const filled = 1 + 1 + extra.length;
       const full = filled >= seats;
       const now = Date.now();
@@ -2540,21 +2576,36 @@ Deno.serve({ port: listenPort }, async (req, info) => {
 
   // ---------- admin ----------
   if (req.method === "GET" && path === "/admin") {
-    // Full admin HTML is ~20KB. Serving it to every scanner was free egress.
-    // Without a matching key, return a tiny gate instead.
-    const key = url.searchParams.get("key") || "";
-    if (!ADMIN_KEY || key !== ADMIN_KEY) {
-      return new Response(ADMIN_GATE, {
-        status: key ? 401 : 200,
-        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
-      });
+    // An old bookmark with ?key= on it: send them to the bare path rather than
+    // serving the panel, so the key stops being in the address bar from here on
+    // and nothing downstream logs it again. It is spent either way — this only
+    // stops it being spent twice.
+    if (url.searchParams.has("key")) {
+      return new Response(null, { status: 303, headers: { location: "/admin", "cache-control": "no-store" } });
+    }
+    // The panel is ~37KB and serving it to every scanner that finds /admin was
+    // free egress, so the door is all a GET ever gets. The panel itself comes
+    // back from the POST below, which is what keeps the key out of the URL.
+    return new Response(ADMIN_GATE, {
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+  // ---------- the panel itself ----------
+  // A POST purely so the key rides in a body instead of a URL. The reply is a
+  // document, not JSON: the gate writes it straight into the page it is on.
+  if (req.method === "POST" && path === "/admin") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || String(b.key ?? "") !== ADMIN_KEY) {
+      return new Response("forbidden", { status: 403, headers: { "cache-control": "no-store" } });
     }
     return new Response(ADMIN_HTML, {
       headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
     });
   }
+
   if (req.method === "GET" && path === "/admin/pending") {
-    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const pending: unknown[] = [];
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["app"] })) {
@@ -2569,7 +2620,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
 
   // ---------- admin: dump retained chat (not part of the other list loads) ----------
   if (req.method === "GET" && path === "/admin/chat") {
-    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const messages = await listChatMessages();
     return json({ messages, count: messages.length });
   }
@@ -2636,7 +2687,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   }
 
   if (req.method === "GET" && path === "/admin/veil") {
-    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const f = await kv.get<boolean>(["veil", "live"]);
     return json({ live: f.value === true, configured: PROXY_URL !== "" });
   }
@@ -2694,7 +2745,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // powers the "approved users" panel. each row carries banned + timeoutUntil
   // so the admin can see who is currently blocked and until when.
   if (req.method === "GET" && path === "/admin/users") {
-    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const users: unknown[] = [];
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["app"] })) {
@@ -3432,7 +3483,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
 
   // ---------- admin: VIEW balances ----------
   if (req.method === "GET" && path === "/admin/balances") {
-    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const rows: { id: string; username: string; balance: number }[] = [];
     // map app id -> username for approved users
     const names: Record<string, string> = {};
@@ -3454,11 +3505,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // ---------- admin: shop management (list all / upsert / delete) ----------
   // the list the shop editor's theme dropdown is built from
   if (req.method === "GET" && path === "/admin/themes") {
-    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     return json({ ok: true, themes: SHRINE_THEMES.map((t) => ({ id: t.id, name: t.name, free: !!t.free })) });
   }
   if (req.method === "GET" && path === "/admin/shop") {
-    if (!ADMIN_KEY || url.searchParams.get("key") !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const items: unknown[] = [];
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["shopitem"] })) items.push(e.value);
@@ -3633,6 +3684,20 @@ A <b>ban</b> shuts the whole shrine — chat and casino both. A <b>chat ban</b> 
 </div>
 <script>
 var keyEl=document.getElementById("key"),list=document.getElementById("list"),users=document.getElementById("users");
+/* Every read goes through here so the key rides in a header, not in the URL.
+   A query string would put it in this server's access log on every poll, and
+   in the address bar if anyone ever pasted one; a header is written down
+   nowhere. Writes already carry it in their body, which is out of the URL for
+   the same reason. */
+function aget(path){
+  return fetch(path,{headers:{"x-admin-key":keyEl.value.trim()},cache:"no-store"});
+}
+/* the gate hands the key over in memory rather than on the address bar */
+if(window.__ADMIN_KEY){
+  keyEl.value=window.__ADMIN_KEY;
+  try{delete window.__ADMIN_KEY;}catch(e){window.__ADMIN_KEY=null;}
+  setTimeout(function(){loadAll();},0);
+}
 var balances=document.getElementById("balances"),shop=document.getElementById("shop"),chatlog=document.getElementById("chatlog");
 var pendingCache=null,usersCache=null,balancesCache=null,pendingErr=null,usersErr=null,balancesErr=null;
 try{var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}catch(e){}
@@ -3677,7 +3742,7 @@ function paintVeil(st){
 }
 function refreshVeil(){
   var k=keyEl.value.trim();if(!k)return;
-  fetch("/admin/veil?key="+encodeURIComponent(k)).then(function(r){return r.json();})
+  aget("/admin/veil").then(function(r){return r.json();})
     .then(paintVeil).catch(function(){paintVeil({error:"could not reach the server."});});
 }
 function setVeil(live){
@@ -3746,7 +3811,7 @@ function postAs(){
 function dumpChat(){
   var key=keyEl.value.trim();
   chatlog.innerHTML='<div class="empty">loading...</div>';
-  fetch("/admin/chat?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+  aget("/admin/chat").then(function(r){return r.json();}).then(function(d){
     if(d.error){chatlog.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';setCount("chat","");return;}
     var msgs=d.messages||[];
     setCount("chat", msgs.length);
@@ -3770,7 +3835,7 @@ function dumpChat(){
 function refresh(){
   var key=keyEl.value.trim();try{localStorage.setItem("shrine-admin-key",key);}catch(e){}
   list.innerHTML='<div class="empty">loading...</div>';
-  fetch("/admin/pending?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+  aget("/admin/pending").then(function(r){return r.json();}).then(function(d){
     if(d.error){pendingCache=null;pendingErr=d.error;renderPending();return;}
     pendingErr=null;pendingCache=d.pending||[];renderPending();
   }).catch(function(){pendingCache=null;pendingErr="network error.";renderPending();});
@@ -3827,7 +3892,7 @@ function toLocalInput(ms){var d=new Date(ms - new Date(ms).getTimezoneOffset()*6
 function refreshUsers(){
   var key=keyEl.value.trim();
   users.innerHTML='<div class="empty">loading...</div>';
-  fetch("/admin/users?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+  aget("/admin/users").then(function(r){return r.json();}).then(function(d){
     if(d.error){usersCache=null;usersErr=d.error;renderUsers();return;}
     usersErr=null;usersCache=d.users||[];renderUsers();
   }).catch(function(){usersCache=null;usersErr="network error.";renderUsers();});
@@ -3937,7 +4002,7 @@ function repend(id,name){
 function refreshBalances(){
   var key=keyEl.value.trim();
   balances.innerHTML='<div class="empty">loading...</div>';
-  fetch("/admin/balances?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+  aget("/admin/balances").then(function(r){return r.json();}).then(function(d){
     if(d.error){balancesCache=null;balancesErr=d.error;renderBalances();return;}
     balancesErr=null;balancesCache=d.balances||[];renderBalances();
   }).catch(function(){balancesCache=null;balancesErr="network error.";renderBalances();});
@@ -3979,7 +4044,7 @@ function refreshShop(){
   shop.innerHTML='<div class="empty">loading...</div>';
   // the registry first: every card's dropdown is built from it
   loadThemes().then(function(){
-  fetch("/admin/shop?key="+encodeURIComponent(key)).then(function(r){return r.json();}).then(function(d){
+  aget("/admin/shop").then(function(r){return r.json();}).then(function(d){
     if(d.error){shop.innerHTML='<div class="empty">'+d.error+' — check your key.</div>';setCount("shop","");return;}
     shop.innerHTML="";
     setCount("shop", (d.items||[]).length);
@@ -3991,7 +4056,7 @@ function refreshShop(){
 var THEME_LIST=[];
 function loadThemes(){
   var key=keyEl.value.trim();
-  return fetch("/admin/themes?key="+encodeURIComponent(key)).then(function(r){return r.json();})
+  return aget("/admin/themes").then(function(r){return r.json();})
     .then(function(d){ if(d && d.themes) THEME_LIST=d.themes.filter(function(t){return !t.free;}); })
     .catch(function(){});
 }
