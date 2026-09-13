@@ -593,143 +593,233 @@
       '.swlock{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:17px;' +
       'text-shadow:0 1px 3px #000a}' +
       '.swatch.sw-wood{background:linear-gradient(120deg,#2b1a0a 0%,#3a2410 45%,#c8823c 100%)}' +
-      '.swatch.sw-dark{background:linear-gradient(120deg,#161618 0%,#232328 45%,#8b8b96 100%)}' +
-      /* =====================================================================
-         DARK MODE
-         The wood above is the shrine as built and owns every colour in this
-         sheet. A theme is a block like this one: it repaints the surfaces and
-         leaves the layout completely alone, so a new theme can never move
-         anything. Only colour properties belong below this line.
-         ===================================================================== */
-      /* data-theme sits ON <html>, so the root needs an attribute selector and
-         everything else a descendant one — "[data-theme] html" would match
-         nothing at all */
-      'html[data-theme="dark"],[data-theme="dark"] body{background:#121214;color:#e8e8ec}' +
-      '[data-theme="dark"] #mainhdr{background:#1c1c20;border-bottom-color:#2a2a30}' +
-      '[data-theme="dark"] #hdrShrine small{color:#9a9aa6}' +
-      '[data-theme="dark"] .hbtn{background:#232328;border-color:#3a3a44;color:#d6d6de}' +
-      '[data-theme="dark"] .hbtn:hover{background:#2e2e36;border-color:#6a6a78}' +
-      '[data-theme="dark"] #gate p,[data-theme="dark"] .hint{color:#9a9aa6}' +
-      '[data-theme="dark"] .warn{color:#d6d6de}' +
-      '[data-theme="dark"] input,[data-theme="dark"] textarea,' +
-      '[data-theme="dark"] #casino input,[data-theme="dark"] #casino select{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
-      '[data-theme="dark"] button{background:#5a5a68;color:#f2f2f6}' +
-      /* That blanket rule is the default for a SOLID button, and an attribute
-         plus a type selector outranks a plain .class — so every button that is
-         deliberately chrome-less has to say so AGAIN here or dark mode paints a
-         grey pill behind it. A username in the chat is a button, which is why
-         .who was the one that showed. Anything added below with a transparent
-         background belongs in this list too. */
-      '[data-theme="dark"] button.ghost{background:transparent;color:#b8b8c4;border-color:#3a3a44}' +
-      '[data-theme="dark"] .who,[data-theme="dark"] .pemoji,' +
-      '[data-theme="dark"] .casback,[data-theme="dark"] .brokex{background:transparent}' +
-      '[data-theme="dark"] #myhash{background:#1a1a1e;border-color:#2a2a30;color:#d6d6de}' +
-      '[data-theme="dark"] #f,[data-theme="dark"] #picker,[data-theme="dark"] #replybar{background:#1c1c20;border-color:#2a2a30}' +
-      '[data-theme="dark"] #pick{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
-      '[data-theme="dark"] .msg{background:#232328}' +
-      '[data-theme="dark"] .msg.me{background:#3d3d4a}' +
-      '[data-theme="dark"] .who{color:#9a9aa6}' +
-      '[data-theme="dark"] .msg.me .who,[data-theme="dark"] .who:hover{color:#d6d6de}' +
-      '[data-theme="dark"] .when{color:#8b8b96}' +
-      '[data-theme="dark"] .msg.me .when{color:#b8b8c4}' +
-      /* tung stays gold in every theme: he is not part of the decor */
-      '[data-theme="dark"] .msg.tung{background:linear-gradient(160deg,#26262c,#19191d);border-color:#5a4a24;border-left-color:#f2c063}' +
-      '[data-theme="dark"] .act,[data-theme="dark"] .chip{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
-      '[data-theme="dark"] .chip.on{background:#3d3d4a;border-color:#6a6a78}' +
-      '[data-theme="dark"] .quote{color:#9a9aa6;border-left-color:#6a6a78}' +
-      '[data-theme="dark"] .quote b{color:#e8e8ec}' +
-      '[data-theme="dark"] #rpal{background:#232328;border-color:#3a3a44}' +
-      '[data-theme="dark"] #rpal button:hover,[data-theme="dark"] .pemoji:hover{background:#3a3a44}' +
-      '[data-theme="dark"] .bigbtn{background:linear-gradient(155deg,#2a2a31,#1e1e23);border-color:#3a3a44;color:#c6c6d2}' +
-      '[data-theme="dark"] .bigbtn:hover{border-color:#8b8b96}' +
-      '[data-theme="dark"] .gearbtn{background:#232328;border-color:#3a3a44;color:#b8b8c4}' +
-      '[data-theme="dark"] .gearbtn:hover{border-color:#8b8b96;color:#e8e8ec}' +
-      '[data-theme="dark"] #shrinebar,[data-theme="dark"] #playbar,[data-theme="dark"] #origbar,' +
-      '[data-theme="dark"] #veilbar,[data-theme="dark"] #setbar{background:linear-gradient(180deg,#26262c,#1c1c20);border-bottom-color:#2a2a30}' +
-      '[data-theme="dark"] #banView{background:#0e0e10}' +
-      '[data-theme="dark"] #banUntil{color:#9a9aa6}' +
-      '[data-theme="dark"] .gtile{background:linear-gradient(155deg,#26262c,#1e1e23);border-color:#3a3a44;color:#e8e8ec}' +
-      '[data-theme="dark"] .gtile:hover{background:linear-gradient(155deg,#31313a,#26262c);border-color:#8b8b96}' +
-      '[data-theme="dark"] #originals,[data-theme="dark"] #veil,[data-theme="dark"] #settings,' +
-      '[data-theme="dark"] #casino{background:radial-gradient(120% 80% at 50% 0%,#1e1e23 0%,#111113 60%)}' +
-      '[data-theme="dark"] #origTitle,[data-theme="dark"] #veilTitle,[data-theme="dark"] #setTitle{color:#d6d6de}' +
-      '[data-theme="dark"] .origlead,[data-theme="dark"] .origtile span,[data-theme="dark"] #veilbody p{color:#9a9aa6}' +
-      '[data-theme="dark"] .origtile{background:linear-gradient(155deg,#26262c,#1a1a1e);border-color:#3a3a44;color:#e8e8ec}' +
-      '[data-theme="dark"] .origtile strong,[data-theme="dark"] #veilbody h2{color:#d6d6de}' +
-      '[data-theme="dark"] .setsec{background:linear-gradient(155deg,#26262c,#19191d);border-color:#3a3a44}' +
-      '[data-theme="dark"] .setsec h3{color:#d6d6de}' +
-      '[data-theme="dark"] .themecard{background:#1a1a1e;border-color:#3a3a44}' +
-      '[data-theme="dark"] .themecard strong{color:#d6d6de}' +
-      '[data-theme="dark"] .themecard.on{border-color:#8b8b96;box-shadow:0 0 0 1px #8b8b96 inset}' +
-      /* casino surfaces */
-      '[data-theme="dark"] #casbalwrap{background:#1a1a1e;border-color:#3a3a44}' +
-      '[data-theme="dark"] #casbalwrap b,[data-theme="dark"] #hdrCasino .chtitle{color:#d6d6de}' +
-      '[data-theme="dark"] .casgame{background:linear-gradient(155deg,#26262c,#1a1a1e);border-color:#3a3a44;color:#e8e8ec}' +
-      '[data-theme="dark"] .casgame:hover{background:#2e2e36;border-color:#8b8b96}' +
-      '[data-theme="dark"] .casgame .ci{color:#c6c6d2}' +
-      '[data-theme="dark"] .casgame.pvp{border-color:#5a5a68;background:linear-gradient(155deg,#2e2e36,#1e1e23)}' +
-      '[data-theme="dark"] .casgame.pvp:hover{border-color:#b8b8c4}' +
-      '[data-theme="dark"] .ctlrow,[data-theme="dark"] .pithist .ph{background:#19191d;border-color:#3a3a44}' +
-      '[data-theme="dark"] .panel{background:linear-gradient(150deg,#26262c,#19191d);border-color:#3a3a44}' +
-      '[data-theme="dark"] .stat,[data-theme="dark"] .cell,[data-theme="dark"] .shopitem,' +
-      '[data-theme="dark"] .pitrow,[data-theme="dark"] .rout{background:#232328;border-color:#3a3a44}' +
-      '[data-theme="dark"] .cell:hover{background:#2e2e36}' +
-      '[data-theme="dark"] .casback{border-color:#3a3a44;color:#b8b8c4}' +
-      '[data-theme="dark"] .cbtn{background:#5a5a68;color:#f2f2f6}' +
-      '[data-theme="dark"] .cbtn.sec{background:#232328;color:#d6d6de;border-color:#3a3a44}' +
-      '[data-theme="dark"] .altar{background:radial-gradient(80% 60% at 50% 12%,#2e2e36 0%,#1e1e23 55%,#141417 100%);border-color:#3a3a44}' +
-      '[data-theme="dark"] .godimg{border-color:#5a5a68}' +
-      '[data-theme="dark"] .godsub{color:#9a9aa6}' +
-      '[data-theme="dark"] #casclaim{background:#5a5a68;color:#f2f2f6}' +
-      '[data-theme="dark"] .brokebar,[data-theme="dark"] .roundbar,' +
-      '[data-theme="dark"] .pitrow.mine{background:linear-gradient(135deg,#2e2e36,#1e1e23);border-color:#8b8b96}' +
-      '[data-theme="dark"] .roundbar .rv,[data-theme="dark"] .compscore .cv{color:#c6c6d2}' +
-      '[data-theme="dark"] .roundbar .rside.up .rv,[data-theme="dark"] .compscore.fin .cstack.up .cv{color:#e8e8ec}' +
-      '[data-theme="dark"] .roundbar .rside.down .rv,[data-theme="dark"] .compscore.fin .cstack .cv{color:#8b8b96}' +
-      '[data-theme="dark"] .roundbar .rclock{color:#e8e8ec}' +
-      '[data-theme="dark"] .brokebar h4{color:#e8e8ec}' +
-      '[data-theme="dark"] .brokebar p,[data-theme="dark"] .pitrow p{color:#9a9aa6}' +
-      '[data-theme="dark"] .pitblurb,[data-theme="dark"] .pitpot,[data-theme="dark"] .pitscore .sv,' +
-      '[data-theme="dark"] .pitrow .price{color:#d6d6de}' +
-      '[data-theme="dark"] .pitmove{background:linear-gradient(155deg,#2e2e36,#1e1e23);border-color:#3a3a44;color:#d6d6de}' +
-      '[data-theme="dark"] .pitmove:hover:not(:disabled){border-color:#b8b8c4}' +
-      '[data-theme="dark"] .pitclock{color:#b8b8c4}' +
-      '[data-theme="dark"] .cfighter .cic{background:linear-gradient(155deg,#2e2e36,#1e1e23);border-color:#3a3a44}' +
-      '[data-theme="dark"] .cfighter .cnm{color:#9a9aa6}' +
-      '[data-theme="dark"] .cfighter.cwin .cic{border-color:#b8b8c4;box-shadow:0 0 0 3px #b8b8c433,0 10px 28px #0007}' +
-      '[data-theme="dark"] .cfighter.cwin .cnm{color:#e8e8ec}' +
-      '[data-theme="dark"] .cspark{background:radial-gradient(circle,#fff 0%,#b8b8c4 38%,#b8b8c400 70%)}' +
-      '[data-theme="dark"] .clashsay{color:#d6d6de}' +
-      '[data-theme="dark"] .clashsub{color:#8b8b96}' +
-      '[data-theme="dark"] .clashsay.cut{color:#9a9aa6}' +
-      '[data-theme="dark"] .cutslot.hot .pcard.hole .pcback{border-color:#8b8b96;box-shadow:0 0 18px #8b8b9655}' +
-      '[data-theme="dark"] .cutslot.won .pcard .pcfront{box-shadow:0 0 0 3px #d6d6de,0 10px 30px #0009}' +
-      '[data-theme="dark"] .cutslot.won::after{border-color:#d6d6de}' +
-      '[data-theme="dark"] .ovcard{background:linear-gradient(160deg,#26262c,#19191d);border-color:#3a3a44}' +
-      '[data-theme="dark"] .ovcard h3{color:#d6d6de}' +
-      '[data-theme="dark"] .ovrow{border-top-color:#2a2a30}' +
-      '[data-theme="dark"] .ovrow span{color:#e8e8ec}' +
-      '[data-theme="dark"] #appThread .tmsg.admin{background:#232328;border-color:#3a3a44}' +
-      '[data-theme="dark"] #appThread .tmsg.me{background:#5a5a68;color:#f2f2f6}' +
-      '[data-theme="dark"] #appThread .twhen{color:#8b8b96}' +
-      '[data-theme="dark"] #appThread .tmsg.me .twhen{color:#d6d6de}' +
-      /* every muted label in the sheet is the same wood brown (#8a6a3a). On a
-         grey ground that reads as a stain rather than as quiet text, so they all
-         go neutral together — one rule, so a new label picks it up by being
-         written in the house style rather than by being remembered here. */
-      '[data-theme="dark"] .seclabel,[data-theme="dark"] .casnote,[data-theme="dark"] .ctl>span,' +
-      '[data-theme="dark"] .stat b,[data-theme="dark"] .pcell b,[data-theme="dark"] .ovrow b,' +
-      '[data-theme="dark"] .bjlabel,[data-theme="dark"] .bjhtag,[data-theme="dark"] .dscale,' +
-      '[data-theme="dark"] .godnote,[data-theme="dark"] .brokex,[data-theme="dark"] .ovcard .ovsub,' +
-      '[data-theme="dark"] .sethint,[data-theme="dark"] .setlock,[data-theme="dark"] .setfield>span,' +
-      '[data-theme="dark"] .themecard .tnote,[data-theme="dark"] .pitsub,[data-theme="dark"] .pitscore .sl,' +
-      '[data-theme="dark"] .pitpicked .pl,[data-theme="dark"] .pithist .phn,[data-theme="dark"] .pcut b,' +
-      '[data-theme="dark"] .pitvs .pvs,[data-theme="dark"] .roundbar .rtag,' +
-      '[data-theme="dark"] .roundbar .rside b,[data-theme="dark"] .roundbar .rvs,' +
-      '[data-theme="dark"] .compscore .cstack b,[data-theme="dark"] .compscore .cvs,' +
-      '[data-theme="dark"] .origlead{color:#8b8b96}' +
-      '[data-theme="dark"] .pithist .phv,[data-theme="dark"] .stat span,[data-theme="dark"] .pcell span{color:#c6c6d2}' +
-      '[data-theme="dark"] .pcell.gem span{color:#6ee787}';
+      '.swatch.sw-dark{background:linear-gradient(120deg,#161618 0%,#232328 45%,#8b8b96 100%)}';
+
+  /* =====================================================================
+     THEME ENGINE — everything above this line is the shrine as built, and
+     that IS the wood: it has no theme block of its own because every other
+     skin overrides away from it.
+
+     A skin is a PALETTE, not a stylesheet. THEME_RULES below is the one list
+     of surfaces a skin repaints, written once with braced token names where
+     the colours go, and themeCss() stamps a palette into it and scopes every
+     rule to that skin. So adding a theme is a few colours in config.js and
+     nothing else: no CSS to write, and no way to miss a surface, because every
+     skin is generated from the same list.
+
+     A palette needs three colours: the ground, the ink and the accent. Every
+     other token is mixed from those, and any of them can be spelled out when a
+     skin wants something specific. Dark Mode pins all of its own, because it
+     was hand-picked before this existed and should not shift under it.
+
+     Only colour belongs in here. A theme repaints; it never moves anything.
+     ===================================================================== */
+
+  /* "&" is the themed root: "&" alone becomes html[data-theme=id] and "& .x"
+     becomes [data-theme=id] .x — data-theme sits ON <html>, so the root needs
+     the attribute selector itself and everything else a descendant one. */
+  var THEME_RULES =
+      '&,& body{background:{bg};color:{text}}' +
+      '& #mainhdr{background:{surface};border-bottom-color:{lineSoft}}' +
+      '& #hdrShrine small{color:{muted}}' +
+      '& .hbtn{background:{raised};border-color:{line};color:{heading}}' +
+      '& .hbtn:hover{background:{hover};border-color:{lineMid}}' +
+      '& #gate p,& .hint{color:{muted}}' +
+      '& .warn{color:{heading}}' +
+      '& input,& textarea,& #casino input,& #casino select{background:{inset};border-color:{line};color:{text}}' +
+      '& button{background:{solid};color:{solidInk}}' +
+      '& button.ghost{background:transparent;color:{textDim};border-color:{line}}' +
+      '& .who,& .pemoji,& .casback,& .brokex{background:transparent}' +
+      '& #myhash{background:{inset};border-color:{lineSoft};color:{heading}}' +
+      '& #f,& #picker,& #replybar{background:{surface};border-color:{lineSoft}}' +
+      '& #pick{background:{inset};border-color:{line};color:{text}}' +
+      '& .msg{background:{raised}}' +
+      '& .msg.me{background:{pressed}}' +
+      '& .who{color:{muted}}' +
+      '& .msg.me .who,& .who:hover{color:{heading}}' +
+      '& .when{color:{lineHot}}' +
+      '& .msg.me .when{color:{textDim}}' +
+      '& .msg.tung{background:linear-gradient(160deg,{raisedHi},{raisedLo});border-color:#5a4a24;border-left-color:#f2c063}' +
+      '& .act,& .chip{background:{inset};border-color:{line};color:{text}}' +
+      '& .chip.on{background:{pressed};border-color:{lineMid}}' +
+      '& .quote{color:{muted};border-left-color:{lineMid}}' +
+      '& .quote b{color:{text}}' +
+      '& #rpal{background:{raised};border-color:{line}}' +
+      '& #rpal button:hover,& .pemoji:hover{background:{line}}' +
+      '& .bigbtn{background:linear-gradient(155deg,{raisedHi2},{bgCore});border-color:{line};color:{text2}}' +
+      '& .bigbtn:hover{border-color:{lineHot}}' +
+      '& .gearbtn{background:{raised};border-color:{line};color:{textDim}}' +
+      '& .gearbtn:hover{border-color:{lineHot};color:{text}}' +
+      '& #shrinebar,& #playbar,& #origbar,& #veilbar,& #setbar{background:linear-gradient(180deg,{raisedHi},{surface});border-bottom-color:{lineSoft}}' +
+      '& #banView{background:{bgSunk}}' +
+      '& #banUntil{color:{muted}}' +
+      '& .gtile{background:linear-gradient(155deg,{raisedHi},{bgCore});border-color:{line};color:{text}}' +
+      '& .gtile:hover{background:linear-gradient(155deg,{hoverHi},{raisedHi});border-color:{lineHot}}' +
+      '& #originals,& #veil,& #settings,& #casino{background:radial-gradient(120% 80% at 50% 0%,{bgCore} 0%,{bgEdge} 60%)}' +
+      '& #origTitle,& #veilTitle,& #setTitle{color:{heading}}' +
+      '& .origlead,& .origtile span,& #veilbody p{color:{muted}}' +
+      '& .origtile{background:linear-gradient(155deg,{raisedHi},{inset});border-color:{line};color:{text}}' +
+      '& .origtile strong,& #veilbody h2{color:{heading}}' +
+      '& .setsec{background:linear-gradient(155deg,{raisedHi},{raisedLo});border-color:{line}}' +
+      '& .setsec h3{color:{heading}}' +
+      '& .themecard{background:{inset};border-color:{line}}' +
+      '& .themecard strong{color:{heading}}' +
+      '& .themecard.on{border-color:{lineHot};box-shadow:0 0 0 1px {lineHot} inset}' +
+      '& #casbalwrap{background:{inset};border-color:{line}}' +
+      '& #casbalwrap b,& #hdrCasino .chtitle{color:{heading}}' +
+      '& .casgame{background:linear-gradient(155deg,{raisedHi},{inset});border-color:{line};color:{text}}' +
+      '& .casgame:hover{background:{hover};border-color:{lineHot}}' +
+      '& .casgame .ci{color:{text2}}' +
+      '& .casgame.pvp{border-color:{solid};background:linear-gradient(155deg,{hover},{bgCore})}' +
+      '& .casgame.pvp:hover{border-color:{textDim}}' +
+      '& .ctlrow,& .pithist .ph{background:{raisedLo};border-color:{line}}' +
+      '& .panel{background:linear-gradient(150deg,{raisedHi},{raisedLo});border-color:{line}}' +
+      '& .stat,& .cell,& .shopitem,& .pitrow,& .rout{background:{raised};border-color:{line}}' +
+      '& .cell:hover{background:{hover}}' +
+      '& .casback{border-color:{line};color:{textDim}}' +
+      '& .cbtn{background:{solid};color:{solidInk}}' +
+      '& .cbtn.sec{background:{raised};color:{heading};border-color:{line}}' +
+      '& .altar{background:radial-gradient(80% 60% at 50% 12%,{hover} 0%,{bgCore} 55%,{sunk} 100%);border-color:{line}}' +
+      '& .godimg{border-color:{solid}}' +
+      '& .godsub{color:{muted}}' +
+      '& #casclaim{background:{solid};color:{solidInk}}' +
+      '& .brokebar,& .roundbar,& .pitrow.mine{background:linear-gradient(135deg,{hover},{bgCore});border-color:{lineHot}}' +
+      '& .roundbar .rv,& .compscore .cv{color:{text2}}' +
+      '& .roundbar .rside.up .rv,& .compscore.fin .cstack.up .cv{color:{text}}' +
+      '& .roundbar .rside.down .rv,& .compscore.fin .cstack .cv{color:{lineHot}}' +
+      '& .roundbar .rclock{color:{text}}' +
+      '& .brokebar h4{color:{text}}' +
+      '& .brokebar p,& .pitrow p{color:{muted}}' +
+      '& .pitblurb,& .pitpot,& .pitscore .sv,& .pitrow .price{color:{heading}}' +
+      '& .pitmove{background:linear-gradient(155deg,{hover},{bgCore});border-color:{line};color:{heading}}' +
+      '& .pitmove:hover:not(:disabled){border-color:{textDim}}' +
+      '& .pitclock{color:{textDim}}' +
+      '& .cfighter .cic{background:linear-gradient(155deg,{hover},{bgCore});border-color:{line}}' +
+      '& .cfighter .cnm{color:{muted}}' +
+      '& .cfighter.cwin .cic{border-color:{textDim};box-shadow:0 0 0 3px {lineHotA20},0 10px 28px {shadow}}' +
+      '& .cfighter.cwin .cnm{color:{text}}' +
+      '& .cspark{background:radial-gradient(circle,#fff 0%,{textDim} 38%,{lineHotA00} 70%)}' +
+      '& .clashsay{color:{heading}}' +
+      '& .clashsub{color:{lineHot}}' +
+      '& .clashsay.cut{color:{muted}}' +
+      '& .cutslot.hot .pcard.hole .pcback{border-color:{lineHot};box-shadow:0 0 18px {lineHotA33}}' +
+      '& .cutslot.won .pcard .pcfront{box-shadow:0 0 0 3px {heading},0 10px 30px {shadowHard}}' +
+      '& .cutslot.won::after{border-color:{heading}}' +
+      '& .ovcard{background:linear-gradient(160deg,{raisedHi},{raisedLo});border-color:{line}}' +
+      '& .ovcard h3{color:{heading}}' +
+      '& .ovrow{border-top-color:{lineSoft}}' +
+      '& .ovrow span{color:{text}}' +
+      '& #appThread .tmsg.admin{background:{raised};border-color:{line}}' +
+      '& #appThread .tmsg.me{background:{solid};color:{solidInk}}' +
+      '& #appThread .twhen{color:{lineHot}}' +
+      '& #appThread .tmsg.me .twhen{color:{heading}}' +
+      '& .seclabel,& .casnote,& .ctl>span,& .stat b,& .pcell b,& .ovrow b,& .bjlabel,& .bjhtag,& .dscale,& .godnote,& .brokex,& .ovcard .ovsub,& .sethint,& .setlock,& .setfield>span,& .themecard .tnote,& .pitsub,& .pitscore .sl,& .pitpicked .pl,& .pithist .phn,& .pcut b,& .pitvs .pvs,& .roundbar .rtag,& .roundbar .rside b,& .roundbar .rvs,& .compscore .cstack b,& .compscore .cvs,& .origlead{color:{lineHot}}' +
+      '& .pithist .phv,& .stat span,& .pcell span{color:{text2}}' +
+      '& .pcell.gem span{color:{good}}';
+
+  /* ---- colour maths: enough to mix two hexes, and no more ---- */
+  function hexOf(c){
+    var h=String(c||"").trim().replace(/^#/,"");
+    if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    if(!/^[0-9a-f]{6}$/i.test(h))return null;
+    return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];
+  }
+  function hex2(n){var v=Math.max(0,Math.min(255,Math.round(n))).toString(16);return v.length<2?"0"+v:v;}
+  /* t=0 is all a, t=1 is all b */
+  function mix(a,b,t){
+    var x=hexOf(a),y=hexOf(b);
+    if(!x||!y)return a;
+    return "#"+hex2(x[0]+(y[0]-x[0])*t)+hex2(x[1]+(y[1]-x[1])*t)+hex2(x[2]+(y[2]-x[2])*t);
+  }
+  /* a hex with an alpha channel, for the few places a skin needs to fade */
+  function fade(c,a){var x=hexOf(c);return x?"#"+hex2(x[0])+hex2(x[1])+hex2(x[2])+hex2(a*255):c;}
+  /* rough perceived brightness, 0..1 */
+  function lum(c){var x=hexOf(c);return x?(0.2126*x[0]+0.7152*x[1]+0.0722*x[2])/255:0;}
+  /* An accent is chosen for how it looks, not for how it reads. This is the
+     guard on the three-colour promise: if the colour a skin picked sits too
+     close to its own ground to be read as text, it is walked toward the ink
+     until it clears. A skin that wants the flat accent anyway can still name
+     the token outright. */
+  function readable(c,bg,ink){
+    var gap=Math.abs(lum(c)-lum(bg));
+    for(var t=0;t<1&&gap<.30;t+=.1){c=mix(c,ink,.1);gap=Math.abs(lum(c)-lum(bg));}
+    return c;
+  }
+
+  /* The whole derivation. The fractions ARE the ramp: how far a surface or a
+     line sits from the ground, travelling toward the ink. Read top to bottom
+     it goes deepest background, through the panels, out to the borders, then
+     back down through the text weights. */
+  var THEME_MIX = {
+    bgSunk:    function(p){return mix(p.bg,"#000000",.25);},
+    bgEdge:    function(p){return mix(p.bg,"#000000",.10);},
+    bgCore:    function(p){return mix(p.bg,p.text,.06);},
+    sunk:      function(p){return mix(p.bg,"#000000",.12);},
+    inset:     function(p){return mix(p.bg,p.text,.04);},
+    surface:   function(p){return mix(p.bg,p.text,.06);},
+    raised:    function(p){return mix(p.bg,p.text,.10);},
+    raisedHi:  function(p){return mix(p.bg,p.text,.13);},
+    raisedHi2: function(p){return mix(p.bg,p.text,.12);},
+    raisedLo:  function(p){return mix(p.bg,p.text,.04);},
+    hover:     function(p){return mix(p.bg,p.text,.16);},
+    hoverHi:   function(p){return mix(p.bg,p.text,.19);},
+    pressed:   function(p){return mix(p.bg,p.text,.22);},
+    lineSoft:  function(p){return mix(p.bg,p.text,.08);},
+    line:      function(p){return mix(p.bg,p.text,.18);},
+    lineMid:   function(p){return mix(p.bg,p.text,.32);},
+    lineHot:   function(p){return p.accent?mix(p.accent,p.bg,.40):mix(p.bg,p.text,.48);},
+    solid:     function(p){return mix(p.bg,p.text,.28);},
+    solidInk:  function(p){return mix(p.text,"#ffffff",.35);},
+    /* The text ramp is where the accent actually gets spent. In the wood these
+       slots are the orange and the gold — the username, the hints, the section
+       headings — so a skin with an accent and nothing else still reads as that
+       colour rather than as another grey. A skin that wants grey says so, the
+       way Dark Mode does. */
+    heading:   function(p){return p.accent?readable(mix(p.accent,"#ffffff",.35),p.bg,p.text):mix(p.text,p.bg,.10);},
+    text2:     function(p){return p.accent?mix(p.text,p.accent,.25):mix(p.text,p.bg,.18);},
+    textDim:   function(p){return p.accent?readable(mix(p.accent,p.text,.30),p.bg,p.text):mix(p.text,p.bg,.28);},
+    muted:     function(p){return p.accent?readable(p.accent,p.bg,p.text):mix(p.text,p.bg,.42);},
+    good:      function(p){return "#6ee787";},
+    /* the fades, derived so they stay in the skin's own family */
+    lineHotA20:function(p){return fade(p.lineHot,.20);},
+    lineHotA00:function(p){return fade(p.lineHot,0);},
+    lineHotA33:function(p){return fade(p.lineHot,.33);},
+    shadow:    function(p){return fade("#000000",.47);},
+    shadowHard:function(p){return fade("#000000",.60);}
+  };
+  /* `accent` is deliberately not in the ramp: it is the one colour a skin is
+     actually ABOUT, and blending it into every surface is how a theme turns
+     into mud. It is spent where the shrine points at something. */
+  function palette(spec){
+    var p={},k;
+    for(k in spec)if(Object.prototype.hasOwnProperty.call(spec,k))p[k]=spec[k];
+    /* order matters: the fades read lineHot, so the ramp fills first */
+    for(k in THEME_MIX){
+      if(Object.prototype.hasOwnProperty.call(THEME_MIX,k)&&p[k]===undefined)p[k]=THEME_MIX[k](p);
+    }
+    return p;
+  }
+  function themeCss(id,spec){
+    var p=palette(spec),scope='[data-theme="'+id+'"]';
+    return THEME_RULES
+      .replace(/\{(\w+)\}/g,function(whole,key){
+        /* a token with no colour would paint the word "undefined" across the
+           skin; falling back to the ink keeps it readable while it is wrong */
+        return p[key]===undefined?p.text:p[key];
+      })
+      .replace(/&( |,|\{)/g,function(whole,after){
+        return (after===" "?scope:"html"+scope)+after;
+      });
+  }
+
+  /* Every skin in the registry that carries a palette gets a block. The wood
+     carries none: it is the base stylesheet above. */
+  var SKINS=Shrine.THEMES||[];
+  for(var si=0;si<SKINS.length;si++){
+    if(SKINS[si]&&SKINS[si].palette)Shrine.CSS+=themeCss(SKINS[si].id,SKINS[si].palette);
+  }
+  Shrine.themeCss=themeCss;
+  Shrine.themePalette=palette;
 
   /* the in-page in-page player styles were removed — catalog items now open in a
      separate about:blank tab that carries its own header + iframe styles */

@@ -54,14 +54,56 @@
   var LBL_POPUP = "allow popups to play " + LBL_PLAYS;
 
   /* The shrine's skins, offered on the settings page. `id` is what lands in
-     localStorage and on <html data-theme>; the stylesheet carries a block per
-     id, so adding a theme is a row here plus a block in styles.js. The wood is
-     the shrine as built, which is why it has no data-theme block of its own —
-     it IS the base stylesheet, and every other theme overrides away from it.
-     Anything locked shows on the page but cannot be chosen yet. */
+     localStorage and on <html data-theme>; `palette` is the whole skin.
+     styles.js turns a palette into the stylesheet block for that id, so adding
+     a theme is ONE row here and no CSS at all.
+
+     A palette wants three colours and takes any number:
+
+       bg      the ground the shrine is painted on
+       text    the ink on it
+       accent  the colour the skin is actually about
+
+     Everything else — panels, borders, hovers, the muted greys, the solid
+     buttons — is mixed from those by THEME_MIX in styles.js. Override any one
+     of those tokens by naming it here and the mix leaves it alone; see the
+     ramp in styles.js for the full list of names.
+
+     The wood has no palette because it IS the base stylesheet — every other
+     skin overrides away from it. Dark Mode spells all of its own out: it was
+     hand-picked before this engine existed, and pinning it means the engine
+     cannot shift a skin people already wear.
+
+     A theme also needs a row in SHRINE_THEMES in server.ts, which is what
+     decides whether it is free or has to be bought. Anything locked shows on
+     the settings page but cannot be chosen yet. */
   var THEMES = [
     { id: "wood", name: "Tung’s Wood", note: "the shrine as it was built." },
-    { id: "dark", name: "Dark Mode", note: "the wood, after hours." }
+    {
+      id: "dark", name: "Dark Mode", note: "the wood, after hours.",
+      palette: {
+        bg: "#121214", text: "#e8e8ec", accent: "#9a9aa6",
+        bgSunk: "#0e0e10", bgEdge: "#111113", bgCore: "#1e1e23", sunk: "#141417",
+        inset: "#1a1a1e", surface: "#1c1c20", raised: "#232328",
+        raisedHi: "#26262c", raisedHi2: "#2a2a31", raisedLo: "#19191d",
+        hover: "#2e2e36", hoverHi: "#31313a", pressed: "#3d3d4a",
+        lineSoft: "#2a2a30", line: "#3a3a44", lineMid: "#6a6a78", lineHot: "#8b8b96",
+        solid: "#5a5a68", solidInk: "#f2f2f6",
+        heading: "#d6d6de", text2: "#c6c6d2", textDim: "#b8b8c4", muted: "#9a9aa6",
+        good: "#6ee787",
+        lineHotA20: "#b8b8c433", lineHotA00: "#b8b8c400", lineHotA33: "#8b8b9655",
+        shadow: "#0007", shadowHard: "#0009"
+      }
+    },
+    /* and this is what a skin costs to write now: three colours. */
+    {
+      id: "ash", name: "Ash", note: "cold stone, and a blue that has been left out in it.",
+      palette: { bg: "#101418", text: "#dfe6ee", accent: "#6fa8d6" }
+    },
+    {
+      id: "ember", name: "Ember", note: "the shrine with the fire still in it.",
+      palette: { bg: "#1a0f0c", text: "#f6e4d8", accent: "#e2683c" }
+    }
   ];
   var THEME_DEFAULT = "wood";
 

@@ -374,9 +374,14 @@ function handValue(cards: string[]): { total: number; soft: boolean } {
 // Ownership lives at ["theme", uid, themeId]. The client is told what it owns
 // and never decides for itself; a locked theme it tries to wear anyway is
 // simply not in the stylesheet it was served.
+// This list is the shop and ownership side of a skin. What the skin LOOKS like
+// is a palette in assets/js/shrine/config.js — the stylesheet is generated from
+// it, so a new theme is a row there and a row here, and no CSS anywhere.
 const SHRINE_THEMES: { id: string; name: string; note: string; free?: boolean }[] = [
   { id: "wood", name: "Tung’s Wood", note: "the shrine as it was built.", free: true },
   { id: "dark", name: "Dark Mode", note: "the wood, after hours." },
+  { id: "ash", name: "Ash", note: "cold stone, and a blue that has been left out in it." },
+  { id: "ember", name: "Ember", note: "the shrine with the fire still in it." },
 ];
 function themeById(id: string) {
   return SHRINE_THEMES.find((t) => t.id === id) || null;

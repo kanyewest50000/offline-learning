@@ -234,6 +234,28 @@ stylesheet that was served. Buying charges once, re-buying is refused rather
 than taken as a donation, and taking an item off the shelves does not repossess
 what people already bought. `scripts/test-themes.ts` covers all of it.
 
+A skin is a palette, not a stylesheet. `assets/js/shrine/styles.js` holds one
+list of every surface a theme repaints, written once with braced token names
+where the colours go, and stamps a palette into it per skin — so adding a theme
+is a few colours in `assets/js/shrine/config.js` and no CSS at all, and it
+cannot miss a surface, because every skin is generated from the same list.
+
+A palette wants three colours — `bg` the ground, `text` the ink, `accent` the
+colour the skin is actually about — and the rest of the ramp (panels, borders,
+hovers, the muted greys, the solid buttons) is mixed from them. The accent is
+spent on the text ramp rather than blended into the surfaces, which is where the
+wood spends its orange, so a skin with nothing but an accent still reads as that
+colour instead of as another grey. An accent too close to its own ground to be
+read is walked toward the ink until it clears. Any single token can be spelled
+out to override what the mix would have chosen: **Dark Mode** pins all of its
+own, because it was hand-picked before the engine existed — and
+`scripts/test-theme-engine.ts` checks it comes back out of the engine exactly as
+it went in, along with the promise that three colours fill every token.
+
+The other half of a skin is a row in `SHRINE_THEMES` in `server.ts`, which is
+what decides whether it is free or has to be bought; the two lists have to
+match, and that test checks it.
+
 ## admin
 
 `/admin` has a **Post as…** pane: drop a line into the chat under an approved
