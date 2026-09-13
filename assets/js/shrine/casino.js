@@ -1237,12 +1237,17 @@
     v.appendChild(panel);
     var road=el("div","road");v.appendChild(road);
     var r=res(v);
-    var LANES=0,STEP=0,Q={easy:0.96,medium:0.92,hard:0.85,daredevil:0.75};
-    function build(n,q){
+    var LANES=0,STEP=0;
+    /* the ladder is the server's own list of what each lane pays, so the road and
+       the till can never quote different numbers. An older server that does not
+       send one leaves the rungs unlabelled rather than guessing: the panel's
+       current/next are server-sent and stay right either way. */
+    function build(n,ladder){
       road.innerHTML="";
       for(var i=1;i<=n;i++){
         var L=el("div","rlane");
-        L.appendChild(el("div","lm",(0.99/Math.pow(q,i)).toFixed(2)+"x"));
+        var rung=(ladder&&ladder[i-1]);
+        L.appendChild(el("div","lm",rung?Number(rung).toFixed(2)+"x":""));
         L.appendChild(el("div","lc",""));
         L.appendChild(el("div",null,String(i)));
         // traffic in every lane the cow has not reached
@@ -1272,7 +1277,7 @@
         if(d.error){roundSaw(d);bad(r,d.error);return;}
         roundStaked(d);
         setBal(BAL-Number(bet.value));
-        LANES=d.lanes;STEP=0;build(LANES,Q[diff.value]||0.92);running(true);
+        LANES=d.lanes;STEP=0;build(LANES,d.ladder);running(true);
         r.className="casres";r.textContent="";cash.style.display="none";
         pLane.val.textContent="0 / "+LANES;pCur.val.textContent="1.00x";pNext.val.textContent=mult(d.nextMultiplier);
       }).catch(function(){start.disabled=false;roundSaw(null);bad(r,"network error");});

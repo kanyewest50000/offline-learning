@@ -614,7 +614,15 @@
       '[data-theme="dark"] input,[data-theme="dark"] textarea,' +
       '[data-theme="dark"] #casino input,[data-theme="dark"] #casino select{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +
       '[data-theme="dark"] button{background:#5a5a68;color:#f2f2f6}' +
+      /* That blanket rule is the default for a SOLID button, and an attribute
+         plus a type selector outranks a plain .class — so every button that is
+         deliberately chrome-less has to say so AGAIN here or dark mode paints a
+         grey pill behind it. A username in the chat is a button, which is why
+         .who was the one that showed. Anything added below with a transparent
+         background belongs in this list too. */
       '[data-theme="dark"] button.ghost{background:transparent;color:#b8b8c4;border-color:#3a3a44}' +
+      '[data-theme="dark"] .who,[data-theme="dark"] .pemoji,' +
+      '[data-theme="dark"] .casback,[data-theme="dark"] .brokex{background:transparent}' +
       '[data-theme="dark"] #myhash{background:#1a1a1e;border-color:#2a2a30;color:#d6d6de}' +
       '[data-theme="dark"] #f,[data-theme="dark"] #picker,[data-theme="dark"] #replybar{background:#1c1c20;border-color:#2a2a30}' +
       '[data-theme="dark"] #pick{background:#1a1a1e;border-color:#3a3a44;color:#e8e8ec}' +

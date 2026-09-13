@@ -392,7 +392,7 @@ async function ownsTheme(uid: string, id: string): Promise<boolean> {
 const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 
 // beef (crash-chicken) difficulties: per-step SURVIVAL probability + lane cap.
-// higher risk => lower survival => steeper multiplier (0.99 / survival^step).
+// higher risk => lower survival => steeper multiplier (HOUSE / survival^step).
 const BEEF: Record<string, { q: number; lanes: number }> = {
   easy: { q: 0.96, lanes: 24 },
   medium: { q: 0.92, lanes: 22 },
@@ -413,6 +413,15 @@ function minesMult(count: number, safe: number): number { return round2(minesMul
 // beef multiplier after surviving `step` lanes at per-step survival prob q
 function beefMultExact(q: number, step: number): number { return HOUSE / Math.pow(q, step); }
 function beefMult(q: number, step: number): number { return round2(beefMultExact(q, step)); }
+// Every lane's multiplier for one difficulty, straight off the function that
+// decides the payout. The road is drawn from this rather than from a copy of
+// the odds in the client: a second copy is a second thing to keep in step, and
+// when it fell behind the road quoted a 1% edge while the till paid 0.1%.
+function beefLadder(q: number, lanes: number): number[] {
+  const rungs: number[] = [];
+  for (let i = 1; i <= lanes; i++) rungs.push(beefMult(q, i));
+  return rungs;
+}
 
 // ---- blackjack, played as a list of hands so splitting is just "more hands" ----
 // state: { hands:[{cards,bet,done,result,payout}], active, dealer, split, base }
@@ -3069,7 +3078,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     let deathStep = cfg.lanes + 1; // survives the whole road unless rolled sooner
     for (let s = 1; s <= cfg.lanes; s++) { if (rnd() >= cfg.q) { deathStep = s; break; } }
     await kv.set(["beef", u.id], { bet, q: cfg.q, lanes: cfg.lanes, deathStep, step: 0, w: purse.tag }, { expireIn: GAME_TTL });
-    return json({ ok: true, state: "playing", step: 0, lanes: cfg.lanes, multiplier: 1, nextMultiplier: beefMult(cfg.q, 1), ...purseJson(purse) });
+    return json({
+      ok: true, state: "playing", step: 0, lanes: cfg.lanes, multiplier: 1,
+      nextMultiplier: beefMult(cfg.q, 1), ladder: beefLadder(cfg.q, cfg.lanes),
+      ...purseJson(purse),
+    });
   }
   if (req.method === "POST" && path === "/cas/beef/step") {
     // deno-lint-ignore no-explicit-any
