@@ -39,8 +39,12 @@ must(/DUEL_OPEN_MS"\) \|\| 10 \* 60 \* 1000\)/.test(src), "an unjoined table mus
 must(/DUEL_CONFIRM_MS"\) \|\| 10 \* 1000\)/.test(src), "the confirm window must default to 10 seconds");
 // the pot is both stakes and nothing is skimmed: a rake would break every
 // conservation assertion below, so the absence of one is pinned here too
-must(/credits\.push\(\{ id: w\.id, amount: round2\(d\.bet \* seatedPlayers\(d\)\.length\) \}\)/.test(src),
-  "the winner must take every stake at the table — no rake, no rounding");
+must(/const pot = round2\(d\.bet \* people\.length\);/.test(src),
+  "the pot must be every stake at the table — no rake");
+must(/const upto = floor2\(pot \* i \/ ways\);/.test(src) && /shares\.push\(round2\(upto - paid\)\)/.test(src),
+  "a split must be floored running totals, so no share is ever rounded up");
+must(/if \(winners\.length === 1\) next\.winner = winners\[0\]\.name;/.test(src),
+  "`winner` must name a sole winner and nobody else, or a split reads as an outright win");
 must(/if \(ranks\.filter\(\(r\) => r === hi\)\.length !== 1\) continue/.test(src),
   "a high-card tie must be re-cut at any table size, not split or pushed");
 must(/if \(entry\.value\?\.settled\) return false;/.test(src),
@@ -57,8 +61,20 @@ must(/async function purseOfStake\(/.test(src) && /w: purse\.tag/.test(src),
   "a game must carry the stake it was dealt from, so it settles back into it");
 must(/if \(meant && meant !== id\) \{ p\.over = true; return WOOD_OVER; \}/.test(src),
   "naming a round that is not live must refuse a wager rather than re-aim it at sahurs");
-must(/let bust = !!opt\.last && me\.chips <= 0;/.test(src) && /if \(open\.any\) bust = false;/.test(src),
+must(/if \(opt\.last && me\.chips <= 0\) \{/.test(src) && /const own = await stakesOpen\(uid, duelId, opt\.retire\?\.key\);/.test(src)
+  && /if \(!own\.any\) \{/.test(src),
   "an empty stack may only end a round once every table holding a stake has been read");
+must(/if \(standing\.length <= 1\) out = compResult\(next, "bust", standing\);/.test(src),
+  "a bust may only end the round once there is nobody left to play against");
+// `standing` being empty cannot be reached through the API — the bust before it
+// always ends the round first — so the fallback that keeps an empty field from
+// paying nobody is pinned here rather than played out
+must(/const field = among && among\.length \? among : people;/.test(src),
+  "an empty field must fall back to the whole table, not settle a pot onto nobody");
+must(/const theirs = await stakesOpen\(other\.id, duelId\);[\s\S]{0,120}guard\.push\(\.\.\.theirs\.guard\);/.test(src),
+  "deciding who is still standing must guard on the tables it read, or a hand dealt mid-decision is ignored");
+must(/const MULTI_SEAT = new Set\(\["cut", "comp"\]\);/.test(src),
+  "the cut and competitive gambling are the games that seat more than two");
 must(/if \(retire\) op = op\.check\(retire\.entry\)\.delete\(retire\.key\);/.test(src),
   "a game record and the wood it pays must be retired in one commit, or a hand could cash out twice");
 // every release of the escrow has to ride the same guarded commit
@@ -841,9 +857,232 @@ await conserved(A.token, B.token, "a full duel", async () => {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 8. COMPETITIVE GAMBLING AT THREE AND FOUR. The same round, more chairs. Two
+//    things change and both of them are money. A pot shared between three or
+//    four has to come out to exactly the pot, and a player going broke can no
+//    longer end the table — the others still have their clock, and cutting it
+//    short for them would be a way to freeze a lead.
+{
+  const W = await member("cmpW"), X = await member("cmpX");
+  const Y = await member("cmpY"), Z = await member("cmpZ");
+  const all = [W, X, Y, Z];
+  const lobby = (await j("/duel/list?token=" + encodeURIComponent(W.token))).body;
+  const STACK = Number(lobby.compStack);
+
+  // anything still running would hold a player out of the next table
+  async function quiet() {
+    let waited = false;
+    for (const who of all) {
+      const now = await j("/duel/list?token=" + encodeURIComponent(who.token));
+      if (now.body?.mine) {
+        if (!waited) { await sleep(COMP_MS + 400); waited = true; }
+        await j("/duel/list?token=" + encodeURIComponent(who.token));
+      }
+    }
+  }
+  // seat a round of `n` and get everybody's yes in
+  async function round(n: number, bet: number) {
+    await quiet();
+    const players = all.slice(0, n);
+    for (const p of players) await fund(p, 100);
+    const opened = await post("/duel/create", { token: players[0].token, game: "comp", bet, seats: n });
+    must(opened.body?.ok === true && opened.body.duel.seats === n,
+      "could not open a " + n + "-seat round: " + JSON.stringify(opened.body));
+    const id = opened.body.duel.id as string;
+    for (let i = 1; i < n; i++) {
+      const seat = await post("/duel/join", { token: players[i].token, id });
+      must(seat.body?.ok === true, "sit-down " + i + " failed: " + JSON.stringify(seat.body));
+      const want = i === n - 1 ? "confirm" : "open";
+      must(seat.body.duel.state === want,
+        "after " + (i + 1) + " seated a " + n + "-seat round should be " + want + ", got " + seat.body.duel.state);
+    }
+    let go;
+    for (const p of players) go = await post("/duel/confirm", { token: p.token, id });
+    must(go?.body?.duel?.state === "live", "every yes must start the round: " + JSON.stringify(go?.body));
+    const view = (await j("/duel/state?token=" + encodeURIComponent(players[0].token) + "&id=" + id)).body.duel;
+    must(view.players.length === n, "the round must seat " + n + ": " + view.players.length);
+    for (const seat of view.players) {
+      must(seat.chips === STACK, "every player must start a round on the same wood: " + JSON.stringify(seat));
+    }
+    must(view.pot === money(bet * n), "the pot must be every stake: " + view.pot);
+    return { id, players };
+  }
+  const state = async (t: string, id: string) =>
+    (await j("/duel/state?token=" + encodeURIComponent(t) + "&id=" + id)).body.duel;
+  // a limbo target that high comes in about once in a million, so a stake put
+  // on it is a loss you can write a test around
+  const sink = (t: string, bet: number, id: string) =>
+    post("/cas/limbo", { token: t, bet, target: 1000000, round: id });
+
+  // -- a round of three, run to the buzzer: the biggest pile takes the lot
+  {
+    const { id, players } = await round(3, 6);
+    const [p1, p2, p3] = players;
+    must((await sink(p2.token, 100, id)).body?.ok === true, "p2 must be able to lose some wood");
+    must((await sink(p3.token, 200, id)).body?.ok === true, "p3 must be able to lose more");
+    // everybody sees the whole table, not just one opponent
+    const mid = await state(p3.token, id);
+    must(mid.players.length === 3, "every seat must be on the scoreboard");
+    const byName: Record<string, number> = {};
+    for (const seat of mid.players) byName[seat.name] = seat.chips;
+    must(byName[p1.name] === STACK && byName[p2.name] === money(STACK - 100) && byName[p3.name] === money(STACK - 200),
+      "every stack must be public the whole way through: " + JSON.stringify(byName));
+    await sleep(COMP_MS + 400);
+    await Promise.all(new Array(10).fill(0).map(() => state(p2.token, id)));
+    const st = await state(p1.token, id);
+    must(st.state === "done" && st.reason === "clock", "a three-way round must still end on its clock: " + st.reason);
+    must(st.winner === p1.name, "the biggest pile takes it: " + st.winner);
+    must(st.paid.length === 1 && st.paid[0].name === p1.name && st.paid[0].amount === 18,
+      "and takes the whole pot: " + JSON.stringify(st.paid));
+    must((await bal(p1.token)) === 112 && (await bal(p2.token)) === 94 && (await bal(p3.token)) === 94,
+      "paid exactly once: " + (await bal(p1.token)) + " / " + (await bal(p2.token)) + " / " + (await bal(p3.token)));
+  }
+
+  // -- a round of four where nobody moves: dead level, so the pot is shared
+  //    out — which at equal stakes is every stake walking home
+  {
+    const { id, players } = await round(4, 7);
+    await sleep(COMP_MS + 400);
+    await Promise.all(new Array(10).fill(0).map(() => state(players[2].token, id)));
+    const st = await state(players[0].token, id);
+    must(st.reason === "draw" && st.winner === null,
+      "four untouched stacks are a dead heat, not a win: " + st.reason + " / " + st.winner);
+    must(st.paid.length === 4, "and all four share the pot: " + JSON.stringify(st.paid));
+    must(money(st.paid.reduce((t: number, x: { amount: number }) => t + x.amount, 0)) === money(7 * 4),
+      "the shares must add back to exactly the pot: " + JSON.stringify(st.paid));
+    for (const p of players) {
+      must((await bal(p.token)) === 100, p.name + " must be level again, got " + (await bal(p.token)));
+    }
+  }
+
+  // -- THE TIE THAT MATTERS: two of three finish level at the top. They split
+  //    the pot between them and the third gets nothing — the old rule handed
+  //    everybody their stake back, which paid the loser for losing.
+  {
+    const { id, players } = await round(3, 5);
+    const [p1, p2, p3] = players;
+    must((await sink(p3.token, 300, id)).body?.ok === true, "p3 must be able to fall behind");
+    await sleep(COMP_MS + 400);
+    await Promise.all(new Array(10).fill(0).map(() => state(p1.token, id)));
+    const st = await state(p1.token, id);
+    must(st.state === "done" && st.reason === "draw", "level at the top is a dead heat: " + st.reason);
+    must(st.winner === null, "a split has no sole winner: " + st.winner);
+    const names = st.paid.map((x: { name: string }) => x.name).sort();
+    must(names.length === 2 && names.join(",") === [p1.name, p2.name].sort().join(","),
+      "only the two on the biggest pile share it: " + JSON.stringify(st.paid));
+    must(money(st.paid.reduce((t: number, x: { amount: number }) => t + x.amount, 0)) === 15,
+      "and between them they take the whole pot: " + JSON.stringify(st.paid));
+    must(st.yourTake === 7.5, "each of them takes half of it: " + st.yourTake);
+    must((await bal(p1.token)) === 102.5 && (await bal(p2.token)) === 102.5,
+      "the two who tied come out ahead: " + (await bal(p1.token)) + " / " + (await bal(p2.token)));
+    must((await bal(p3.token)) === 95, "and the one who lost stays lost: " + (await bal(p3.token)));
+    must(money((await bal(p1.token)) + (await bal(p2.token)) + (await bal(p3.token))) === 300,
+      "with not a sahur minted or lost across the table");
+    // reading it again must not pay a second time
+    await Promise.all(new Array(8).fill(0).map(() => state(p2.token, id)));
+    must((await bal(p1.token)) === 102.5 && (await bal(p2.token)) === 102.5,
+      "a split must be paid exactly once");
+  }
+
+  // -- a split that does not divide cleanly still adds up to the pot and never
+  //    rounds a share upward
+  {
+    const { id, players } = await round(3, 0.5);   // pot 1.5, and all three tie
+    await sleep(COMP_MS + 400);
+    await state(players[0].token, id);
+    const st = await state(players[0].token, id);
+    must(st.paid.length === 3, "all three share it: " + JSON.stringify(st.paid));
+    must(money(st.paid.reduce((t: number, x: { amount: number }) => t + x.amount, 0)) === 1.5,
+      "a pot that does not divide by three must still come out to the pot: " + JSON.stringify(st.paid));
+    for (const p of players) {
+      must((await bal(p.token)) === 100, "and nobody is up or down on it: " + (await bal(p.token)));
+    }
+  }
+
+  // -- A BUST AT THREE SEATS DOES NOT END THE ROUND. The player who ran out is
+  //    done; the other two still have their clock, and the pot is still live.
+  {
+    const { id, players } = await round(3, 4);
+    const [p1, p2, p3] = players;
+    const bust = await sink(p3.token, STACK, id);
+    must(bust.body?.ok === true, "the whole stack must be stakeable");
+    must(bust.body.wood === 0, "which empties it: " + bust.body.wood);
+    must(bust.body.roundOver !== true,
+      "one player going broke must not end a three-seat round: " + JSON.stringify(bust.body));
+    const mid = await state(p1.token, id);
+    must(mid.state === "live", "the round must still be live: " + mid.state);
+    must(mid.pot === 12, "with the pot still on the table: " + mid.pot);
+    // and the busted player really is out of wood
+    const dry = await post("/cas/dice", { token: p3.token, bet: 1, target: 50, round: id });
+    must(dry.body?.ok !== true, "a player on nothing must not be able to wager: " + JSON.stringify(dry.body));
+    // the two still standing play it out
+    must((await sink(p2.token, 400, id)).body?.ok === true, "p2 must still be able to play");
+    await sleep(COMP_MS + 400);
+    await Promise.all(new Array(10).fill(0).map(() => state(p2.token, id)));
+    const st = await state(p1.token, id);
+    must(st.reason === "clock", "and it ends on the clock, not on the bust: " + st.reason);
+    must(st.winner === p1.name, "the biggest pile still takes it: " + st.winner);
+    must((await bal(p1.token)) === 108 && (await bal(p2.token)) === 96 && (await bal(p3.token)) === 96,
+      "paid once: " + (await bal(p1.token)) + " / " + (await bal(p2.token)) + " / " + (await bal(p3.token)));
+  }
+
+  // -- but the LAST one standing does end it: once there is nobody left to
+  //    play against there is nothing to wait for
+  {
+    const { id, players } = await round(3, 3);
+    const [p1, p2, p3] = players;
+    const first = await sink(p2.token, STACK, id);
+    must(first.body?.roundOver !== true, "the first bust leaves two of them in it");
+    must((await state(p1.token, id)).state === "live", "so the round runs on");
+    const second = await sink(p3.token, STACK, id);
+    must(second.body?.wood === 0 && second.body?.roundOver === true,
+      "the second bust leaves one player holding everything, which ends it: " + JSON.stringify(second.body));
+    const st = await state(p1.token, id);
+    must(st.state === "done" && st.reason === "bust", "and it reads as a bust: " + st.reason);
+    must(st.winner === p1.name && st.paid.length === 1 && st.paid[0].amount === 9,
+      "the one still standing takes the whole pot: " + JSON.stringify(st.paid));
+    must((await bal(p1.token)) === 106 && (await bal(p2.token)) === 97 && (await bal(p3.token)) === 97,
+      "paid once: " + (await bal(p1.token)) + " / " + (await bal(p2.token)) + " / " + (await bal(p3.token)));
+  }
+
+  // -- the round ends the moment there is nobody left to play against, and not
+  //    one bust earlier. At four chairs that takes three of them.
+  {
+    const { id, players } = await round(4, 2);
+    const [p1, p2, p3, p4] = players;
+    must((await sink(p2.token, STACK, id)).body?.roundOver !== true, "one down, and two others are still in it");
+    must((await state(p1.token, id)).state === "live", "so the round runs on");
+    must((await sink(p3.token, STACK, id)).body?.roundOver !== true, "two down, and p4 is still there");
+    must((await state(p1.token, id)).state === "live", "and it still runs on");
+    const last = await sink(p4.token, STACK, id);
+    must(last.body?.wood === 0 && last.body?.roundOver === true,
+      "the third bust leaves p1 alone, which is what ends it: " + JSON.stringify(last.body));
+    const st = await state(p1.token, id);
+    must(st.state === "done" && st.reason === "bust", "and it reads as a bust: " + st.reason);
+    must(st.winner === p1.name && st.paid.length === 1 && st.paid[0].amount === 8,
+      "the one still standing takes the whole pot: " + JSON.stringify(st.paid));
+    must((await bal(p1.token)) === 106, "paid once: " + (await bal(p1.token)));
+    for (const p of [p2, p3, p4]) {
+      must((await bal(p.token)) === 98, p.name + " paid their stake and nothing else: " + (await bal(p.token)));
+    }
+  }
+
+  // -- a nonsense seat count on a round falls back to two, same as the cut
+  {
+    await quiet(); await fund(W, 100);
+    const weird = await post("/duel/create", { token: W.token, game: "comp", bet: 3, seats: 7 });
+    must(weird.body.duel.seats === 2, "a round that asks for a nonsense size must fall back to 2");
+    await post("/duel/cancel", { token: W.token, id: weird.body.duel.id });
+    must((await bal(W.token)) === 100, "and taking it down still refunds it");
+  }
+}
+
 console.log(
   "the pit: stakes escrowed on commit and released exactly once — cancel, expiry, " +
     "unconfirmed, forfeit, double-forfeit and a played hand all pay once; seat races " +
     "debit one player; no rake, no minting, no double refunds; the cut seats 2, 3 or 4; " +
-    "and a round of Competitive Gambling spends wood that never touches a balance",
+    "Competitive Gambling seats 2, 3 or 4 too, spends wood that never touches a balance, " +
+    "keeps playing when one player goes broke, and splits the pot exactly between everybody " +
+    "level at the top",
 );

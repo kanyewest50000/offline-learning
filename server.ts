@@ -1092,7 +1092,7 @@ type Duel = {
   id: string;
   game: string;
   bet: number;
-  seats: number;         // 2, 3 or 4. The Cut can wait for more than one guest.
+  seats: number;         // 2, 3 or 4. The Cut and Competitive Gambling can wait for more than one guest.
   host: DuelSide;
   guest: DuelSide | null;
   extra: DuelSide[];     // third and fourth players, in sit-down order
@@ -1101,8 +1101,13 @@ type Duel = {
   deadline: number;      // what the current state is waiting for, as an epoch ms
   round: number;
   settled: boolean;      // the escrow has been released. set once, never unset.
-  winner: string | null; // username, or null for a void/refunded duel
-  reason: string;        // why it ended: cancelled | expired | unconfirmed | forfeit | play
+  winner: string | null; // the SOLE winner's username; null for a void duel or a split pot
+  // Who took from the pot and how much. Empty when nobody won and every stake
+  // simply went home. One entry is an outright win; two or more is a dead heat
+  // at the top, sharing what was on the table. `winner` is only ever set when
+  // this holds exactly one name, so the two can never disagree.
+  paid: { name: string; amount: number }[];
+  reason: string;        // why it ended: cancelled | expired | unconfirmed | forfeit | play | clock | bust | draw
   rounds: { host: string; guest: string; won: string | null }[];
   cards?: CutCards;
 };
@@ -1171,6 +1176,10 @@ const DUEL_GAMES: Record<string, { name: string; moves: string[]; target: number
   // are the scoreboard. See the wood block further down.
   comp: { name: "Competitive Gambling", moves: [], target: 1 },
 };
+// The games that can wait for a third and a fourth chair. Tung, Wood, Fire is
+// a hand against ONE opponent — its rounds, its score and its forfeit rule are
+// all written for two — so it stays two however many a client asks for.
+const MULTI_SEAT = new Set(["cut", "comp"]);
 
 function duelSide(u: { id: string; username: string }): DuelSide {
   return { id: u.id, name: u.username, confirmed: false, move: null, wins: 0, chips: 0 };
@@ -1185,6 +1194,11 @@ function duelView(d: Duel, uid: string | null) {
   const them = youAreHost ? d.guest : (you ? d.host : null);
   const open = d.state === "live";
   const seats = duelSeats(d);
+  // who took from the pot, and what each of them actually got. a split is the
+  // only way this holds more than one name, and the client reads its result
+  // wording off the length rather than guessing from `winner` being null —
+  // which it also is for a table that nobody won.
+  const paid = Array.isArray(d.paid) ? d.paid : [];
   return {
     id: d.id,
     game: d.game,
@@ -1223,6 +1237,9 @@ function duelView(d: Duel, uid: string | null) {
       chips: chipsOf(p),
     })),
     winner: d.winner,
+    paid,
+    // what this player took out of the pot: the lot, a share of it, or nothing
+    yourTake: you ? round2(paid.find((x) => x.name === you.name)?.amount ?? 0) : 0,
     reason: d.reason,
     rounds: d.rounds,
     cards: d.state === "done" ? d.cards ?? null : null,
@@ -1277,14 +1294,32 @@ async function commitDuel(
   return (await op.commit()).ok;
 }
 
-// End a duel and release the escrow. winner === null refunds every seated
-// player their own stake; a winner takes the whole pot. No rake — the pit
-// is between players.
-function finishDuel(d: Duel, winnerId: string | null, reason: string): {
+// Share a pot out between however many players are owed it, without minting a
+// sahur or leaving one on the table. Each share is the gap between two floored
+// running totals, so no share is ever rounded up, the shares differ by at most
+// a penny, and they add back to exactly the pot — which is what every
+// conservation check in scripts/test-duel.ts is counting.
+function splitPot(pot: number, ways: number): number[] {
+  if (!(ways > 0)) return [];
+  const shares: number[] = [];
+  let paid = 0;
+  for (let i = 1; i <= ways; i++) {
+    const upto = floor2(pot * i / ways);
+    shares.push(round2(upto - paid));
+    paid = upto;
+  }
+  return shares;
+}
+
+// End a duel and release the escrow. No winners refunds every seated player
+// their own stake; one winner takes the whole pot; several share it. No rake —
+// the pit is between players, and the pot that goes out is the pot that came
+// in whichever of those three it is.
+function finishDuel(d: Duel, winnerIds: string[] | string | null, reason: string): {
   next: Duel;
   credits: { id: string; amount: number }[];
 } {
-  const next: Duel = { ...d, state: "done", settled: true, reason, winner: null, deadline: 0 };
+  const next: Duel = { ...d, state: "done", settled: true, reason, winner: null, paid: [], deadline: 0 };
   const credits: { id: string; amount: number }[] = [];
   const people = seatedPlayers(d);
   if (people.length === 1) {
@@ -1292,35 +1327,50 @@ function finishDuel(d: Duel, winnerId: string | null, reason: string): {
     credits.push({ id: d.host.id, amount: d.bet });
     return { next, credits };
   }
-  if (winnerId === null) {
+  // filtering the table by the ids rather than looking each id up keeps the
+  // winners in seat order and cannot list anybody twice, so a repeated id
+  // cannot turn into a second share
+  const want = winnerIds === null ? [] : (Array.isArray(winnerIds) ? winnerIds : [winnerIds]);
+  const winners = people.filter((p) => want.indexOf(p.id) >= 0);
+  if (!winners.length) {
     for (const p of people) credits.push({ id: p.id, amount: d.bet });
     return { next, credits };
   }
-  const w = people.find((p) => p.id === winnerId) ?? d.host;
-  next.winner = w.name;
-  credits.push({ id: w.id, amount: round2(d.bet * seatedPlayers(d).length) });
+  const pot = round2(d.bet * people.length);
+  const shares = splitPot(pot, winners.length);
+  next.paid = winners.map((w, i) => ({ name: w.name, amount: shares[i] }));
+  // `winner` is the sole-winner name and nothing else, so a split can never be
+  // read by anything downstream as one player having taken the lot
+  if (winners.length === 1) next.winner = winners[0].name;
+  winners.forEach((w, i) => credits.push({ id: w.id, amount: shares[i] }));
   return { next, credits };
 }
 
-// The biggest stack, or nobody. A dead heat has no winner to hand the pot to,
-// so it is not one: both stakes go home the same way an unconfirmed table's do.
-function topStack(people: DuelSide[]): DuelSide | null {
+// Everybody on the biggest stack. One of them is a winner; more than one is a
+// dead heat, and a dead heat shares the pot rather than voiding the table —
+// at equal stakes an all-round tie pays each of them their own stake back,
+// which is the same thing a refund would have done.
+function topStacks(people: DuelSide[]): DuelSide[] {
+  if (!people.length) return [];
   let best = -Infinity;
   for (const p of people) best = Math.max(best, chipsOf(p));
-  const top = people.filter((p) => chipsOf(p) === best);
-  return top.length === 1 ? top[0] : null;
+  return people.filter((p) => chipsOf(p) === best);
 }
 // How a round of Competitive Gambling ends. `among` narrows the field to the
 // players still standing — on a bust the player who ran out is not a candidate
-// for the pot even if everyone else is sitting on nothing.
+// for the pot even if everyone else is sitting on nothing. An empty field means
+// nobody is left holding anything, which is as level as a table gets, so it
+// falls back to sharing between everyone who sat.
 function compResult(d: Duel, reason: string, among?: DuelSide[]): {
   next: Duel;
   credits: { id: string; amount: number }[];
 } {
   const people = seatedPlayers(d);
   if (people.length < 2) return finishDuel(d, null, reason);
-  const w = topStack(among ?? people);
-  return w ? finishDuel(d, w.id, reason) : finishDuel(d, null, "draw");
+  const field = among && among.length ? among : people;
+  const top = topStacks(field);
+  if (!top.length) return finishDuel(d, null, reason);
+  return finishDuel(d, top.map((p) => p.id), top.length > 1 ? "draw" : reason);
 }
 
 // Deadlines are enforced lazily: nothing here runs on a timer, so every read of
@@ -1447,26 +1497,51 @@ async function woodMove(duelId: string, uid: string, delta: number, opt: {
     if (!Number.isFinite(nb)) return "over";
     if (nb < -1e-9) return "insufficient";
     me.chips = Math.max(0, nb);
-    // Nothing on the stack and nothing on a table: there is no way back from
-    // here and no reason to make the other one sit out the clock, so the round
-    // ends on the spot and the pot goes to whoever is still standing. A stake
-    // still sitting on a table is the one thing that holds it open — the hand
-    // has not been read yet, and an unread hand can still pay.
-    let bust = !!opt.last && me.chips <= 0;
+    // Nothing on the stack and nothing on a table: this player has no way back.
+    // A stake still sitting on a table is the one thing that holds them in —
+    // the hand has not been read yet, and an unread hand can still pay.
+    //
+    // What that does to the ROUND depends on how many chairs it has. At two it
+    // ends it: there is no reason to make the other one sit out the clock. At
+    // three or four it usually does not — the rest of the table still has its
+    // three minutes, and one player going broke must not cut that short. The
+    // round ends only once the field is down to a single player still holding
+    // something, or to nobody at all.
+    let out: { next: Duel; credits: { id: string; amount: number }[] } | null = null;
     let guard: Deno.KvEntryMaybe<unknown>[] | undefined;
-    if (bust) {
-      const open = await stakesOpen(uid, duelId, opt.retire?.key);
-      if (open.any) bust = false;
-      else guard = open.guard;
+    if (opt.last && me.chips <= 0) {
+      const own = await stakesOpen(uid, duelId, opt.retire?.key);
+      if (!own.any) {
+        guard = own.guard.slice();
+        // Who else is still in it: wood on the stack, or a stake of theirs
+        // still out on a table. Reading the others' tables is what makes this
+        // honest at three and four seats, and every entry read joins the guard
+        // — so a hand dealt anywhere on the floor between this decision and the
+        // commit makes the commit fail and the call is taken again.
+        const standing: DuelSide[] = [];
+        for (const other of seatedPlayers(next)) {
+          if (other.id === uid) continue;
+          if (chipsOf(other) > 0) { standing.push(other); continue; }
+          const theirs = await stakesOpen(other.id, duelId);
+          guard.push(...theirs.guard);
+          if (theirs.any) standing.push(other);
+        }
+        // one player left holding anything takes the pot; nobody left holding
+        // anything is a level table and it is shared out
+        if (standing.length <= 1) out = compResult(next, "bust", standing);
+      }
     }
     let credits: { id: string; amount: number }[] = [];
-    if (bust) {
-      const out = compResult(next, "bust", seatedPlayers(next).filter((x) => x.id !== uid));
+    if (out) {
       credits = out.credits;
       Object.assign(next, out.next);
+    } else {
+      // nothing was decided off those reads, so nothing has to still be true
+      // for this commit to be right — holding the guard would only cost retries
+      guard = undefined;
     }
     if (await commitDuel(entry, next, credits, opt.retire, guard)) {
-      return { chips: me.chips, over: bust };
+      return { chips: me.chips, over: !!out };
     }
     // the commit can only fail because something moved under us — unless what
     // moved was the game record itself, in which case another request has
@@ -2043,10 +2118,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const now = Date.now();
     const id = rid(10);
     const want = Number(b.seats);
-    const seats = game === "cut" && (want === 3 || want === 4) ? want : 2;
+    const seats = MULTI_SEAT.has(game) && (want === 3 || want === 4) ? want : 2;
     const duel: Duel = {
       id, game, bet, seats, host: duelSide(u), guest: null, extra: [], state: "open", ts: now,
-      deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, reason: "", rounds: [],
+      deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, paid: [], reason: "", rounds: [],
     };
     const res = await kv.atomic()
       .check(lock).check(cur)

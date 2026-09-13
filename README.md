@@ -59,7 +59,8 @@ Three tables in the casino where the opponent is another member rather than the
 house: **Tung, Wood, Fire** (tung splits the wood, the wood feeds the fire, the
 fire takes tung — first to two rounds, a tie is replayed), **The Cut** (one
 card each, high card takes it) and **Competitive Gambling** (three minutes on
-the casino floor, a stack of wood each, biggest pile at the buzzer).
+the casino floor, a stack of wood each, biggest pile at the buzzer). The last two
+seat two, three or four.
 
 A round of Tung, Wood, Fire is two hidden picks resolving into one outcome, and
 it is shown as exactly that: the two moves slide in from opposite sides onto the
@@ -71,14 +72,34 @@ with it for three full seconds while theirs shivers under a sheen before it
 turns. The result is held behind the second card, because knowing it early is
 the one thing that would make the pause worthless.
 
-Competitive Gambling is the one where the pit is not the game. Both players are
-handed the same stack of wood and turned loose on the whole floor for three
-minutes — every table, not a sprint corner of them — and whoever is sitting on
-the bigger pile when the clock stops takes the pot. A dead heat is nobody's win
-and both stakes go home.
+Competitive Gambling is the one where the pit is not the game. Everyone at the
+table is handed the same stack of wood and turned loose on the whole floor for
+three minutes — every table, not a sprint corner of them — and whoever is
+sitting on the biggest pile when the clock stops takes the pot.
 
-Running the wood out ends the round there and then, with one exception that
-matters: a stake still sitting on a table is not spent, it is unread. A player
+The Cut and Competitive Gambling both seat two, three or four; Tung, Wood, Fire
+is a hand against one opponent — its rounds, its score and its forfeit rule are
+all written for a pair — so it stays two however many a client asks for. A table
+waits, and can still be taken down, until its last chair is filled.
+
+Finishing level at the top is not a void: the players on the biggest pile split
+what is on the table. Each share is the gap between two floored running totals,
+so no share is ever rounded up and they add back to exactly the pot — nothing
+minted, nothing left behind. With everyone level that pays each player their own
+stake back, which is what a refund used to do; the difference shows at three and
+four, where two players can tie above a third. They take the pot between them and
+the one who lost stays lost, rather than being handed their stake back for it.
+
+Running the wood out ends a two-player round there and then. At three and four it
+usually does not: the rest of the table still has its clock, and one player going
+broke must not cut that short — so a bust ends the round only once there is
+nobody left to play against. Deciding that means reading whether the others still
+have a stake out on the floor, and every record read joins the guard on the
+commit, so a hand dealt anywhere between the decision and the commit makes the
+commit fail and the call is taken again.
+
+There is one exception that matters throughout: a stake still sitting on a table
+is not spent, it is unread. A player
 who puts their last wood on a mines board is on zero and still in it, because
 the board can pay; the round ends when the board is read, not when it is dealt.
 That is taken off the game records themselves rather than off a counter, so two
@@ -90,7 +111,7 @@ round would be worth a free look at a hand you could abandon.
 
 Wood is not sahurs and never becomes sahurs. It is handed out by the round,
 spent against the house inside it, and swept when the round ends; the only thing
-that crosses back is the pot, which is the two real stakes and was escrowed
+that crosses back is the pot, which is the real stakes and was escrowed
 before the round began, so three minutes of this cannot move a sahur in either
 direction. Which purse a wager comes out of is read off the player's own duel
 lock on every bet rather than sent with it, so a wager cannot be aimed at the

@@ -131,30 +131,36 @@
      both stacks and the clock — and a poll that outlives every navigation,
      because the three minutes do not care which table they are standing at.
      The wood itself is the server's: this only paints what it is told. */
-  var ROUND={live:null,poll:null,tick:null,bar:null,done:null,mine:0,hold:false};
+  var ROUND={live:null,poll:null,tick:null,bar:null,done:null,mine:0,hold:false,sides:0};
   function hideRound(){if(ROUND.bar&&ROUND.bar.parentNode)ROUND.bar.parentNode.removeChild(ROUND.bar);}
   function roundStop(){
     if(ROUND.poll){clearInterval(ROUND.poll);ROUND.poll=null;}
     if(ROUND.tick){clearInterval(ROUND.tick);ROUND.tick=null;}
     ROUND.live=null;ROUND.hold=false;hideRound();
   }
-  function buildRound(){
+  /* One slot per chair, because a round can seat two, three or four and the
+     bar has to carry the whole table — the stacks are the score and a player
+     out on the floor cannot see the table's own page. */
+  function buildRound(n){
     var e=el("div","roundbar");
     e.appendChild(el("span","rtag","round"));
-    var mine=el("div","rside");
-    mine.appendChild(el("b",null,"you"));
-    mine._v=el("span","rv","-");mine.appendChild(mine._v);
-    var theirs=el("div","rside");
-    theirs._n=el("b",null,"them");theirs.appendChild(theirs._n);
-    theirs._v=el("span","rv","-");theirs.appendChild(theirs._v);
-    /* the unit sits between the two stacks, exactly as it does on the big
-       scoreboard, so the bar and the table's page read as the same thing */
-    e.appendChild(mine);e.appendChild(el("span","rvs","wood"));e.appendChild(theirs);
+    e._sides=[];
+    for(var i=0;i<n;i++){
+      /* at two the unit sits between the pair, exactly as it does on the big
+         scoreboard, so the bar and the table's page read as the same thing.
+         at three and four it goes on the end instead of repeating. */
+      if(i)e.appendChild(el("span","rvs",n===2?"wood":"vs"));
+      var side=el("div","rside");
+      side._n=el("b",null,"\u2026");side.appendChild(side._n);
+      side._v=el("span","rv","-");side.appendChild(side._v);
+      e.appendChild(side);
+      e._sides.push(side);
+    }
+    if(n!==2)e.appendChild(el("span","rvs","wood"));
     e._clock=el("span","rclock","");e.appendChild(e._clock);
     var go=el("button","cbtn sec","the table");
     go.onclick=function(){if(ROUND.live){var v=ROUND.live;clearTimer();pitEnter(v);}};
     e.appendChild(go);
-    e._mine=mine;e._theirs=theirs;
     return e;
   }
   function paintRound(){
@@ -162,19 +168,30 @@
     var w=screen.querySelector(".caswrap");
     /* the table's own page says all of this bigger, so the bar stands down there */
     if(!w||VIEW==="pit"){hideRound();return;}
-    if(!ROUND.bar)ROUND.bar=buildRound();
+    /* the table cannot gain or lose a chair mid-round, but a bar built for the
+       last round must not be reused for a round of a different size */
+    var n=compSeats(ROUND.live).length;
+    if(!ROUND.bar||ROUND.sides!==n){hideRound();ROUND.bar=buildRound(n);ROUND.sides=n;}
     if(ROUND.bar.parentNode!==w)w.insertBefore(ROUND.bar,w.firstChild);
     paintRoundClock();
   }
   function paintRoundClock(){
     var d=ROUND.live,b=ROUND.bar;
     if(!d||!b||!b.isConnected)return;
-    var mine=ROUND.mine;
-    b._mine._v.textContent=money(mine);
-    b._theirs._n.textContent=d.theirName||"them";
-    b._theirs._v.textContent=money(d.theirChips);
-    b._mine.className="rside"+(mine>d.theirChips?" up":(mine<d.theirChips?" down":""));
-    b._theirs.className="rside"+(d.theirChips>mine?" up":(d.theirChips<mine?" down":""));
+    var seats=compSeats(d);
+    /* our own stack is the held one while a table is still showing a wager;
+       reading the poll's number there would give the wheel away mid-spin */
+    var at=seats.map(function(p){return p.you?ROUND.mine:chipsOf(p);});
+    var best=-Infinity,worst=Infinity;
+    at.forEach(function(c){if(c>best)best=c;if(c<worst)worst=c;});
+    b._sides.forEach(function(side,i){
+      var p=seats[i];
+      if(!p){side._n.textContent="\u2026";side._v.textContent="-";side.className="rside";return;}
+      side._n.textContent=p.you?"you":(p.name||"them");
+      side._v.textContent=money(at[i]);
+      /* level all round is nobody ahead, so nothing is lit either way */
+      side.className="rside"+(best===worst?"":(at[i]===best?" up":(at[i]===worst?" down":"")));
+    });
     var ms=pitLeft(d.deadline);
     b._clock.textContent=pitClockText(ms);
     b._clock.className="rclock"+(ms<=15000?" hot":"");
@@ -1329,8 +1346,8 @@
       blurb:"one card each. the high card takes the pot.",
       sub:"nothing to play. the deck is cut the moment everyone at the table says yes. a tie is re-cut."},
     comp:{name:"Competitive Gambling",moves:[],
-      blurb:"three minutes on the floor. a stack of wood each. the bigger pile at the buzzer takes the pot.",
-      sub:"the whole floor, played in wood. it is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends, while your sahurs sit in the pot the whole time. run the wood out with nothing left on a table and the round ends there and then."}
+      blurb:"three minutes on the floor. a stack of wood each. the biggest pile at the buzzer takes the pot.",
+      sub:"two, three or four of you, the whole floor, played in wood. it is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends, while your sahurs sit in the pot the whole time. run the wood out with nothing left on a table and you are done, and the round ends the moment there is nobody left to play against. finish level at the top and the pot is split."}
   };
   function pitStop(){
     if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;}
@@ -1387,7 +1404,9 @@
     v.appendChild(el("p","pitsub",cfg.sub));
 
     var bet=betField("1");
-    var seatsSel=game==="cut"?selectOf([["2","2"],["3","3"],["4","4"]],"2"):null;
+    /* the two games that can seat more than two. tung, wood, fire is a hand
+       against ONE opponent, so it never offers the choice. */
+    var seatsSel=(game==="cut"||game==="comp")?selectOf([["2","2"],["3","3"],["4","4"]],"2"):null;
     var open=el("button","cbtn go","put up a table");
     var row=el("div","ctlrow");
     row.appendChild(ctl("stake",bet));
@@ -1401,7 +1420,7 @@
     v.appendChild(el("div","casnote",game==="cut"
       ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, it does not fill within 10 minutes, or anyone does not confirm."
       :(game==="comp"
-        ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm. the wood inside the round is worth nothing outside it \u2014 the stakes are the only sahurs on the table."
+        ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, it does not fill within 10 minutes, or anyone does not confirm. the wood inside the round is worth nothing outside it \u2014 the stakes are the only sahurs on the table."
         :"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm.")));
 
     open.onclick=function(){
@@ -1510,7 +1529,7 @@
     }
     var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
     var who=(d.players||[]).map(function(p){return p.name+":"+(p.confirmed?"1":"0");}).join(",");
-    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,d.reason,d.guest,d.filled,who].join("|");
+    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,who].join("|");
     if(shape===PIT.shape){pitPaintClock();return;}
     PIT.shape=shape;
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
@@ -1543,6 +1562,9 @@
          here with the host alone; a 3- or 4-seat Cut stays here until the
          last chair is taken. This is the only page that can take it down. */
       var filled=d.filled||1, need=Math.max(0,(d.seats||2)-filled);
+      var onFull=d.game==="comp"
+        ? "the round starts once the table is full and everyone says yes."
+        : "the deck is cut once the table is full and everyone says yes.";
       if(d.youAreHost){
         body.appendChild(el("p","pitsay",filled<=1?"your table is up.":(filled+" of "+(d.seats||2)+" seated.")));
         body.appendChild(el("p","pitsub",need===0
@@ -1571,9 +1593,7 @@
           :"taking it down sends every stake home. if it never fills, the same thing happens on its own."));
       }else{
         body.appendChild(el("p","pitsay","you are seated."));
-        body.appendChild(el("p","pitsub",need===1
-          ?"waiting for one more. the deck is cut once the table is full and everyone says yes."
-          :"waiting for "+need+" more. the deck is cut once the table is full and everyone says yes."));
+        body.appendChild(el("p","pitsub",(need===1?"waiting for one more. ":"waiting for "+need+" more. ")+onFull));
         body.appendChild(el("p","pitsub","your stake is held. it comes back if the host takes the table down or the table never fills."));
       }
     }else if(d.state==="confirm"){
@@ -1592,7 +1612,7 @@
         body.appendChild(yes);
       }
       if(d.game==="comp"){
-        body.appendChild(el("p","pitsub","say yes and you are each handed "+money(d.stack)+" wood and three minutes to do something with it."));
+        body.appendChild(el("p","pitsub","say yes and everyone at the table is handed "+money(d.stack)+" wood and three minutes to do something with it. the biggest pile at the buzzer takes the pot; level at the top and it is split."));
       }
       body.appendChild(el("p","pitsub",many
         ?"if anyone does not confirm, every stake comes straight back."
@@ -1603,7 +1623,8 @@
       body.appendChild(compScore(d,false));
       body.appendChild(el("p","pitsub","wood. not sahurs, and never sahurs \u2014 it is swept when the clock stops. the pot is what is actually on the table."));
       body.appendChild(floorMenu("comp"));
-      body.appendChild(el("p","pitsub","the whole floor, and the round follows you onto whatever you pick. a hand still open when the clock stops is a stake you paid and never played, so finish what you start \u2014 and while one is still open you are not out, however empty the stack reads."));
+      body.appendChild(el("p","pitsub","the whole floor, and the round follows you onto whatever you pick. a hand still open when the clock stops is a stake you paid and never played, so finish what you start \u2014 and while one is still open you are not out, however empty the stack reads."+
+        (many2(d)?" run the wood out here and you are done, but the round plays on while two of you still have something.":"")));
     }else if(d.state==="live"){
       var score=el("div","pitscore");
       score.appendChild(el("span","sv",String(d.yourWins)));
@@ -1639,8 +1660,17 @@
       /* stop the poll and the clock BEFORE the cut starts dealing, so the
          reveal timers registered below are not cleared by our own cleanup */
       pitStop();
-      var won=d.winner&&d.winner===d.you;
-      var big=el("div","pitend"+(d.winner?(won?" win":" lose"):""));
+      /* the paid list is who took from the pot: nobody (every stake went home), one
+         player (an outright win), or several (a dead heat sharing it out).
+         What it MEANS for this player is the number, not the name — a full
+         dead heat pays a share that is exactly the stake back, which is not a
+         win and must not be painted as one. */
+      var paid=d.paid||[];
+      var take=Number(d.yourTake)||0;
+      var won=paid.some(function(x){return x.name===d.you;});
+      var split=paid.length>1;
+      var up=take>d.bet+1e-9, down=paid.length>0&&take<d.bet-1e-9;
+      var big=el("div","pitend"+(up?" win":(down?" lose":"")));
       var dealing=false,cutSay=null,cutHands=[];
       if(d.reason==="play"&&(d.hands||d.cards)){
         dealing=true;
@@ -1670,12 +1700,25 @@
       var buzzer=d.game==="comp"&&(ranOut||d.reason==="clock"||d.reason==="draw");
       if(buzzer){
         body.appendChild(compScore(d,true));
-        big.textContent=!d.winner
-          ?"a dead heat. neither of you is ahead, so both stakes are back."
-          :(won
-            ?(ranOut?"they ran the wood out. the pot is yours.":"you finish on the bigger pile. you take the pot.")
-            :(ranOut?"you ran the wood out. the pot went to "+d.winner+".":d.winner+" finishes on the bigger pile and takes the pot."));
-      }else big.textContent=!d.winner
+        var seated=(d.players&&d.players.length)||d.filled||d.seats||2;
+        var pile=many?"biggest pile":"bigger pile";
+        big.textContent=!paid.length
+          ?"nobody is left holding anything. every stake is back."
+          :(split
+            ?(paid.length>=seated
+              /* everyone level: a share each, which at equal stakes is the
+                 stake itself — say so rather than calling it a win */
+              ?(many?"a dead heat. nothing between any of you, so the pot is split "+paid.length+" ways and every stake comes home."
+                    :"a dead heat. neither of you is ahead, so both stakes are back.")
+              :"a dead heat at the top. "+nameList(paid,d.you)+" finish level and split the pot"+
+                (won?" \u2014 "+money(take)+" sahurs to you.":"."))
+            :(won
+              ?(ranOut?(many?"everyone else ran the wood out. the pot is yours.":"they ran the wood out. the pot is yours.")
+                      :"you finish on the "+pile+". you take the pot.")
+              :(ranOut&&chipsOf({chips:d.yourChips})<=0
+                ?"you ran the wood out. the pot went to "+d.winner+"."
+                :d.winner+" finishes on the "+pile+" and takes the pot.")));
+      }else big.textContent=!paid.length
         ?(d.reason==="cancelled"?"table taken down. your stake is back."
           :d.reason==="expired"?(many?"the table never filled. your stake is back.":"nobody came. your stake is back.")
           :d.reason==="unconfirmed"?(many?"someone never confirmed. every stake is back.":"one of you never confirmed. both stakes are back.")
@@ -1689,7 +1732,9 @@
       body.appendChild(again);
       var potx=d.seats||d.filled||2;
       if(!dealing){
-        if(d.winner&&won)celebrate(d.pot,potx);
+        /* a share of a split is what landed in the balance, so it is what the
+           toast says — quoting the whole pot would be a lie on a tie */
+        if(up)celebrate(take,potx);
       }else{
         /* the result would give the last card away, so it waits behind it */
         big.style.visibility="hidden";
@@ -1812,17 +1857,54 @@
   /* The two stacks side by side. The live one hands its numbers to the clock
      tick, so a roll either player makes moves them without rebuilding the
      screen under the hands of whoever is mid-click. */
+  /* Every stack at the table, in seat order. A round can seat two, three or
+     four, and the stacks ARE the scoreboard, so all of them are public the
+     whole way through — watching one climb is as much the game as moving your
+     own. the players list is the server's seat list; the two-player fallback is only
+     for a record dealt before it shipped one. */
+  function compSeats(d){
+    if(d&&d.players&&d.players.length)return d.players;
+    return [{name:d.you||"you",you:true,chips:d&&d.yourChips},
+            {name:(d&&d.theirName)||"them",you:false,chips:d&&d.theirChips}];
+  }
+  function chipsOf(p){var n=Number(p&&p.chips);return isFinite(n)?n:0;}
+  /* the biggest pile at the table. more than one name means a dead heat, and a
+     dead heat splits the pot rather than voiding it. */
+  function compTop(seats){
+    var best=-Infinity;
+    seats.forEach(function(p){var c=chipsOf(p);if(c>best)best=c;});
+    return seats.filter(function(p){return chipsOf(p)===best;});
+  }
   function compScore(d,fin){
+    var seats=compSeats(d);
+    var two=seats.length===2;
+    var lead={};
+    if(fin)compTop(seats).forEach(function(p){lead[p.name]=1;});
     var sc=el("div","compscore"+(fin?" fin":""));
-    var mine=el("div","cstack"+(fin&&d.yourChips>d.theirChips?" up":""));
-    mine.appendChild(el("b",null,"you"));
-    var mv=el("span","cv",money(d.yourChips));mine.appendChild(mv);
-    var theirs=el("div","cstack"+(fin&&d.theirChips>d.yourChips?" up":""));
-    theirs.appendChild(el("b",null,d.theirName||"them"));
-    var tv=el("span","cv",money(d.theirChips));theirs.appendChild(tv);
-    sc.appendChild(mine);sc.appendChild(el("span","cvs","wood"));sc.appendChild(theirs);
-    if(!fin)PIT.chips={you:mv,them:tv};
+    var live=[];
+    seats.forEach(function(p,i){
+      /* at two the unit sits between the pair, the way it always has; at three
+         and four that would be three "wood"s in a row, so it goes on the end */
+      if(i)sc.appendChild(el("span","cvs",two?"wood":"vs"));
+      var box=el("div","cstack"+(fin&&lead[p.name]?" up":""));
+      box.appendChild(el("b",null,p.you?"you":(p.name||"them")));
+      var v=el("span","cv",money(chipsOf(p)));box.appendChild(v);
+      sc.appendChild(box);
+      live.push({you:!!p.you,el:v});
+    });
+    if(!two)sc.appendChild(el("span","cvs","wood"));
+    if(!fin)PIT.chips=live;
     return sc;
+  }
+
+  function many2(d){return((d&&d.players&&d.players.length)||(d&&d.seats)||2)>2;}
+
+  /* "you", "you and B", "A, B and C" — the players on one side of a result,
+     with your own name replaced by the word for it */
+  function nameList(rows,me){
+    var out=rows.map(function(x){return x.name===me?"you":x.name;});
+    if(out.length<=1)return out[0]||"";
+    return out.slice(0,-1).join(", ")+" and "+out[out.length-1];
   }
 
   /* every round already played, from your side of the table */
@@ -1846,9 +1928,14 @@
   function pitPaintClock(){
     var d=PIT.last;
     if(!d)return;
-    if(PIT.chips&&PIT.chips.you.isConnected){
-      PIT.chips.you.textContent=money(ROUND.live&&ROUND.live.id===d.id?ROUND.mine:d.yourChips);
-      PIT.chips.them.textContent=money(d.theirChips);
+    if(PIT.chips&&PIT.chips.length&&PIT.chips[0].el.isConnected){
+      var seats=compSeats(d);
+      PIT.chips.forEach(function(c,i){
+        /* our own number is the held one while a table is still showing a
+           wager — see roundBet. everyone else's is whatever the poll last saw. */
+        if(c.you&&ROUND.live&&ROUND.live.id===d.id){c.el.textContent=money(ROUND.mine);return;}
+        c.el.textContent=money(chipsOf(seats[i]||{}));
+      });
     }
     if(!PIT.left||!PIT.left.isConnected)return;
     if(d.state==="done"||!d.deadline){PIT.left.textContent="";PIT.left.className="pitclock";return;}
