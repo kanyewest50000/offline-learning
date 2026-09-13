@@ -109,6 +109,16 @@ side is the buzzer: a hand still open when the clock stops is a stake paid and
 never played, and it scores as spent. Otherwise the last ten seconds of every
 round would be worth a free look at a hand you could abandon.
 
+For the three minutes a round is running, the players at that table get a small
+chat of their own. It is not the shrine's chat and shares nothing with it — no
+history, no reactions, no retention, no webhook. The whole conversation is one
+value held under the round, which is what lets the commit that settles the round
+delete it in the same breath: there is no window where the round is over and the
+talk is still readable, and nothing to sweep afterwards. It reaches the players
+wherever they are standing, because the round does: the table's own page shows
+it open, and out on the floor it is a drawer under the round bar. A chat ban
+closes it, the way it closes the shrine's chat, while leaving the tables open.
+
 Wood is not sahurs and never becomes sahurs. It is handed out by the round,
 spent against the house inside it, and swept when the round ends; the only thing
 that crosses back is the pot, which is the real stakes and was escrowed

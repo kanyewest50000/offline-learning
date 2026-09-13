@@ -34,7 +34,8 @@
 //   POST /duel/join     {token, id}                       -> {ok, duel, balance}
 //   POST /duel/confirm  {token, id}                       -> {ok, duel, balance}
 //   POST /duel/move     {token, id, move}                 -> {ok, duel, balance}
-//   GET  /duel/state?token=&id=                           -> {ok, duel, balance}
+//   GET  /duel/state?token=&id=                           -> {ok, duel, talk, balance}
+//   POST /duel/say      {token, id, text}                 -> {ok, talk}
 //   GET  /admin/veil?key=                                 -> {live, configured}
 //   POST /admin/veil    {key, live}                       -> {ok, live, configured}
 //   POST /admin/veiluser {key, id, allowed}               -> {ok, veil}
@@ -1304,6 +1305,10 @@ async function commitDuel(
   // the players are free again the moment the record is final
   if (next.settled) {
     for (const p of seatedPlayers(next)) op = op.delete(["duelof", p.id]);
+    // and the table talk goes with it, in the same commit that ends the round.
+    // Not swept later and not left to expire: the moment there is no round,
+    // there is nothing of what was said in it.
+    op = op.delete(["dtalk", next.id]);
   }
   return (await op.commit()).ok;
 }
@@ -1323,6 +1328,49 @@ function splitPot(pot: number, ways: number): number[] {
     paid = upto;
   }
   return shares;
+}
+
+// ---------------------------------------------------------------------------
+// TABLE TALK — the little chat inside a round of Competitive Gambling.
+//
+// It is not the shrine's chat and shares nothing with it: no history, no
+// reactions, no retention, no webhook. The whole conversation is ONE KV value
+// under the round, which is what lets commitDuel() delete it in the very commit
+// that settles the round — when the round is over the talk is already gone,
+// rather than being swept afterwards or left to age out. The expireIn is only a
+// backstop for a round whose record vanished without settling.
+//
+// Because it is one value, a line is appended by read-modify-commit against the
+// version we read, so two players talking at once cannot lose each other's line.
+const TALK_MAX = 40;        // lines kept; the oldest fall off the top
+const TALK_LEN = 200;       // characters one line may carry
+const TALK_TTL = 6 * 60 * 60 * 1000;
+type TalkLine = { name: string; text: string; ts: number };
+
+async function readTalk(duelId: string): Promise<TalkLine[]> {
+  const e = await kv.get<{ lines: TalkLine[] }>(["dtalk", duelId]);
+  return Array.isArray(e.value?.lines) ? e.value!.lines : [];
+}
+// Append one line. Returns the new list, or null if the round is not one that
+// can be talked at any more — the caller has already proved the speaker is
+// sitting at it.
+async function sayAtTable(duelId: string, name: string, text: string): Promise<TalkLine[] | null> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    // re-read the duel each pass: a round that ended under us must not be
+    // talked into, or the line would outlive the commit that wiped the rest
+    const d = (await loadDuel(duelId)).value;
+    if (!d || d.settled || d.game !== "comp" || d.state !== "live") return null;
+    const cur = await kv.get<{ lines: TalkLine[] }>(["dtalk", duelId]);
+    const lines = (Array.isArray(cur.value?.lines) ? cur.value!.lines : [])
+      .concat([{ name, text, ts: Date.now() }])
+      .slice(-TALK_MAX);
+    const res = await kv.atomic()
+      .check(cur)
+      .set(["dtalk", duelId], { lines }, { expireIn: TALK_TTL })
+      .commit();
+    if (res.ok) return lines;
+  }
+  return null;
 }
 
 // End a duel and release the escrow. No winners refunds every seated player
@@ -2335,7 +2383,39 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!findSide(d, u.id)) {
       return json({ error: "not your duel" }, 403);
     }
-    return json({ ok: true, duel: duelView(d, u.id), balance: round2((await getCas(u.id)).bal) });
+    // the table talk rides along with the state the round is already polling,
+    // so the chat costs no extra request and cannot lag the round it belongs to
+    const talk = d.game === "comp" && !d.settled ? await readTalk(d.id) : [];
+    return json({ ok: true, duel: duelView(d, u.id), talk, balance: round2((await getCas(u.id)).bal) });
+  }
+
+  // ---------- say something at the table (Competitive Gambling only) ----------
+  // Players in a live round only. It is a room that exists for three minutes:
+  // the line is held under the round and deleted by the same commit that ends
+  // it, so there is no history to moderate and nothing to read afterwards.
+  if (req.method === "POST" && path === "/duel/say") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    // chat-banned members keep the casino and lose the room; a round's table
+    // talk is a room, so it answers to the same gate the shrine's chat does
+    if (chatBlock(u).blocked) return json({ error: "blocked" }, 403);
+    const id = clip(b.id, 32);
+    const text = clip(b.text, TALK_LEN);
+    if (!id || !text) return json({ error: "empty" }, 400);
+    const entry = await loadDuel(id);
+    const d = entry.value;
+    if (!d) return json({ error: "gone" }, 404);
+    if (!findSide(d, u.id)) return json({ error: "not your duel" }, 403);
+    if (d.settled || d.game !== "comp" || d.state !== "live") {
+      return json({ error: "not now" }, 409);
+    }
+    // a flood cap of its own: the round is three minutes and the box is small
+    if (!allow("say:" + u.id, 5, 5000)) return tooMany(5);
+    const talk = await sayAtTable(d.id, u.username, text);
+    if (!talk) return json({ error: "not now" }, 409);
+    return json({ ok: true, talk });
   }
 
   // ---------- which skins this member may wear ----------

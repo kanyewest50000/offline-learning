@@ -137,6 +137,8 @@
     if(ROUND.poll){clearInterval(ROUND.poll);ROUND.poll=null;}
     if(ROUND.tick){clearInterval(ROUND.tick);ROUND.tick=null;}
     ROUND.live=null;ROUND.hold=false;hideRound();
+    /* the server has already deleted it; nothing of it stays on this screen */
+    talkReset();
   }
   /* One slot per chair, because a round can seat two, three or four and the
      bar has to carry the whole table — the stacks are the score and a player
@@ -158,9 +160,25 @@
     }
     if(n!==2)e.appendChild(el("span","rvs","wood"));
     e._clock=el("span","rclock","");e.appendChild(e._clock);
+    /* the round is spent out on the floor, not at the table, so the talk has to
+       be reachable from wherever they are standing: a drawer under the bar. */
+    var talk=el("button","cbtn sec","\uD83D\uDCAC");talk.type="button";talk.title="table talk";
+    var drawer=el("div","talkdrawer");drawer.style.display="none";
+    talk.onclick=function(){
+      TALK.open=!TALK.open;
+      drawer.style.display=TALK.open?"block":"none";
+      if(TALK.open){
+        drawer.innerHTML="";drawer.appendChild(talkBox());
+        if(TALK.input)TALK.input.focus();
+      }else{TALK.log=null;TALK.input=null;}
+      talkPaint();
+    };
+    e.appendChild(talk);
     var go=el("button","cbtn sec","the table");
     go.onclick=function(){if(ROUND.live){var v=ROUND.live;clearTimer();pitEnter(v);}};
     e.appendChild(go);
+    e.appendChild(drawer);
+    e._talkBtn=talk;e._drawer=drawer;
     return e;
   }
   function paintRound(){
@@ -196,6 +214,80 @@
     b._clock.textContent=pitClockText(ms);
     b._clock.className="rclock"+(ms<=15000?" hot":"");
   }
+  /* ---- TABLE TALK: the little chat inside a round ----
+     Not the shrine's chat and nothing like it. It exists for the three minutes
+     of a round and the server deletes it in the same commit that ends one, so
+     there is no history here either: TALK.lines is whatever the last poll said,
+     and when the round stops it is dropped on the floor with the rest.
+
+     It rides the poll that is already running, so nothing new is fetched. The
+     draft survives a repaint because the box is rebuilt constantly underneath
+     the person typing in it. */
+  var TALK={lines:[],draft:"",open:false,log:null,input:null,seen:0,unread:0};
+  function talkReset(){TALK.lines=[];TALK.draft="";TALK.open=false;TALK.log=null;TALK.input=null;TALK.seen=0;TALK.unread=0;}
+  /* the poll's answer, whichever page it came back to */
+  function talkSync(lines){
+    if(!lines||!lines.length){if(TALK.lines.length)TALK.lines=[];}
+    else TALK.lines=lines;
+    var n=TALK.lines.length;
+    TALK.unread=Math.max(0,n-TALK.seen);
+    if(TALK.open||!TALK.log)TALK.seen=n;
+    talkPaint();
+  }
+  function talkPaint(){
+    if(TALK.log&&TALK.log.isConnected){
+      /* only redraw when the line count moved: the log is rebuilt on every
+         poll otherwise, which eats a selection and fights the scroll */
+      if(TALK.log._n!==TALK.lines.length){
+        TALK.log._n=TALK.lines.length;
+        TALK.log.innerHTML="";
+        TALK.lines.forEach(function(m){
+          var row=el("div","tkline");
+          var me=ROUND.live&&ROUND.live.you;
+          row.appendChild(el("b",null,(me&&m.name===me)?"you":String(m.name||"")));
+          row.appendChild(el("span",null,m.text));
+          TALK.log.appendChild(row);
+        });
+        TALK.log.scrollTop=TALK.log.scrollHeight;
+        TALK.seen=TALK.lines.length;TALK.unread=0;
+      }
+    }
+    if(ROUND.bar&&ROUND.bar._talkBtn){
+      ROUND.bar._talkBtn.textContent=TALK.unread?("\uD83D\uDCAC "+TALK.unread):"\uD83D\uDCAC";
+      ROUND.bar._talkBtn.className="cbtn sec"+(TALK.unread?" hot":"");
+    }
+  }
+  /* one builder, two homes: the table's own page and a drawer under the round
+     bar. They are never on screen at once — the bar stands down on the pit. */
+  function talkBox(){
+    var box=el("div","talkbox");
+    var log=el("div","tklog");log._n=-1;
+    var form=document.createElement("form");form.className="tkform";
+    var inp=document.createElement("input");
+    inp.className="tkin";inp.maxLength=200;inp.autocomplete="off";
+    inp.placeholder="say something at the table";
+    inp.value=TALK.draft;
+    inp.addEventListener("input",function(){TALK.draft=inp.value;});
+    var send=el("button","cbtn sec","say");send.type="submit";
+    form.appendChild(inp);form.appendChild(send);
+    form.addEventListener("submit",function(ev){
+      ev.preventDefault();
+      var text=inp.value.trim();
+      if(!text||!ROUND.live)return;
+      inp.value="";TALK.draft="";
+      send.disabled=true;
+      jpost("/duel/say",{id:ROUND.live.id,text:text}).then(function(d){
+        send.disabled=false;
+        if(refused(d)){refusedGate();return;}
+        if(d&&d.talk)talkSync(d.talk);
+      }).catch(function(){send.disabled=false;});
+    });
+    box.appendChild(log);box.appendChild(form);
+    TALK.log=log;TALK.input=inp;TALK.log._n=-1;
+    talkPaint();
+    return box;
+  }
+
   /* One duel view in, and everything that cares about a round picks it up: the
      bar, the poll, and the moment it stops being live. */
   function roundSync(v){
@@ -231,7 +323,7 @@
     jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(ROUND.live.id)).then(function(d){
       if(refused(d)){roundStop();refusedGate();return;}
       if(!d||d.error){if(d&&d.error==="gone")roundStop();return;}
-      pitSkew(d);setBal(d.balance);roundSync(d.duel);
+      pitSkew(d);setBal(d.balance);talkSync(d.talk);roundSync(d.duel);
     }).catch(function(){});
   }
   /* Every wager on the floor names the round it believes it is in. The server
@@ -1496,7 +1588,7 @@
       jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(PIT.id)).then(function(d){
         if(refused(d)){refusedGate();return;}
         if(!d||d.error){if(d&&d.error==="gone"){pitStop();openPlay("pit-"+(PIT.game||"tung"));}return;}
-        pitSkew(d);setBal(d.balance);pitRender(d.duel);
+        pitSkew(d);setBal(d.balance);talkSync(d.talk);pitRender(d.duel);
       }).catch(function(){});
     },1200);
   }
@@ -1627,6 +1719,11 @@
          theirs move is the game as much as moving your own is. */
       body.appendChild(compScore(d,false));
       body.appendChild(el("p","pitsub","wood. not sahurs, and never sahurs \u2014 it is swept when the clock stops. the pot is what is actually on the table."));
+      /* the table's own page shows the talk open; out on the floor it is a
+         drawer under the round bar. never both, so one box is enough. */
+      body.appendChild(el("div","seclabel","table talk"));
+      body.appendChild(talkBox());
+      body.appendChild(el("p","pitsub","just for the three minutes, and just for this table. it goes when the round does \u2014 nothing said here is kept."));
       body.appendChild(floorMenu("comp"));
       body.appendChild(el("p","pitsub","the whole floor, and the round follows you onto whatever you pick. a hand still open when the clock stops is a stake you paid and never played, so finish what you start \u2014 and while one is still open you are not out, however empty the stack reads."+
         (many2(d)?" run the wood out here and you are done, but the round plays on while two of you still have something.":"")));

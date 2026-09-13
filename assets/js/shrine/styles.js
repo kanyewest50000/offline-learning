@@ -543,6 +543,17 @@
       '.roundbar .cbtn{flex:0 0 auto;white-space:nowrap}' +
       '@media(max-width:560px){.roundbar .rclock{margin-left:0}}' +
       /* the same two stacks, big, on the table's own page */
+      /* ---- table talk: the little chat inside a round ---- */
+      '.talkbox{display:flex;flex-direction:column;gap:8px;width:100%;max-width:560px;margin:0 auto}' +
+      '.tklog{min-height:84px;max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;' +
+      'padding:8px 10px;border:1px solid #3a2410;border-radius:10px;background:#160d04;text-align:left}' +
+      '.tkline{font-size:13px;line-height:1.35;word-break:break-word}' +
+      '.tkline b{color:#c8823c;font-weight:700;margin-right:6px}' +
+      '.tkform{display:flex;gap:8px}' +
+      '.tkin{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #3a2410;' +
+      'background:#160d04;color:#f5efe0;font-family:inherit;font-size:14px}' +
+      '.talkdrawer{flex-basis:100%;margin-top:8px}' +
+      '.roundbar .cbtn.sec.hot{background:#c8823c;color:#1d1206}' +
       '.compscore{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap}' +
       '.compscore .cstack{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}' +
       '.compscore .cstack b{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a;' +
@@ -715,7 +726,11 @@
       '& #appThread .tmsg.me .twhen{color:{heading}}' +
       '& .seclabel,& .casnote,& .ctl>span,& .stat b,& .pcell b,& .ovrow b,& .bjlabel,& .bjhtag,& .dscale,& .godnote,& .brokex,& .ovcard .ovsub,& .sethint,& .setlock,& .setfield>span,& .themecard .tnote,& .pitsub,& .pitscore .sl,& .pitpicked .pl,& .pithist .phn,& .pcut b,& .pitvs .pvs,& .roundbar .rtag,& .roundbar .rside b,& .roundbar .rvs,& .compscore .cstack b,& .compscore .cvs,& .origlead{color:{lineHot}}' +
       '& .pithist .phv,& .stat span,& .pcell span{color:{text2}}' +
-      '& .pcell.gem span{color:{good}}';
+      '& .pcell.gem span{color:{good}}' +
+      '& .tklog{background:{inset};border-color:{line}}' +
+      '& .tkline b{color:{muted}}' +
+      '& .tkin{background:{inset};border-color:{line};color:{text}}' +
+      '& .roundbar .cbtn.sec.hot{background:{lineHot};color:{bg}}';
 
   /* ---- colour maths: enough to mix two hexes, and no more ---- */
   function hexOf(c){
