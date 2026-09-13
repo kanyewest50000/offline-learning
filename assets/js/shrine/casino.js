@@ -1625,8 +1625,8 @@
       return;
     }
     var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
-    var who=(d.players||[]).map(function(p){return p.name+":"+(p.confirmed?"1":"0");}).join(",");
-    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,who].join("|");
+    var who=(d.players||[]).map(function(p){return p.name+":"+(p.confirmed?"1":"0")+(p.bot?":t":"");}).join(",");
+    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,who].join("|");
     if(shape===PIT.shape){pitPaintClock();return;}
     PIT.shape=shape;
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
@@ -1644,10 +1644,11 @@
     while(names.length<seats)names.push({name:"\u2026"});
     names.forEach(function(p,i){
       if(i)head.appendChild(el("span","pvs","vs"));
-      head.appendChild(el("span","pn",p.you?(d.you||"you"):(p.name||"\u2026")));
+      var n=el("span","pn"+(p.bot?" tung":""),p.you?(d.you||"you"):(p.name||"\u2026"));
+      head.appendChild(n);
     });
     v.appendChild(head);
-    v.appendChild(el("div","pitpot",money(d.pot)+" sahurs on the table"));
+    v.appendChild(el("div","pitpot",money(d.pot)+" sahurs on the table"+(d.tung?" \u2014 tung's table":"")));
 
     var clock=el("div","pitclock","");v.appendChild(clock);
     PIT.left=clock;
@@ -1685,6 +1686,22 @@
           }).catch(function(){kill.disabled=false;bad(note,"network error");});
         };
         body.appendChild(kill);
+        if(d.canCall){
+          /* nobody about, or nobody you want to wait for. tung cuts a card like
+             anyone else — but he is the house, so the table says so. */
+          var call=el("button","cbtn go","call tung");
+          call.onclick=function(){
+            call.disabled=true;
+            jpost("/duel/call",{id:d.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
+              call.disabled=false;
+              if(!rr||rr.error){bad(note,rr&&rr.error==="taken"?"too late — somebody just sat down.":((rr&&rr.error)||"he did not come."));return;}
+              if(typeof rr.balance==="number")setBal(rr.balance);
+              pitSkew(rr.duel);pitRender(rr.duel);
+            }).catch(function(){call.disabled=false;bad(note,"network error");});
+          };
+          body.appendChild(call);
+          body.appendChild(el("p","pitsub","tung takes one chair and says yes on the way in. he is the house, though \u2014 a table he is sitting at pays the house edge, the same as the wheel, where a table between players pays none."));
+        }
         body.appendChild(el("p","pitsub",filled<=1
           ?"if nobody comes, it closes itself and the stake comes back either way."
           :"taking it down sends every stake home. if it never fills, the same thing happens on its own."));

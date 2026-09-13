@@ -32,6 +32,7 @@
 //   POST /duel/create   {token, game, bet, seats?}        -> {ok, duel, balance}
 //   POST /duel/cancel   {token, id}                       -> {ok, refunded, balance}
 //   POST /duel/join     {token, id}                       -> {ok, duel, balance}
+//   POST /duel/call     {token, id}                       -> {ok, duel, balance}   (seat tung)
 //   POST /duel/confirm  {token, id}                       -> {ok, duel, balance}
 //   POST /duel/move     {token, id, move}                 -> {ok, duel, balance}
 //   GET  /duel/state?token=&id=                           -> {ok, duel, talk, balance}
@@ -1101,7 +1102,10 @@ const DUEL_TTL = 24 * 60 * 60 * 1000;  // a finished record lingers a day so bot
 //   ["duel", id]    -> Duel
 //   ["duelof", uid] -> the id of the one duel that player is in (one at a time)
 
-type DuelSide = { id: string; name: string; confirmed: boolean; move: string | null; wins: number; chips: number };
+type DuelSide = {
+  id: string; name: string; confirmed: boolean; move: string | null; wins: number; chips: number;
+  bot?: boolean;   // tung himself, called to the table instead of a player
+};
 type CutCards = { host: string; guest: string; extra?: string[] };
 type Duel = {
   id: string;
@@ -1195,10 +1199,37 @@ const DUEL_GAMES: Record<string, { name: string; moves: string[]; target: number
 // a hand against ONE opponent — its rounds, its score and its forfeit rule are
 // all written for two — so it stays two however many a client asks for.
 const MULTI_SEAT = new Set(["cut", "comp"]);
+// Tung cuts a card. He does not throw a hand of Tung, Wood, Fire and he does
+// not spend three minutes on the floor, so The Cut is the one table he sits at.
+const CAN_CALL_TUNG = new Set(["cut"]);
 
 function duelSide(u: { id: string; username: string }): DuelSide {
   return { id: u.id, name: u.username, confirmed: false, move: null, wins: 0, chips: 0 };
 }
+
+// ---------------------------------------------------------------------------
+// CALLING TUNG. A cut wants a body in the other chair and there is not always
+// one about, so the host may call tung into it. He cuts a card like anyone
+// else, and he says yes before he sits, because he is always ready.
+//
+// What he is NOT is a member. He has no account, no balance, and no lock, so a
+// table with him at it is not the pit any more — it is a house table wearing
+// the pit's clothes. That changes exactly one thing and it is the money: his
+// stake is the house's, so the pot pays the house's edge, the same 0.1% every
+// other table in the casino runs. Between players there is no rake and never
+// will be; against tung there is the same edge as the wheel.
+//
+// The id cannot collide with an account: rid() is pure lowercase hex, and this
+// is not. The NAME cannot either — /apply refuses anything that reads as
+// "tung" — so neither half of him can be impersonated or mistaken for a member.
+const BOT_ID = "tung!bot";
+function isBot(p: DuelSide | null | undefined): boolean { return !!p && (p.bot === true || p.id === BOT_ID); }
+function tungSide(): DuelSide {
+  return { id: BOT_ID, name: WISDOM_NAME, confirmed: true, move: null, wins: 0, chips: 0, bot: true };
+}
+// the people at the table who actually staked something of their own
+function stakers(d: Duel): DuelSide[] { return seatedPlayers(d).filter((p) => !isBot(p)); }
+function hasBot(d: Duel): boolean { return seatedPlayers(d).some(isBot); }
 
 // What a player is allowed to see of a duel. Crucially it never ships the
 // opponent's move while the round is still open — that is the whole game.
@@ -1248,9 +1279,15 @@ function duelView(d: Duel, uid: string | null) {
     players: people.map((p) => ({
       name: p.name,
       you: !!uid && p.id === uid,
+      bot: isBot(p),
       confirmed: p.confirmed,
       chips: chipsOf(p),
     })),
+    // a table tung is sitting at is a house table, and says so: the pot it
+    // quotes above is what would actually be paid out, edge and all
+    tung: hasBot(d),
+    canCall: d.state === "open" && CAN_CALL_TUNG.has(d.game) && !hasBot(d) &&
+      people.length < seats && youAreHost,
     winner: d.winner,
     paid,
     // what this player took out of the pot: the lot, a share of it, or nothing
@@ -1304,7 +1341,7 @@ async function commitDuel(
   op = op.set(["duel", next.id], next, { expireIn: DUEL_TTL });
   // the players are free again the moment the record is final
   if (next.settled) {
-    for (const p of seatedPlayers(next)) op = op.delete(["duelof", p.id]);
+    for (const p of seatedPlayers(next)) if (!isBot(p)) op = op.delete(["duelof", p.id]);
     // and the table talk goes with it, in the same commit that ends the round.
     // Not swept later and not left to expire: the moment there is no round,
     // there is nothing of what was said in it.
@@ -1395,16 +1432,22 @@ function finishDuel(d: Duel, winnerIds: string[] | string | null, reason: string
   const want = winnerIds === null ? [] : (Array.isArray(winnerIds) ? winnerIds : [winnerIds]);
   const winners = people.filter((p) => want.indexOf(p.id) >= 0);
   if (!winners.length) {
-    for (const p of people) credits.push({ id: p.id, amount: d.bet });
+    // a void table hands every stake back — and tung never put one in
+    for (const p of people) if (!isBot(p)) credits.push({ id: p.id, amount: d.bet });
     return { next, credits };
   }
-  const pot = round2(d.bet * people.length);
+  // The pot is every chair, tung's included: his stake is the house's, which is
+  // what makes a table with him at it a house table. So it pays the house edge,
+  // exactly like the wheel — and between players it still pays none at all.
+  const pot = hasBot(d) ? floor2(round2(d.bet * people.length) * HOUSE) : round2(d.bet * people.length);
   const shares = splitPot(pot, winners.length);
   next.paid = winners.map((w, i) => ({ name: w.name, amount: shares[i] }));
   // `winner` is the sole-winner name and nothing else, so a split can never be
   // read by anything downstream as one player having taken the lot
   if (winners.length === 1) next.winner = winners[0].name;
-  winners.forEach((w, i) => credits.push({ id: w.id, amount: shares[i] }));
+  // tung takes the pot the same way he takes everything: it goes to the house
+  // and there is no balance of his to put it in
+  winners.forEach((w, i) => { if (!isBot(w)) credits.push({ id: w.id, amount: shares[i] }); });
   return { next, credits };
 }
 
@@ -2265,6 +2308,51 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (res.ok) return json({ ok: true, duel: duelView(next, u.id), balance: Math.max(0, nb) });
     }
     return json({ error: "taken" }, 409);
+  }
+
+  // ---------- call tung into the empty chair ----------
+  // The host's table, still filling, at a game tung actually plays. He takes
+  // ONE chair — a table of three is you, somebody else and tung, never two of
+  // him — and he is seated already confirmed, because he is always ready.
+  // Nothing is debited for him: his stake is the house's, which is what makes
+  // the pot pay the house edge. See finishDuel().
+  if (req.method === "POST" && path === "/duel/call") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const entry = await loadDuel(clip(b.id, 32));
+      const d = entry.value;
+      if (!d) return json({ error: "gone" }, 404);
+      if (d.host.id !== u.id) return json({ error: "not yours" }, 403);
+      if (d.settled || d.state !== "open") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
+      if (!CAN_CALL_TUNG.has(d.game)) return json({ error: "tung does not play that one" }, 400);
+      if (hasBot(d)) return json({ error: "he is already here" }, 409);
+      const seats = duelSeats(d);
+      if (seatedPlayers(d).length >= seats) return json({ error: "taken" }, 409);
+      const extra = extraOf(d).map((x) => ({ ...x }));
+      let guest = d.guest ? { ...d.guest } : null;
+      if (!guest) guest = tungSide();
+      else extra.push(tungSide());
+      const filled = 1 + 1 + extra.length;
+      const full = filled >= seats;
+      const now = Date.now();
+      const next: Duel = {
+        ...d, guest, extra,
+        state: full ? "confirm" : "open",
+        deadline: full ? now + DUEL_CONFIRM_MS : d.deadline,
+      };
+      // no lock and no debit for the chair he is in — there is no account
+      // behind it, and the same commit guard still stops a player racing him
+      // for the last seat, because it checks the duel we read
+      const res = await kv.atomic()
+        .check(entry)
+        .set(["duel", d.id], next, { expireIn: DUEL_TTL })
+        .commit();
+      if (res.ok) return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
+    }
+    return json({ error: "busy" }, 409);
   }
 
   // ---------- both of you, say yes, within ten seconds ----------

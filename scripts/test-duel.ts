@@ -37,10 +37,14 @@ const money = (n: number) => Math.round(n * 100) / 100;
 const src = await Deno.readTextFile(`${ROOT}/server.ts`);
 must(/DUEL_OPEN_MS"\) \|\| 10 \* 60 \* 1000\)/.test(src), "an unjoined table must default to a 10 minute life");
 must(/DUEL_CONFIRM_MS"\) \|\| 10 \* 1000\)/.test(src), "the confirm window must default to 10 seconds");
-// the pot is both stakes and nothing is skimmed: a rake would break every
-// conservation assertion below, so the absence of one is pinned here too
-must(/const pot = round2\(d\.bet \* people\.length\);/.test(src),
-  "the pot must be every stake at the table — no rake");
+// The pot is every stake and nothing is skimmed — BETWEEN PLAYERS. A rake would
+// break every conservation assertion below, so the absence of one is pinned
+// here. The one exception is a chair tung is sitting in: his stake is the
+// house's, so a table he is at pays the house edge like any other house table.
+// scripts/test-call-tung.ts counts that side; here we pin that it cannot leak
+// onto a table of real players.
+must(/const pot = hasBot\(d\) \? floor2\(round2\(d\.bet \* people\.length\) \* HOUSE\) : round2\(d\.bet \* people\.length\);/.test(src),
+  "between players the pot must be every stake — no rake — and only tung's table may take the edge");
 must(/const upto = floor2\(pot \* i \/ ways\);/.test(src) && /shares\.push\(round2\(upto - paid\)\)/.test(src),
   "a split must be floored running totals, so no share is ever rounded up");
 must(/if \(winners\.length === 1\) next\.winner = winners\[0\]\.name;/.test(src),

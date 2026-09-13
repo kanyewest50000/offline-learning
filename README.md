@@ -77,6 +77,15 @@ table is handed the same stack of wood and turned loose on the whole floor for
 three minutes — every table, not a sprint corner of them — and whoever is
 sitting on the biggest pile when the clock stops takes the pot.
 
+A cut wants a body in the other chair and there is not always one about, so the
+host can **call tung** into it. He takes one chair — a table of three is you,
+somebody else and tung, never two of him — and he is seated already confirmed,
+because he is always ready. What he is not is a member: no account, no balance,
+no lock. That makes a table he is sitting at a house table wearing the pit's
+clothes, and it changes exactly one thing, which is the money. His stake is the
+house's, so the pot pays the house's 0.1% edge, the same as the wheel. Between
+players there is no rake and never will be. The table says which it is.
+
 The Cut and Competitive Gambling both seat two, three or four; Tung, Wood, Fire
 is a hand against one opponent — its rounds, its score and its forfeit rule are
 all written for a pair — so it stays two however many a client asks for. A table

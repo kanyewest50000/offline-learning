@@ -553,6 +553,9 @@
       '.tkin{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #3a2410;' +
       'background:#160d04;color:#f5efe0;font-family:inherit;font-size:14px}' +
       '.talkdrawer{flex-basis:100%;margin-top:8px}' +
+      /* tung at a table is marked the way he is marked in the chat: gold, and
+         not part of whatever the skin is doing */
+      '.pitvs .pn.tung{color:#f2c063}' +
       '.roundbar .cbtn.sec.hot{background:#c8823c;color:#1d1206}' +
       '.compscore{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap}' +
       '.compscore .cstack{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}' +
