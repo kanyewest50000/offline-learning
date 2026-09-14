@@ -1805,9 +1805,6 @@
             }).catch(function(){call.disabled=false;bad(note,"network error");});
           };
           body.appendChild(call);
-          body.appendChild(el("p","pitsub",
-            (need===1?"one chair left. ":need+" chairs left. ")+
-            "each call seats him in one of them, and he says yes on the way in \u2014 call him for every empty chair if nobody is about. he is the house, though: a table he is sitting at pays the house edge, the same as the wheel, where a table between players pays none."));
         }
         body.appendChild(el("p","pitsub",filled<=1
           ?"if nobody comes, it closes itself and the stake comes back either way."
