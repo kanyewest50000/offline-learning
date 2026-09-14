@@ -17,6 +17,7 @@
 //   GET  /events?since=&token=                            -> {events, cursor}
 //   POST /send          {token, id, text, reply}          -> {ok, ts}
 //   POST /react         {token, id, e, op, eid}           -> {ok}
+//   GET  /cas/resume?token=                               -> {ok, game, ...} an unfinished board
 //   GET  /bank?token=                                     -> {ok, owed, cap, canBorrow, ...}
 //   POST /bank/borrow   {token, amount}                   -> {ok, borrowed, owed, balance}
 //   POST /bank/repay    {token, amount?}                  -> {ok, paid, owed, balance}
@@ -30,6 +31,7 @@
 //   POST /admin/ban     {key, id, banned}                 -> {ok, banned}      (whole shrine)
 //   POST /admin/chatban {key, id, chatBanned}             -> {ok, chatBanned}  (chat only)
 //   POST /admin/loanmax {key, id, max}                    -> {ok, loanMax}     (null = default)
+//   POST /admin/setdebt {key, id, owed}                   -> {ok, owed}        (0 wipes it)
 //   GET  /veil?token=                                     -> {live, allowed, url?}
 //   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
@@ -2828,6 +2830,38 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, banned });
   }
 
+  // ---------- admin: what one member owes the bank ----------
+  // Writes the debt directly, for putting right what a bug or a bad call left
+  // behind. Zero wipes it. There is no interest applied here — this is the
+  // ledger being corrected, not a loan being written, so what is set is what
+  // is owed. A member with no loan on file gets one whose principal matches,
+  // so the counter does not read as owing more than was ever borrowed.
+  if (req.method === "POST" && path === "/admin/setdebt") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    if (!id) return json({ error: "missing" }, 400);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const owed = round2(Number(b.owed));
+    if (!Number.isFinite(owed) || owed < 0) return json({ error: "a debt is 0 or more" }, 400);
+    if (owed > MAX_BET) return json({ error: "that is not a debt, that is a mortgage" }, 400);
+    if (owed === 0) {
+      await kv.delete(["loan", id]);
+      return json({ ok: true, owed: 0 });
+    }
+    const had = await kv.get<Loan>(["loan", id]);
+    const principal = had.value && Number(had.value.principal) > 0
+      ? round2(Number(had.value.principal))
+      : owed;
+    await kv.set(["loan", id], {
+      principal, owed, ts: had.value?.ts || Date.now(),
+    }, { expireIn: LOAN_TTL });
+    return json({ ok: true, owed, principal });
+  }
+
   // ---------- admin: what the bank will lend one member ----------
   // Their own ceiling, in place of the house default. Zero shuts the bank to
   // them entirely; clearing it (pass max:null) puts them back on the default
@@ -3048,6 +3082,67 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         });
       }
     }
+  }
+
+  // ---------- pick a game back up ----------
+  // The three slow tables — mines, beef and blackjack — outlive the request
+  // that dealt them: the stake is taken on the deal and the board is held in KV
+  // for GAME_TTL. Nothing ever read one back, so closing the tab or wandering
+  // off to another screen lost the board and the stake with it. It was never
+  // actually gone; there was simply no way to ask for it.
+  //
+  // This is that way. It tells the client the SAME thing the game's own replies
+  // tell it mid-play, through the same shaping, so a resumed board can never
+  // show more than a played one: never the mine layout, never which lane the
+  // cow dies in, never the dealer's hole card.
+  if (req.method === "GET" && path === "/cas/resume") {
+    const u = await casUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+
+    // deno-lint-ignore no-explicit-any
+    const mines = await kv.get<any>(["mines", u.id]);
+    if (mines.value) {
+      const st = mines.value;
+      const safe = (st.revealed || []).length;
+      const purse = await purseOfStake(u.id, st.w);
+      return json({
+        ok: true, game: "mines", state: "playing",
+        bet: st.bet, mines: st.count, revealed: st.revealed || [],
+        multiplier: safe ? minesMult(st.count, safe) : 1,
+        nextMultiplier: minesMult(st.count, safe + 1),
+        ...purseJson(purse),
+      });
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const beef = await kv.get<any>(["beef", u.id]);
+    if (beef.value) {
+      const st = beef.value;
+      const purse = await purseOfStake(u.id, st.w);
+      // the record keeps the odds, not the word for them; the picker wants the
+      // word, so it is read back off the table the odds came from
+      const diff = Object.keys(BEEF).find((k) => BEEF[k].q === st.q) || "";
+      return json({
+        ok: true, game: "beef", state: "playing", difficulty: diff,
+        bet: st.bet, lanes: st.lanes, step: st.step,
+        multiplier: st.step ? beefMult(st.q, st.step) : 1,
+        nextMultiplier: beefMult(st.q, st.step + 1),
+        ladder: beefLadder(st.q, st.lanes),
+        ...purseJson(purse),
+      });
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const bj = await kv.get<any>(["bj", u.id]);
+    if (bj.value) {
+      const purse = await purseOfStake(u.id, bj.value.w);
+      // the hand's own reply shaping, which is what keeps the hole card down
+      const out = await bjRespond(u.id, bj.value, false, purse);
+      const body = await out.json();
+      return json({ ...body, game: "bj" });
+    }
+
+    return json({ ok: true, game: null });
   }
 
   // ---------- the bank: what it will lend you, and what you still owe ----------
@@ -3840,7 +3935,8 @@ A <b>ban</b> shuts the whole shrine — chat and casino both. A <b>chat ban</b> 
 <section class="pane" id="pane-balances">
 <h2>Manage casino balances</h2>
 <p class="hint">Fun-money sahurs. Set a balance only as a moderation tool.
-Each member also has a <b>loan cap</b> &mdash; the most the Bank of Sahur Sahur Sahur will lend them at once. Leave it blank for the house default; set <b>0</b> to shut the bank to them.</p>
+Each member also has a <b>debt</b> to the Bank of Tung and a <b>loan cap</b> &mdash; the most it will lend them at once.
+Setting a debt writes it straight to the ledger with no interest added, and <b>0</b> wipes it. Leave the cap blank for the house default; set it to <b>0</b> to shut the bank to them.</p>
 <input class="search" id="search-balances" placeholder="search player balances…" autocomplete="off">
 <div id="balances"><div class="empty">load to see player balances.</div></div>
 </section>
@@ -4231,6 +4327,11 @@ function renderBalances(){
     var llab=document.createElement("small");llab.className="vlab";
     if(u.owed>0){llab.className="vlab rev";llab.textContent="owes the bank "+Number(u.owed).toFixed(2)+" sahurs";}
     else llab.textContent="owes the bank nothing";
+    var debt=document.createElement("input");debt.type="number";debt.min="0";debt.step="0.01";debt.className="tin";
+    debt.placeholder="owed";debt.style.flex="0 1 120px";debt.value=Number(u.owed||0).toFixed(2);
+    var dsave=document.createElement("button");dsave.className="no";dsave.textContent="set debt";
+    dsave.title="write the debt directly \u2014 no interest is added, and 0 wipes it";
+    dsave.onclick=function(){setDebt(u.id,u.username,debt.value);};
     var cap=document.createElement("input");cap.type="number";cap.min="0";cap.step="0.01";cap.className="tin";
     cap.placeholder="cap ("+(balancesDefault||10)+" default)";cap.style.flex="0 1 150px";
     if(u.loanMaxSet)cap.value=Number(u.loanMax).toFixed(2);
@@ -4239,10 +4340,18 @@ function renderBalances(){
     var cclr=document.createElement("button");cclr.className="load";cclr.textContent="default";
     cclr.title="put them back on the house default";
     cclr.onclick=function(){setLoanMax(u.id,u.username,null);};
-    lrow.appendChild(llab);lrow.appendChild(cap);lrow.appendChild(csave);lrow.appendChild(cclr);
+    lrow.appendChild(llab);lrow.appendChild(debt);lrow.appendChild(dsave);
+    lrow.appendChild(cap);lrow.appendChild(csave);lrow.appendChild(cclr);
     el.appendChild(lrow);
     balances.appendChild(el);
   });
+}
+function setDebt(id,name,val){
+  var owed=Number(val);
+  if(!(owed>=0)){alert("a debt is 0 or more");return;}
+  if(owed===0&&!confirm("Wipe "+name+"'s debt to the bank entirely?"))return;
+  fetch("/admin/setdebt",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,owed:owed})})
+    .then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshBalances();});
 }
 function setLoanMax(id,name,val){
   var body={key:keyEl.value.trim(),id:id,max:(val===null||String(val).trim()==="")?null:Number(val)};

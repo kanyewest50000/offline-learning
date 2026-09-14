@@ -242,6 +242,23 @@ the last of them is the exact centre of the bucket that path adds up to.
 `scripts/test-plinko-balls.ts` checks every one of the 256 paths through an
 8-row board and a few hundred each at 12 and 16, all landing dead on centre.
 
+## leaving a table mid-game
+
+Mines, beef and blackjack outlive the page they were dealt on. The stake goes on
+the deal and the board is held server-side for `GAME_TTL`, so closing the tab
+never ended a game — but nothing ever read one back, which made it look exactly
+like losing it, and the next deal would overwrite the board and take the stake
+with it. Worst at the very start: deal a mines board, touch nothing, come back,
+and the stake was gone without even a half-played board to show for it.
+
+`GET /cas/resume` is the way to ask. Each of the three views calls it on the way
+in and paints whatever it finds — the board, the lane, the hand — and mentions
+it if the open game belongs to one of the other two, so a board is never left
+open on a screen nobody is looking at. It answers with the same shaping the
+game's own replies use mid-play, so a resumed table can never show more than a
+played one: never the mine layout, never the lane the cow dies in, never the
+dealer's hole card.
+
 ## the bank
 
 A third button in the casino header, next to the Shrine and the Shop: the **Bank
@@ -268,7 +285,9 @@ a claim's payout and the debt it pays down — there is no instant where a debt
 exists that was never paid out, or a player is paid without the debt moving.
 
 The cap is ten sahurs by default. Each member can be given their own on the
-**Casino balances** pane of `/admin`, which also shows what they currently owe;
+**Casino balances** pane of `/admin`, which also shows what they currently owe
+and can write that debt straight to the ledger — no interest is added by the
+correction, and zero wipes it;
 zero shuts the bank to them, and clearing the field puts them back on the house
 default rather than pinning them to whatever it is today.
 

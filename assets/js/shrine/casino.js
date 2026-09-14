@@ -739,6 +739,22 @@
     return v;
   }
   function betField(def){var i=el("input");i.type="number";i.min="0.1";i.step="0.1";i.value=def||"1";return i;}
+  /* ---- picking a slow table back up ----
+     Mines, beef and blackjack outlive the page they were dealt on: the stake
+     leaves on the deal and the board is held server-side for hours. Closing the
+     tab never ended one, it only hid it — and the next deal would overwrite it,
+     taking the stake with it. Each of those three views asks this on open and
+     paints whatever it finds, and tells you about the other two so a board is
+     never open on a screen you are not looking at. */
+  var OPEN_NAMES={mines:"a mines board",beef:"a beef walk",bj:"a blackjack hand"};
+  function openGame(){
+    return jget("/cas/resume?token="+encodeURIComponent(tok())).catch(function(){return null;});
+  }
+  /* what to say when the open board belongs to one of the other tables */
+  function elsewhereNote(d,mine){
+    if(!d||!d.game||d.game===mine)return "";
+    return "you still have "+(OPEN_NAMES[d.game]||"a game")+" open.";
+  }
   function ctl(label,node){var c=el("div","ctl");c.appendChild(el("span",null,label));c.appendChild(node);return c;}
   function selectOf(opts,def){var s=el("select");opts.forEach(function(o){var op=el("option",null,o[1]);op.value=o[0];s.appendChild(op);});if(def)s.value=def;return s;}
   function res(v){var r=el("div","casres","");v.appendChild(r);return r;}
@@ -1304,6 +1320,10 @@
        BJ_DEAL_MS behind the last. The result line, the balance, the payout toast
        and the next set of buttons all wait for the last card to land. */
     var shown={dealer:[],hands:[[]]};
+    /* settle() owns the result line and runs after the cards finish landing,
+       so a note written before paint() would be wiped by it. This rides through
+       instead, and is spent the first time it is shown. */
+    var resumeNote="";
     var handUI=[];
     var dealTimer=null;
     var live=null;                       // server snapshot for the hand in motion
@@ -1381,7 +1401,8 @@
         var stake=(d.hands[d.active]||{}).bet||0;
         if(d.canDouble){var db=bjBtn("dbl","double",icoDouble());db.onclick=function(){act("/cas/bj/double",stake);};acts.appendChild(db);}
         if(d.canSplit){var sp=bjBtn("split","split",icoSplit());sp.onclick=function(){act("/cas/bj/split",stake);};acts.appendChild(sp);}
-        setRes("",multi?("playing hand "+(d.active+1)+" of "+d.hands.length):"");
+        setRes("",resumeNote||(multi?("playing hand "+(d.active+1)+" of "+d.hands.length):""));
+        resumeNote="";
         return;
       }
       // the server sends the new balance with the first reply, but the header and
@@ -1451,6 +1472,21 @@
         paint(d);
       }).catch(function(){roundSaw(null);setRes("lose","network error");deal.disabled=false;bet.disabled=false;});
     };
+    /* a hand left on the felt is still there — paint() takes the server's own
+       state either way, so a resumed hand deals in exactly like a fresh one and
+       the hole card stays down until it is earned */
+    openGame().then(function(d){
+      if(!d||d.error)return;
+      if(d.game==="bj"){
+        bet.value=money(d.bet);
+        deal.disabled=true;bet.disabled=true;
+        resumeNote="you left this hand on the felt.";
+        paint(d);
+      }else{
+        var note=elsewhereNote(d,"bj");
+        if(note)setRes("lose",note);
+      }
+    });
   }
 
   /* ---------- MINES ---------- */
@@ -1507,6 +1543,21 @@
         live=true;enableHidden();
       }).catch(function(){bad(r,"network error");live=true;enableHidden();});
     }
+    /* the board as it stands, whether it was just dealt or is being picked up
+       hours later. The revealed list is the tiles already turned over. */
+    function enterBoard(d,count,revealed){
+      revealed=revealed||[];
+      safeTotal=25-count;
+      start.style.display="none";cash.style.display="";bet.disabled=true;mn.disabled=true;
+      build(true);live=true;
+      revealed.forEach(function(i){
+        if(cells[i]){cells[i].className="cell safe dis";cells[i].textContent="💎";}
+      });
+      enableHidden();
+      setPanel(revealed.length?mult(d.multiplier):"1.00x",
+        d.nextMultiplier!=null?mult(d.nextMultiplier):"—",revealed.length);
+      cash.textContent=revealed.length?("cash out "+mult(d.multiplier)):"cash out";
+    }
     start.onclick=function(){
       start.disabled=true;
       /* the stake is on the board from the moment it is dealt; what it is worth
@@ -1517,13 +1568,22 @@
         if(d.error){roundSaw(d);bad(r,d.error);return;}
         roundStaked(d);
         setBal(BAL-Number(bet.value));
-        safeTotal=25-Number(mn.value);
-        start.style.display="none";cash.style.display="";bet.disabled=true;mn.disabled=true;
-        r.className="casres";r.textContent="";build(true);live=true;
-        setPanel("1.00x",mult(d.nextMultiplier),0);
-        cash.textContent="cash out";
+        r.className="casres";r.textContent="";
+        enterBoard(d,Number(mn.value),[]);
       }).catch(function(){start.disabled=false;roundSaw(null);bad(r,"network error");});
     };
+    /* a board left open is still on the server; put the player back on it */
+    openGame().then(function(d){
+      if(!d||d.error)return;
+      if(d.game==="mines"){
+        bet.value=money(d.bet);mn.value=String(d.mines);
+        enterBoard(d,Number(d.mines),d.revealed);
+        ok(r,"you left this board open. the stake is still on it.");
+      }else{
+        var note=elsewhereNote(d,"mines");
+        if(note)bad(r,note);
+      }
+    });
     cash.onclick=function(){
       cash.disabled=true;
       jpost("/cas/mines/cashout",{}).then(function(d){if(refused(d)){refusedGate();return;}
@@ -1586,6 +1646,19 @@
       if(cur){cur.classList.add("cur");cur.querySelector(".lc").textContent="🐄";cur.scrollIntoView({block:"nearest",inline:"center"});}
     }
     function running(on){start.style.display=on?"none":"";step.style.display=on?"":"none";cash.style.display=on?"":"none";bet.disabled=on;diff.disabled=on;}
+    /* the road as it stands, freshly dealt or picked up hours later */
+    function enterRoad(d){
+      LANES=d.lanes;STEP=Number(d.step)||0;
+      build(LANES,d.ladder);running(true);
+      if(STEP>0){
+        placeAnimal(STEP-1);
+        if(road.children[STEP-1])road.children[STEP-1].classList.add("done");
+        cash.style.display="";cash.textContent="cash out "+mult(d.multiplier);
+      }else cash.style.display="none";
+      pLane.val.textContent=STEP+" / "+LANES;
+      pCur.val.textContent=STEP?mult(d.multiplier):"1.00x";
+      pNext.val.textContent=mult(d.nextMultiplier);
+    }
     start.onclick=function(){
       start.disabled=true;
       roundBet(bet.value);
@@ -1594,11 +1667,23 @@
         if(d.error){roundSaw(d);bad(r,d.error);return;}
         roundStaked(d);
         setBal(BAL-Number(bet.value));
-        LANES=d.lanes;STEP=0;build(LANES,d.ladder);running(true);
-        r.className="casres";r.textContent="";cash.style.display="none";
-        pLane.val.textContent="0 / "+LANES;pCur.val.textContent="1.00x";pNext.val.textContent=mult(d.nextMultiplier);
+        r.className="casres";r.textContent="";
+        enterRoad(d);
       }).catch(function(){start.disabled=false;roundSaw(null);bad(r,"network error");});
     };
+    /* a cow left in the road is still there; put the player back beside it */
+    openGame().then(function(d){
+      if(!d||d.error)return;
+      if(d.game==="beef"){
+        bet.value=money(d.bet);
+        if(d.difficulty)diff.value=d.difficulty;
+        enterRoad(d);
+        ok(r,"you left this one in the road. the stake is still on it.");
+      }else{
+        var note=elsewhereNote(d,"beef");
+        if(note)bad(r,note);
+      }
+    });
     step.onclick=function(){
       step.disabled=true;
       jpost("/cas/beef/step",{}).then(function(d){if(refused(d)){refusedGate();return;}
