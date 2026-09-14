@@ -32,8 +32,8 @@
      opened. BANK_IMG is the common one and BANK_RARE_IMG is the rare one;
      BANK_RARE_CHANCE is how often the rare one comes up, as a fraction.
      Swap either path, or change the odds, and nothing else needs touching. */
-  var BANK_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;      /* 90% */
-  var BANK_RARE_IMG = new URL("assets/eviltungtungtungsahur.jpg", location.href).href;  /* 10% */
+  var BANK_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;
+  var BANK_RARE_IMG = new URL("assets/lendersahur.jpg", location.href).href;
   var BANK_RARE_CHANCE = 0.10;
 
   /* html-escape for anything interpolated into the shrine document */
