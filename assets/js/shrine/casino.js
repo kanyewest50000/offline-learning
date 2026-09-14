@@ -1381,8 +1381,9 @@
           setBal(d.balance);roundSaw(d);bad(r,"boom. you lost.");endRound();return;
         }
         c.className="cell safe dis";c.textContent="💎";
+        /* the last gem is a cashout, but it still has to write the panel */
+        setPanel(mult(d.multiplier),d.nextMultiplier!=null?mult(d.nextMultiplier):"—",(d.revealed||[]).length);
         if(d.state==="cashout"){setBal(d.balance);roundSaw(d);ok(r,"cleared the board! "+mult(d.multiplier));celebrate(d.payout,d.multiplier);endRound();return;}
-        setPanel(mult(d.multiplier),mult(d.nextMultiplier),d.revealed.length);
         cash.textContent="cash out "+mult(d.multiplier);
         live=true;enableHidden();
       }).catch(function(){bad(r,"network error");live=true;enableHidden();});
