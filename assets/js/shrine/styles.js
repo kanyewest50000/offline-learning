@@ -177,13 +177,16 @@
       '.seg button.on{background:#c8823c;color:#1d1206}' +
       /* roulette */
       '.wheelwrap{display:flex;justify-content:center;padding:4px 0}' +
-      '.wheel{transition:transform 4s cubic-bezier(.15,.85,.2,1)}' +
+      /* how long a spin takes is set on the <svg> at spin time, not baked in
+         here, because the lightning button changes it. the defaults are the
+         unhurried ones; turbo sets these properties to something much shorter. */
+      '.wheel{transition:transform var(--spin,7s) cubic-bezier(.15,.85,.2,1)}' +
       /* the ball orbits the other way and settles a touch before the wheel stops.
-         .ballhop (nested) drops into the pocket with a few bounces in the last
-         second-and-a-half, wobbling a pocket or two as it finds its rest. */
-      '.ball{transition:transform 3.7s cubic-bezier(.12,.78,.18,1)}' +
+         .ballhop (nested) drops into the pocket with a few bounces at the end,
+         wobbling a pocket or two as it finds its rest. */
+      '.ball{transition:transform var(--ballspin,6.5s) cubic-bezier(.12,.78,.18,1)}' +
       '.ballhop{transform-box:view-box}' +
-      '.ball.dropping .ballhop{animation:ballDrop 3.7s both}' +
+      '.ball.dropping .ballhop{animation:ballDrop var(--ballspin,6.5s) both}' +
       '@keyframes ballDrop{' +
       '0%,58%{transform:rotate(0deg) translateY(0)}' +
       '68%{transform:rotate(-22deg) translateY(22px)}' +
@@ -191,13 +194,48 @@
       '84%{transform:rotate(-10deg) translateY(18px)}' +
       '91%{transform:rotate(5deg) translateY(8px)}' +
       '100%{transform:rotate(0deg) translateY(16px)}}' +
-      '.rboard{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin-top:8px}' +
-      '.rnum{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border-radius:4px;cursor:pointer;color:#fff;border:1px solid transparent}' +
-      '.rnum.red{background:#a32020}.rnum.black{background:#23232b}.rnum.green{background:#1f6b32}' +
-      '.rnum.sel{border-color:#f2c063;box-shadow:0 0 0 2px #f2c063 inset}' +
-      '.routside{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}' +
-      '.rout{flex:1;min-width:64px;padding:8px 6px;font-size:11px;font-weight:700;border-radius:6px;background:#241505;border:1px solid #3a2410;color:#f5efe0;cursor:pointer;text-align:center}' +
-      '.rout.sel{border-color:#f2c063;background:#3a2410;color:#f2c063}' +
+      /* ---- the felt ----
+         The old board was a bare 12-wide grid of numbers with 36 orphaned on a
+         row of its own, and under it a dozen identical brown pills that told you
+         nothing about what they paid or where they sat. This is the real layout
+         instead: zero down the left, the numbers in the three rows a table
+         actually uses, and every outside bet touching the numbers it covers —
+         the column boxes at the end of their own row, each dozen spanning its
+         twelve, the even-money bets two columns apiece along the bottom. It
+         means the felt explains the bet, which is the whole point of a felt.
+         14 columns: zero, the twelve number columns, the 2:1 boxes. */
+      '.rtable{display:grid;grid-template-columns:1.15fr repeat(12,1fr) 1.3fr;gap:3px;margin-top:10px}' +
+      '.rtable > *{display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+      'gap:1px;border-radius:5px;border:1px solid transparent;cursor:pointer;color:#fff;' +
+      'font-weight:800;text-align:center;line-height:1.05;min-width:0;overflow:hidden}' +
+      '.rtable > *:hover{filter:brightness(1.2)}' +
+      /* the payout, small and quiet, on every chip — so nobody has to know that
+         a corner of a roulette table pays 2:1 to find out that it does */
+      '.rtable .pay{font-size:9px;font-weight:700;opacity:.6;letter-spacing:.03em}' +
+      '.rnum{aspect-ratio:1;font-size:clamp(9px,1.9vw,13px)}' +
+      '.rnum.red{background:#a32020}.rnum.black{background:#23232b}' +
+      '.rzero{grid-area:1/1/4/2;background:#1f6b32;font-size:clamp(12px,2.4vw,18px)}' +
+      '.rcol{background:#241505;border-color:#3a2410;color:#f2c063;font-size:clamp(9px,1.6vw,11px)}' +
+      '.rdozen,.reven{background:#241505;border-color:#3a2410;color:#f5efe0;' +
+      'padding:9px 3px;font-size:clamp(9px,1.7vw,12px)}' +
+      /* red and black are told apart by being red and black, the way they are on
+         a table, rather than by being two more identical brown pills */
+      '.rdiam{width:11px;height:11px;border-radius:2px;transform:rotate(45deg);margin-bottom:2px}' +
+      '.rdiam.red{background:#c92b2b}' +
+      '.rdiam.black{background:#2b2b34;box-shadow:0 0 0 1px #ffffff70}' +
+      '.rtable .sel{border-color:#f2c063;box-shadow:0 0 0 2px #f2c063 inset}' +
+      /* what you are about to put money on, said once, in words */
+      '.rpick{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;' +
+      'padding:9px 12px;border-radius:9px;background:#241505;border:1px solid #3a2410;font-size:13px;color:#c8823c}' +
+      '.rpick b{color:#f2c063;font-weight:800}' +
+      '.rpick .pay{font-size:11px;font-weight:700;color:#8a6a3a;letter-spacing:.03em;opacity:1}' +
+      /* the lightning button: every table that animates gets one, and it is the
+         same setting on all of them (see TURBO in casino.js) */
+      '.boltbtn{margin-left:auto;display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;' +
+      'padding:5px 11px;border-radius:999px;background:#241505;border:1px solid #3a2410;' +
+      'color:#8a6a3a;font-size:11px;font-weight:800;cursor:pointer;letter-spacing:.05em;text-transform:uppercase}' +
+      '.boltbtn:hover{border-color:#c8823c;color:#c8823c}' +
+      '.boltbtn.on{background:#f2c063;border-color:#f2c063;color:#1d1206}' +
       /* plinko */
       /* board + buckets share ONE box of identical width so the ball's x (in SVG
          user units) maps onto the same scale the buckets are laid out on. */
@@ -702,7 +740,9 @@
       '& .casgame.pvp:hover{border-color:{textDim}}' +
       '& .ctlrow,& .pithist .ph{background:{raisedLo};border-color:{line}}' +
       '& .panel{background:linear-gradient(150deg,{raisedHi},{raisedLo});border-color:{line}}' +
-      '& .stat,& .cell,& .shopitem,& .pitrow,& .rout{background:{raised};border-color:{line}}' +
+      '& .stat,& .cell,& .shopitem,& .pitrow,& .rcol,& .rdozen,& .reven,& .rpick{background:{raised};border-color:{line}}' +
+      '& .boltbtn{background:{raised};border-color:{line};color:{textDim}}' +
+      '& .boltbtn.on{background:{solid};border-color:{solid};color:{solidInk}}' +
       '& .cell:hover{background:{hover}}' +
       '& .casback{border-color:{line};color:{textDim}}' +
       '& .cbtn{background:{solid};color:{solidInk}}' +

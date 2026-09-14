@@ -266,6 +266,34 @@ game's own replies use mid-play, so a resumed table can never show more than a
 played one: never the mine layout, never the lane the cow dies in, never the
 dealer's hole card.
 
+## the tables, and how fast they move
+
+Dice, limbo, roulette and plinko all animate an outcome the server has already
+decided, so how long the animation takes is free. They take their time by
+default — the wheel slowing down and the plinko ball picking its way through
+the pegs is most of what there is to watch — and each carries a lightning
+button that speeds them up. It is **one** setting, shared by all four and
+remembered between visits, because turning it on per game would be maddening.
+Mines, beef and blackjack have no button: there you are the slow part.
+
+`pace(slow, fast)` is the only place the setting is read, and
+`scripts/test-table-pace.ts` checks that every call to it sits on a line that
+picks a duration or a number of wheel turns — never anything a wager, a
+multiplier or a path depends on. A speed button that could reach the money
+would be a cheat button. The roulette wheel takes its durations from two CSS
+custom properties the client sets at spin time, rather than a number frozen in
+the stylesheet, so the button can reach them.
+
+The roulette felt is the real layout: zero down the left across all three
+number rows, the numbers in the rows a table actually uses (3, 6, 9… along the
+top), and every outside bet touching what it covers — each column's box at the
+end of its own row, each dozen spanning its twelve, the even-money bets two
+columns apiece along the bottom, with red and black wearing red and black
+diamonds. Every chip states its odds. The part that can silently go wrong is
+the column mapping: `/cas/roulette` pays column *v* when `spin % 3 === v % 3`,
+so the row of threes along the top is column **3**, and the test checks the
+felt's labels against the server's own rule rather than against a comment.
+
 ## the bank
 
 A third button in the casino header, next to the Shrine and the Shop: the **Bank

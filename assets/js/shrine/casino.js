@@ -23,6 +23,40 @@
   function jget(p){return fetch(API+p).then(function(r){return r.json().catch(function(){return{};});});}
   function jpost(p,b){b=b||{};b.token=tok();return fetch(API+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}).then(function(r){if(refused(r)){refusedGate();return;}return r.json().catch(function(){return{};});});}
   function el(t,c,txt){var e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;}
+
+  /* ---- how fast the tables move ----
+     The four animated games run unhurried by default, because watching the
+     wheel slow down or the ball pick its way through the pegs is most of what
+     you came for. Anyone who would rather not wait presses the lightning
+     button, which is ONE setting shared by all of them and remembered between
+     visits: it would be maddening to turn it on per game. Nothing about it
+     touches the money — the server has already decided the outcome before a
+     single frame is drawn, and pace() only picks how long the drawing takes. */
+  var TKEY_TURBO="shrine-turbo-v1";
+  var TURBO=false;
+  try{TURBO=localStorage.getItem(TKEY_TURBO)==="1";}catch(e){}
+  function pace(slow,fast){return TURBO?fast:slow;}
+  function setTurbo(on){TURBO=!!on;try{localStorage.setItem(TKEY_TURBO,TURBO?"1":"0");}catch(e){}}
+  /* the button itself, dropped into a game's heading. it is only a toggle; the
+     views read pace() when they start an animation, so the next roll, spin or
+     drop picks the new speed up on its own. */
+  function boltBtn(){
+    var b=el("button","boltbtn");
+    b.type="button";
+    var z=el("span",null,"\u26A1");
+    var word=el("span",null,"");
+    b.appendChild(z);b.appendChild(word);
+    function paint(){
+      b.classList.toggle("on",TURBO);
+      word.textContent=TURBO?"fast":"slow";
+      b.title=TURBO?"tables are running fast \u2014 press for the full animation":
+        "tables are taking their time \u2014 press to speed them up";
+      b.setAttribute("aria-pressed",TURBO?"true":"false");
+    }
+    b.onclick=function(){setTurbo(!TURBO);paint();};
+    paint();
+    return b;
+  }
   function sv(t,a){var e=document.createElementNS("http://www.w3.org/2000/svg",t);for(var k in a)e.setAttribute(k,a[k]);return e;}
 
   /* ---- drawn game icons (the rest stay emoji) ---- */
@@ -733,7 +767,7 @@
   /* every screen lives in one centred column so nothing pins to the left edge
      or sprawls across a wide desktop window */
   function column(){screen.innerHTML="";var w=el("div","caswrap");screen.appendChild(w);return w;}
-  function mount(title,icon){
+  function mount(title,icon,paced){
     VIEW="game";
     var w=column();
     var back=el("button","casback","← back to lobby");
@@ -743,6 +777,9 @@
     var h=el("h3");
     h.appendChild(typeof icon==="string"?el("span",null,icon):icon);
     h.appendChild(el("span",null,title));
+    /* the four tables that animate an outcome carry the lightning button; the
+       ones where you are the thing taking time (mines, beef, blackjack) do not */
+    if(paced)h.appendChild(boltBtn());
     v.appendChild(h);
     w.appendChild(v);
     paintBars();
@@ -776,7 +813,7 @@
 
   /* ---------- DICE ---------- */
   function viewDice(){
-    var v=mount("Dice","🎲");
+    var v=mount("Dice","🎲",true);
     var bet=betField("1");
     var row=el("div","ctlrow");
     row.appendChild(ctl("bet",bet));
@@ -842,7 +879,7 @@
       jpost("/cas/dice",wager({bet:Number(bet.value),target:TARGET,over:OVER})).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
         // slide the marker to the rolled spot while the number counts up to it
-        var from=parseFloat(mark.style.left)||0, to=d.roll, t0=Date.now(), dur=520;
+        var from=parseFloat(mark.style.left)||0, to=d.roll, t0=Date.now(), dur=pace(1150,290);
         mark.style.background=d.win?"#6ee787":"#ff8080";
         mark.style.boxShadow="0 0 8px "+(d.win?"#6ee787":"#ff8080");
         mark.style.left=to+"%";
@@ -866,7 +903,7 @@
 
   /* ---------- LIMBO ---------- */
   function viewLimbo(){
-    var v=mount("Limbo","📈");
+    var v=mount("Limbo","📈",true);
     var bet=betField("1");
     var tgt=el("input");tgt.type="number";tgt.min="1.01";tgt.step="0.01";tgt.value="2";
     var row=el("div","ctlrow");
@@ -883,7 +920,7 @@
       jpost("/cas/limbo",wager({bet:Number(bet.value),target:Number(tgt.value)})).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
         setBal(d.balance);
-        var target=d.crash,t0=Date.now(),dur=750;
+        var target=d.crash,t0=Date.now(),dur=pace(1900,420);
         big.style.color="#f5efe0";
         (function tick(){
           var p=Math.min(1,(Date.now()-t0)/dur);
@@ -906,7 +943,7 @@
   var REDS={};[1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36].forEach(function(n){REDS[n]=1;});
   function colorOf(n){return n===0?"green":(REDS[n]?"red":"black");}
   function viewRoulette(){
-    var v=mount("Roulette","◉");
+    var v=mount("Roulette","◉",true);
     var bet=betField("1");
     var row=el("div","ctlrow");row.appendChild(ctl("bet",bet));v.appendChild(row);
 
@@ -942,31 +979,70 @@
     hop.style.transformBox="view-box";
 
     var SEL={kind:"red",value:0};
-    var board=el("div","rboard");
-    var cells={};
-    for(var n=0;n<=36;n++){(function(num){
-      var c=el("div","rnum "+colorOf(num),String(num));
-      c.onclick=function(){SEL={kind:"number",value:num};paintSel();};
-      cells[num]=c;board.appendChild(c);
-    })(n);}
-    v.appendChild(board);
-    var outs=el("div","routside");
-    var OUT=[["red","Red"],["black","Black"],["odd","Odd"],["even","Even"],["low","1-18"],["high","19-36"],
-             ["dozen","1st 12",1],["dozen","2nd 12",2],["dozen","3rd 12",3],
-             ["column","Col 1",1],["column","Col 2",2],["column","Col 3",3]];
-    var outEls=[];
-    OUT.forEach(function(o){
-      var b=el("div","rout",o[1]);
-      b.onclick=function(){SEL={kind:o[0],value:o[2]||0};paintSel();};
-      b._k=o[0];b._v=o[2]||0;outEls.push(b);outs.appendChild(b);
+    /* ---- the felt ----
+       Laid out the way a roulette table actually is, which is the only layout
+       that explains itself: zero down the left across all three number rows,
+       the numbers in the rows they really sit in (3,6,9... along the top), and
+       every outside bet touching what it covers — each column box at the end of
+       its own row, each dozen spanning its twelve, the even-money bets two
+       columns apiece along the bottom. Every chip carries what it pays.
+       The rows ARE the server's columns: the top row is the multiples of three,
+       and /cas/roulette calls that column 3 (it wins on spin%3===0). */
+    var table=el("div","rtable");
+    var cells={},outEls=[];
+    function chip(cls,label,pay,kind,value,swatch){
+      var c=el("div",cls);
+      if(swatch)c.appendChild(el("span","rdiam "+swatch));
+      c.appendChild(el("span",null,label));
+      if(pay)c.appendChild(el("span","pay",pay));
+      c.onclick=function(){SEL={kind:kind,value:value};paintSel();};
+      c._k=kind;c._v=value;
+      return c;
+    }
+    var zc=chip("rzero","0","35:1","number",0);
+    cells[0]=zc;table.appendChild(zc);
+    [[3,3],[2,2],[1,1]].forEach(function(spec,rowIdx){
+      var first=spec[0],col=spec[1],gr=String(rowIdx+1);
+      for(var k=0;k<12;k++){
+        var num=first+k*3;
+        var c=chip("rnum "+colorOf(num),String(num),"","number",num);
+        c.style.gridColumn=String(k+2);c.style.gridRow=gr;
+        cells[num]=c;table.appendChild(c);
+      }
+      var cb=chip("rcol","2 to 1","col "+col,"column",col);
+      cb.style.gridColumn="14";cb.style.gridRow=gr;
+      outEls.push(cb);table.appendChild(cb);
     });
-    v.appendChild(outs);
-    var selInfo=el("div","casnote","");v.appendChild(selInfo);
+    [["1st 12",1],["2nd 12",2],["3rd 12",3]].forEach(function(dz,i){
+      var c=chip("rdozen",dz[0],"2:1","dozen",dz[1]);
+      c.style.gridColumn=(2+i*4)+" / span 4";c.style.gridRow="4";
+      outEls.push(c);table.appendChild(c);
+    });
+    [["low","1-18",null],["even","Even",null],["red","Red","red"],
+     ["black","Black","black"],["odd","Odd",null],["high","19-36",null]].forEach(function(o,i){
+      var c=chip("reven",o[1],"1:1",o[0],0,o[2]);
+      c.style.gridColumn=(2+i*2)+" / span 2";c.style.gridRow="5";
+      outEls.push(c);table.appendChild(c);
+    });
+    v.appendChild(table);
+    /* and the bet in words underneath, because a gold ring around one chip on a
+       felt this size is easy to lose */
+    var pickBar=el("div","rpick");
+    var pickTxt=el("b",null,"");
+    var pickPay=el("span","pay","");
+    pickBar.appendChild(el("span",null,"betting"));
+    pickBar.appendChild(pickTxt);pickBar.appendChild(pickPay);
+    v.appendChild(pickBar);
+    var NAMES={red:"Red",black:"Black",odd:"Odd",even:"Even",low:"1-18",high:"19-36"};
+    var ORD=["","1st","2nd","3rd"];
     function paintSel(){
       for(var n=0;n<=36;n++)cells[n].classList.toggle("sel",SEL.kind==="number"&&SEL.value===n);
-      outEls.forEach(function(b){b.classList.toggle("sel",b._k===SEL.kind&&b._v===(SEL.value||0)&&SEL.kind!=="number");});
-      selInfo.textContent="betting: "+(SEL.kind==="number"?("number "+SEL.value):
-        (SEL.kind==="dozen"?("dozen "+SEL.value):(SEL.kind==="column"?("column "+SEL.value):SEL.kind)));
+      outEls.forEach(function(b){b.classList.toggle("sel",SEL.kind!=="number"&&b._k===SEL.kind&&b._v===(SEL.value||0));});
+      pickTxt.textContent=SEL.kind==="number"?("number "+SEL.value):
+        (SEL.kind==="dozen"?(ORD[SEL.value]+" 12"):
+        (SEL.kind==="column"?("column "+SEL.value):(NAMES[SEL.kind]||SEL.kind)));
+      pickPay.textContent="pays "+(SEL.kind==="number"?"35:1":
+        ((SEL.kind==="dozen"||SEL.kind==="column")?"2:1":"1:1"));
     }
     var r=res(v);
     var go=el("button","cbtn go","spin");v.appendChild(go);
@@ -975,15 +1051,22 @@
     var rot=0, brot=0;
     go.onclick=function(){
       go.disabled=true;r.className="casres";r.textContent="spinning...";
+      /* the wheel and the ball read these two properties rather than a duration
+         baked into the stylesheet, so the lightning button changes how long the
+         spin lasts and nothing else. fewer turns when it is short, or a quick
+         spin is just a blur. */
+      var spinMs=pace(7000,1800), turns=pace(5,3), bturns=pace(7,4);
+      svg.style.setProperty("--spin",(spinMs/1000)+"s");
+      svg.style.setProperty("--ballspin",(spinMs*0.93/1000)+"s");
       roundBet(bet.value);
       jpost("/cas/roulette",wager({bet:Number(bet.value),kind:SEL.kind,value:SEL.value})).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
         var idx=WHEEL.indexOf(d.spin);
         // wheel forward so the winning pocket ends at the top, under the ball
-        rot += 360*5 + (((-idx*step - rot) % 360) + 360) % 360;
+        rot += 360*turns + (((-idx*step - rot) % 360) + 360) % 360;
         g.style.transform="rotate("+rot+"deg)";
         // ball orbits the other way, then hops between pockets as it drops in
-        brot -= 360*7;
+        brot -= 360*bturns;
         ballG.classList.remove("dropping");
         void ballG.getBoundingClientRect();
         ballG.classList.add("dropping");
@@ -993,14 +1076,14 @@
           var label=d.spin+" "+d.color;
           if(d.win){ok(r,label+"  —  WIN "+mult(d.multiplier));celebrate(d.payout,d.multiplier);}
           else bad(r,label+"  —  lost.");
-        },4150);
+        },spinMs+150);
       }).catch(function(){go.disabled=false;roundSaw(null);bad(r,"network error");});
     };
   }
 
   /* ---------- PLINKO ---------- */
   function viewPlinko(){
-    var v=mount("Plinko",icoPlinko());
+    var v=mount("Plinko",icoPlinko(),true);
     var bet=betField("1");
     var risk=selectOf([["low","Low"],["medium","Medium"],["high","High"]],"medium");
     var rows=selectOf([["8","8"],["12","12"],["16","16"]],"12");
@@ -1066,7 +1149,10 @@
        with y going as t squared so it accelerates the way a dropped thing does,
        and kicks a little off the peg it just clipped. That kick is what reads
        as a bounce rather than a bead running down a wire. */
-    var HOP_MS=115, POP=0.34, MAX_BALLS=8;
+    /* read per frame rather than captured, so flipping the lightning button
+       with balls already in the air speeds up the hops they have left */
+    function hopMs(){return pace(215,54);}
+    var POP=0.34, MAX_BALLS=8;
     var BALLS=[],raf=null,flying=0,issued=0,applied=0,pending=null;
     function pegFlash(rr,i){
       var peg=PEGS[rr]&&PEGS[rr][i];
@@ -1126,7 +1212,7 @@
         if(b.done)continue;
         if(!b.t0)b.t0=now;
         var to=b.pts[b.i];
-        var t=(now-b.t0)/HOP_MS;
+        var t=(now-b.t0)/hopMs();
         if(t>=1){
           b.node.setAttribute("cx",to.x);b.node.setAttribute("cy",to.y);
           if(to.peg>=0)pegFlash(to.row,to.peg);
