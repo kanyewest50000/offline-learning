@@ -245,9 +245,13 @@ the last of them is the exact centre of the bucket that path adds up to.
 ## the bank
 
 A third button in the casino header, next to the Shrine and the Shop: the **Bank
-of Sahur Sahur Sahur**. It is the shrine's altar next door and reads like one —
+of Tung**. It is the shrine's altar next door and reads like one —
 one character, one thing he does, one button — except the shrine gives and the
 bank lends.
+
+The face behind the counter is rolled fresh each time the page opens: `BANK_IMG`
+nine times in ten, `BANK_RARE_IMG` the other one. Both paths and the odds
+(`BANK_RARE_CHANCE`) sit together in `assets/js/shrine/config.js`.
 
 Borrow up to your cap and you owe the loan plus ten percent, added once at
 signing, so what you owe never moves again except downward. One debt at a time:

@@ -23,7 +23,9 @@
       ';var SHRINE_BOOT_TOKEN=' + JSON.stringify(bootToken || "") +
       ';var TUNG_IMG=' + JSON.stringify(Shrine.TUNG_IMG) +
       ';var TUNGGOD_IMG=' + JSON.stringify(Shrine.TUNGGOD_IMG) +
-      ';var LENDER_IMG=' + JSON.stringify(Shrine.LENDER_IMG) +
+      ';var BANK_IMG=' + JSON.stringify(Shrine.BANK_IMG) +
+      ';var BANK_RARE_IMG=' + JSON.stringify(Shrine.BANK_RARE_IMG) +
+      ';var BANK_RARE_CHANCE=' + JSON.stringify(Shrine.BANK_RARE_CHANCE) +
       ';var GAMES=' + JSON.stringify(Shrine.GAMES) +
       ';var ORIGINALS=' + JSON.stringify(Shrine.ORIGINALS) +
       ';' + Shrine.CHAT_JS + Shrine.CASINO_JS + '<\/script>';

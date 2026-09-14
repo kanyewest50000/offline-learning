@@ -553,7 +553,10 @@
       '.bcell span{font-size:18px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
       '.bcell.hot{border-color:#7a2e2e}' +
       '.bcell.hot span{color:#e0908a}' +
-      '.bankctl{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:6px}' +
+      /* flex-end, the same as .ctlrow: a .ctl is a label stacked over its
+         control, so without it the button stretches and sits off the input's
+         baseline instead of level with it */
+      '.bankctl{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:6px}' +
       '#winpop .wnote{display:block;font-size:13px;font-weight:700;color:#e0908a;margin-top:2px}' +
       '.talkbox{display:flex;flex-direction:column;gap:8px;width:100%;max-width:560px;margin:0 auto}' +
       '.tklog{min-height:84px;max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;' +

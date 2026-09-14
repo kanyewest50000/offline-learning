@@ -28,7 +28,13 @@
      into about:blank, which has no base URL for relative paths to resolve against. */
   var TUNG_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;
   var TUNGGOD_IMG = new URL("assets/tungtunggod.png", location.href).href;
-  var LENDER_IMG = new URL("assets/lendersahur.jpg", location.href).href;
+  /* The bank shows one of two pictures, rolled fresh each time the page is
+     opened. BANK_IMG is the common one and BANK_RARE_IMG is the rare one;
+     BANK_RARE_CHANCE is how often the rare one comes up, as a fraction.
+     Swap either path, or change the odds, and nothing else needs touching. */
+  var BANK_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;      /* 90% */
+  var BANK_RARE_IMG = new URL("assets/eviltungtungtungsahur.jpg", location.href).href;  /* 10% */
+  var BANK_RARE_CHANCE = 0.10;
 
   /* html-escape for anything interpolated into the shrine document */
   function esc(s) {
@@ -113,7 +119,9 @@
   Shrine.THEME_DEFAULT = THEME_DEFAULT;
   Shrine.TUNG_IMG = TUNG_IMG;
   Shrine.TUNGGOD_IMG = TUNGGOD_IMG;
-  Shrine.LENDER_IMG = LENDER_IMG;
+  Shrine.BANK_IMG = BANK_IMG;
+  Shrine.BANK_RARE_IMG = BANK_RARE_IMG;
+  Shrine.BANK_RARE_CHANCE = BANK_RARE_CHANCE;
   Shrine.esc = esc;
   Shrine.SPADE = SPADE;
   Shrine.LBL = {
