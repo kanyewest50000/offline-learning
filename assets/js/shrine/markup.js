@@ -31,6 +31,7 @@
       '<div class="chtitle">' + SPADE(18) + '<span>Tung&#8217;s Casino</span></div>' +
       '<div id="casbalwrap" title="your sahur balance"><span id="casbal">0.00</span> <b>sahurs</b></div>' +
       '<button id="shrineBtn" class="hbtn" type="button">⛲ Shrine</button>' +
+      '<button id="bankBtn" class="hbtn" type="button">🏦 Bank</button>' +
       '<button id="shopBtn" class="hbtn" type="button">🛒 Shop</button>' +
       '</div>' +
       '</header>' +

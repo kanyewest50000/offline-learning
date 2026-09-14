@@ -371,17 +371,22 @@
      game's win out of nowhere. So .show is stripped the moment the keyframes
      finish, and again whenever the casino is entered or left. */
   function hideWin(){ if(winpop) winpop.classList.remove("show"); }
-  function celebrate(payout,m){
+  /* the note is an extra line under the figure, for when the number that landed
+     is not the whole story — a faucet claim the bank has taken its half out of
+     being the only one so far. */
+  function celebrate(payout,m,note){
     if(!(Number(payout)>0))return;
     if(!winpop){
       winpop=el("div");winpop.id="winpop";
-      winpop._a=el("span","wamt","");winpop._m=el("span","wmul","");
-      winpop.appendChild(winpop._a);winpop.appendChild(winpop._m);
+      winpop._a=el("span","wamt","");winpop._m=el("span","wmul","");winpop._n=el("span","wnote","");
+      winpop.appendChild(winpop._a);winpop.appendChild(winpop._m);winpop.appendChild(winpop._n);
       winpop.addEventListener("animationend",hideWin);
       casEl.appendChild(winpop);
     }
     winpop._a.textContent="+"+money(payout)+(ROUND.live?" wood":" sahurs");
     winpop._m.textContent=mult(m);
+    winpop._n.textContent=note||"";
+    winpop._n.style.display=note?"":"none";
     winpop.classList.remove("show");
     void winpop.offsetWidth;            /* restart the keyframes */
     winpop.classList.add("show");
@@ -390,6 +395,7 @@
   window.__casinoBack=function(){clearTimer();hideWin();};
   window.__casinoShop=function(){clearTimer();hideWin();viewShop();};
   window.__casinoShrine=function(){clearTimer();hideWin();viewShrine();};
+  window.__casinoBank=function(){clearTimer();hideWin();viewBank();};
 
   window.__casinoOpen=function(){
     clearTimer();hideWin();
@@ -541,11 +547,118 @@
       jpost("/cas/claim",{}).then(function(d){if(refused(d)){refusedGate();return;}
         if(d&&d.ok){
           setBal(d.balance);me.canClaim=false;me.nextClaim=d.nextClaim;
-          celebrate(d.claimed,1);ok(r,"tung tung god provides.");
+          /* the bank helps itself to half on the way past while a debt stands,
+             so the toast says what landed AND what did not */
+          if(d.garnished>0){
+            celebrate(d.claimed,1,"the bank took "+money(d.garnished));
+            ok(r,d.cleared
+              ?"tung tung god provides. the bank took its half \u2014 and that clears you."
+              :"tung tung god provides. the bank took its half. "+money(d.owed)+" still owed.");
+          }else{
+            celebrate(d.claimed,1);ok(r,"tung tung god provides.");
+          }
         }else if(d&&d.nextClaim){me.canClaim=false;me.nextClaim=d.nextClaim;}
         paintClaim();
       }).catch(paintClaim);
     };
+  }
+
+  /* ---------- THE BANK OF SAHUR SAHUR SAHUR ----------
+     Laid out like the shrine's altar next door, because it is the same kind of
+     place: one character, one thing he does, one button. The difference is that
+     the shrine gives and the bank lends, and the lending has a price on it.
+
+     Every number on this screen is the server's. The client works out nothing
+     about interest, caps or what is owed — it asks /bank and paints the answer,
+     the same way the pit paints a duel. */
+  function viewBank(){
+    var v=mount("Bank of Sahur Sahur Sahur","\uD83C\uDFE6");VIEW="bank";hideBroke();
+    var altar=el("div","altar");
+    var img=el("img","godimg lender");
+    img.src=(typeof LENDER_IMG!=="undefined")?LENDER_IMG:"";
+    img.alt="the lender";
+    img.onerror=function(){img.style.display="none";};
+    altar.appendChild(img);
+    var sub=el("p","godsub","");altar.appendChild(sub);
+    var stat=el("div","bankstat");altar.appendChild(stat);
+    var ctlwrap=el("div","bankctl");altar.appendChild(ctlwrap);
+    var note=el("p","godnote","");altar.appendChild(note);
+    v.appendChild(altar);
+    var r=res(v);
+
+    function paint(d){
+      stat.innerHTML="";ctlwrap.innerHTML="";
+      if(!d){sub.textContent="the bank is shut.";return;}
+      var owed=Number(d.owed)||0, cap=Number(d.cap)||0;
+      var pct=Math.round((Number(d.interest)||0)*100);
+      var half=Math.round((Number(d.garnish)||0.5)*100);
+      /* the counter: what you owe, and what he will lend */
+      function cell(label,val,hot){
+        var c=el("div","bcell"+(hot?" hot":""));
+        c.appendChild(el("b",null,label));
+        c.appendChild(el("span",null,val));
+        return c;
+      }
+      stat.appendChild(cell("owed",money(owed)+" sahurs",owed>0));
+      stat.appendChild(cell("your cap",money(cap)+" sahurs"));
+      stat.appendChild(cell("his cut",pct+"% on top"));
+
+      if(owed>0){
+        sub.textContent="he is waiting on "+money(owed)+" sahurs.";
+        note.textContent="pay him back whenever you like \u2014 or do not, and he takes "+half+
+          "% of every shrine claim until it is square.";
+        var amt=betField(money(owed));amt.className="tin";
+        var pay=el("button","cbtn go","pay back");
+        var all=el("button","cbtn sec","pay it all");
+        ctlwrap.appendChild(ctl("amount",amt));
+        var bw=el("div","casrow");bw.appendChild(pay);bw.appendChild(all);
+        ctlwrap.appendChild(ctl(" ",bw));
+        function repay(body,btn){
+          btn.disabled=true;r.className="casres";r.textContent="";
+          jpost("/bank/repay",body).then(function(d2){if(refused(d2)){refusedGate();return;}
+            btn.disabled=false;
+            if(!d2||d2.error){bad(r,d2&&d2.error==="insufficient"?"you do not have it.":((d2&&d2.error)||"he did not take it."));load();return;}
+            setBal(d2.balance);
+            if(d2.cleared)ok(r,"square. he has nothing on you.");
+            else ok(r,"paid "+money(d2.paid)+". "+money(d2.owed)+" to go.");
+            load();
+          }).catch(function(){btn.disabled=false;bad(r,"network error");});
+        }
+        pay.onclick=function(){repay({amount:Number(amt.value)},pay);};
+        all.onclick=function(){repay({},all);};
+      }else if(cap>0){
+        sub.textContent="he lends up to "+money(cap)+" sahurs. he wants "+pct+"% on top.";
+        note.textContent="pay him back whenever you like \u2014 or do not, and he takes "+half+
+          "% of every shrine claim until it is square.";
+        var want=betField(money(cap));want.className="tin";
+        var take=el("button","cbtn go","borrow");
+        ctlwrap.appendChild(ctl("amount",want));
+        var bw2=el("div","casrow");bw2.appendChild(take);
+        ctlwrap.appendChild(ctl(" ",bw2));
+        take.onclick=function(){
+          take.disabled=true;r.className="casres";r.textContent="";
+          jpost("/bank/borrow",{amount:Number(want.value)}).then(function(d2){if(refused(d2)){refusedGate();return;}
+            take.disabled=false;
+            if(!d2||d2.error){bad(r,(d2&&d2.error)||"he said no.");load();return;}
+            setBal(d2.balance);celebrate(d2.borrowed,1,"you owe "+money(d2.owed));
+            ok(r,"borrowed "+money(d2.borrowed)+". you owe him "+money(d2.owed)+".");
+            load();
+          }).catch(function(){take.disabled=false;bad(r,"network error");});
+        };
+      }else{
+        sub.textContent="the bank is shut to you.";
+        note.textContent="tung has set your cap to nothing. take it up with him.";
+      }
+    }
+    function load(){
+      jget("/bank?token="+encodeURIComponent(tok())).then(function(d){
+        if(refused(d)){refusedGate();return;}
+        if(!d||d.error){showGate();return;}
+        setBal(d.balance);paint(d);
+      }).catch(netGate);
+    }
+    sub.textContent="consulting the ledger\u2026";
+    load();
   }
 
   /* ---------- lobby ---------- */

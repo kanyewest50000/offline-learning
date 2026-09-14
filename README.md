@@ -242,6 +242,32 @@ the last of them is the exact centre of the bucket that path adds up to.
 `scripts/test-plinko-balls.ts` checks every one of the 256 paths through an
 8-row board and a few hundred each at 12 and 16, all landing dead on centre.
 
+## the bank
+
+A third button in the casino header, next to the Shrine and the Shop: the **Bank
+of Sahur Sahur Sahur**. It is the shrine's altar next door and reads like one —
+one character, one thing he does, one button — except the shrine gives and the
+bank lends.
+
+Borrow up to your cap and you owe the loan plus ten percent, added once at
+signing, so what you owe never moves again except downward. One debt at a time:
+topping a loan up would mean charging interest on interest or tracking each
+slice's own rate, and neither is worth it for a tenner. Pay it back in part or
+in full whenever you like — or do not, and the bank takes half of every Shrine
+of Sahur claim until it is square. On a garnished claim the win toast shows the
+five that landed and says what the other five went to.
+
+Two things it will not do. It never takes more than is still owed, so the last
+claim of a loan hands the remainder back to the player rather than overpaying
+the debt. And a loan and the sahurs it puts in your hand are one commit, as are
+a claim's payout and the debt it pays down — there is no instant where a debt
+exists that was never paid out, or a player is paid without the debt moving.
+
+The cap is ten sahurs by default. Each member can be given their own on the
+**Casino balances** pane of `/admin`, which also shows what they currently owe;
+zero shuts the bank to them, and clearing the field puts them back on the house
+default rather than pinning them to whatever it is today.
+
 ## settings and skins
 
 A boxed gear in the top-left of the main menu opens the settings page: the

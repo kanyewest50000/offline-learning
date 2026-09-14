@@ -66,6 +66,7 @@
     'var cback=document.getElementById("cback");' +
     'var shopBtn=document.getElementById("shopBtn");' +
     'var shrineBtn=document.getElementById("shrineBtn");' +
+    'var bankBtn=document.getElementById("bankBtn");' +
     'var hdrShrine=document.getElementById("hdrShrine");' +
     'var hdrCasino=document.getElementById("hdrCasino");' +
     'var chooseShrine=document.getElementById("chooseShrine");' +
@@ -434,6 +435,7 @@
     'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("choose");});' +   /* casino "← back" returns to the chooser */
     'shopBtn.addEventListener("click",function(){if(window.__casinoShop)window.__casinoShop();});' +   /* shop lives on the casino header */
     'shrineBtn.addEventListener("click",function(){if(window.__casinoShrine)window.__casinoShrine();});' +   /* so does the shrine (the faucet) */
+    'if(bankBtn)bankBtn.addEventListener("click",function(){if(window.__casinoBank)window.__casinoBank();});' +   /* and the bank, next to it */
     'sback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the shrine/chat to the chooser screen */
     'gsearch.addEventListener("input",filterCatalog);' +
     'if(openSettingsBtn)openSettingsBtn.addEventListener("click",function(){topShow("settings");refreshThemes();});' +

@@ -544,6 +544,17 @@
       '@media(max-width:560px){.roundbar .rclock{margin-left:0}}' +
       /* the same two stacks, big, on the table's own page */
       /* ---- table talk: the little chat inside a round ---- */
+      /* ---- the bank: the altar next door, with a counter in it ---- */
+      '.godimg.lender{max-height:210px;border-radius:12px}' +
+      '.bankstat{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:14px 0 4px}' +
+      '.bcell{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:104px;' +
+      'padding:8px 12px;border:1px solid #3a2410;border-radius:10px;background:#160d04}' +
+      '.bcell b{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a}' +
+      '.bcell span{font-size:18px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
+      '.bcell.hot{border-color:#7a2e2e}' +
+      '.bcell.hot span{color:#e0908a}' +
+      '.bankctl{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:6px}' +
+      '#winpop .wnote{display:block;font-size:13px;font-weight:700;color:#e0908a;margin-top:2px}' +
       '.talkbox{display:flex;flex-direction:column;gap:8px;width:100%;max-width:560px;margin:0 auto}' +
       '.tklog{min-height:84px;max-height:150px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;' +
       'padding:8px 10px;border:1px solid #3a2410;border-radius:10px;background:#160d04;text-align:left}' +
@@ -733,7 +744,11 @@
       '& .tklog{background:{inset};border-color:{line}}' +
       '& .tkline b{color:{muted}}' +
       '& .tkin{background:{inset};border-color:{line};color:{text}}' +
-      '& .roundbar .cbtn.sec.hot{background:{lineHot};color:{bg}}';
+      '& .roundbar .cbtn.sec.hot{background:{lineHot};color:{bg}}' +
+      '& .bcell{background:{inset};border-color:{line}}' +
+      '& .bcell b{color:{muted}}' +
+      '& .bcell span{color:{heading}}' +
+      '& .bcell.hot{border-color:{lineMid}}';
 
   /* ---- colour maths: enough to mix two hexes, and no more ---- */
   function hexOf(c){

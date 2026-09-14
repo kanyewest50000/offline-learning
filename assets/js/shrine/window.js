@@ -23,6 +23,7 @@
       ';var SHRINE_BOOT_TOKEN=' + JSON.stringify(bootToken || "") +
       ';var TUNG_IMG=' + JSON.stringify(Shrine.TUNG_IMG) +
       ';var TUNGGOD_IMG=' + JSON.stringify(Shrine.TUNGGOD_IMG) +
+      ';var LENDER_IMG=' + JSON.stringify(Shrine.LENDER_IMG) +
       ';var GAMES=' + JSON.stringify(Shrine.GAMES) +
       ';var ORIGINALS=' + JSON.stringify(Shrine.ORIGINALS) +
       ';' + Shrine.CHAT_JS + Shrine.CASINO_JS + '<\/script>';

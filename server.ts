@@ -17,6 +17,9 @@
 //   GET  /events?since=&token=                            -> {events, cursor}
 //   POST /send          {token, id, text, reply}          -> {ok, ts}
 //   POST /react         {token, id, e, op, eid}           -> {ok}
+//   GET  /bank?token=                                     -> {ok, owed, cap, canBorrow, ...}
+//   POST /bank/borrow   {token, amount}                   -> {ok, borrowed, owed, balance}
+//   POST /bank/repay    {token, amount?}                  -> {ok, paid, owed, balance}
 //   GET  /tip/profile?token=&user=                        -> {username, createdAt, balance}
 //   POST /tip           {token, to, amount}               -> {ok, amount, fromBalance, toBalance, to}
 //   GET  /admin                                           -> admin page (html)
@@ -26,6 +29,7 @@
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 //   POST /admin/ban     {key, id, banned}                 -> {ok, banned}      (whole shrine)
 //   POST /admin/chatban {key, id, chatBanned}             -> {ok, chatBanned}  (chat only)
+//   POST /admin/loanmax {key, id, max}                    -> {ok, loanMax}     (null = default)
 //   GET  /veil?token=                                     -> {live, allowed, url?}
 //   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
@@ -82,10 +86,27 @@ const FAUCET_INTERVAL = 2 * 60 * 60 * 1000; // every 2 hours
 const MIN_BET = 0.1;                      // smallest allowed wager
 const MAX_BET = 100000;                   // sanity cap
 const CAS_TTL = 400 * 24 * 60 * 60 * 1000;   // balances persist ~13 months of inactivity
+
+// ---------------------------------------------------------------------------
+// THE BANK OF SAHUR SAHUR SAHUR — the only place sahurs are lent.
+//
+// Borrow up to your cap, and what you owe is the loan plus ten percent. You can
+// hand it back whenever you like; if you do not, the bank helps itself to half
+// of every faucet claim until the debt is square. That is the whole product.
+//
+// One debt at a time. Topping a loan up would mean charging interest on
+// interest, or tracking each slice's own rate, and neither is worth it for a
+// tenner — so the bank wants the last one settled before it writes another.
+const LOAN_MAX_DEFAULT = 10;    // most a member may borrow, before any override
+const LOAN_INTEREST = 0.10;     // what the bank puts on top, once, at signing
+const LOAN_GARNISH = 0.5;       // share of a faucet claim it takes while a debt stands
+const LOAN_TTL = CAS_TTL;       // a debt keeps as long as the balance it is against
 const GAME_TTL = 6 * 60 * 60 * 1000;      // an abandoned in-progress hand self-expires
 
 // Casino KV key-space (layered on top of the chat key-space above):
 //   ["cas", id]        -> {bal, lastClaim}   a user's sahur balance + faucet clock
+//   ["loan", id]       -> {principal, owed, ts}  what the bank is still owed
+//   ["loanmax", id]    -> number              that member's own borrowing cap
 //   ["bj", id]         -> blackjack hand in progress (deleted when it resolves)
 //   ["mines", id]      -> mines board in progress
 //   ["beef", id]       -> beef (crash-chicken) walk in progress
@@ -293,6 +314,37 @@ async function transferBalance(
     const res = await op.commit();
     if (res.ok) return { from: Math.max(0, fromNb), to: Math.max(0, toNb) };
   }
+}
+
+type Loan = { principal: number; owed: number; ts: number };
+
+// What the bank is still owed, and the ceiling on what it will lend. Both read
+// as plain numbers when there is nothing on file, so every caller can treat
+// "no debt" and "never borrowed" as the same thing.
+async function loanOf(uid: string): Promise<Loan> {
+  const e = await kv.get<Loan>(["loan", uid]);
+  const v = e.value;
+  if (!v || !(Number(v.owed) > 0)) return { principal: 0, owed: 0, ts: 0 };
+  return { principal: round2(Number(v.principal) || 0), owed: round2(Number(v.owed)), ts: Number(v.ts) || 0 };
+}
+// An unset key reads back as null, and Number(null) is 0 — not NaN — so the
+// absence of an override has to be tested before the value is, or everybody
+// defaults to a cap of nothing and the bank never lends to anyone.
+function capOf(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? round2(n) : null;
+}
+async function loanCap(uid: string): Promise<number> {
+  const set = capOf((await kv.get<number>(["loanmax", uid])).value);
+  return set === null ? LOAN_MAX_DEFAULT : set;
+}
+// What a loan of `amount` costs to clear. Rounded UP to the penny, so the
+// interest cannot round away to nothing on a small enough loan — but with the
+// same epsilon floor2() uses, because 2 * 1.1 is 2.2000000000000002 in binary
+// and a bare ceil would charge a penny of pure floating-point error on it.
+function owedFor(amount: number): number {
+  return Math.ceil(amount * (1 + LOAN_INTEREST) * 100 - 1e-9) / 100;
 }
 
 // A logged-in, un-blocked casino player. Casino access == chat access: you must be
@@ -2776,6 +2828,30 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, banned });
   }
 
+  // ---------- admin: what the bank will lend one member ----------
+  // Their own ceiling, in place of the house default. Zero shuts the bank to
+  // them entirely; clearing it (pass max:null) puts them back on the default
+  // rather than pinning them to whatever it happens to be today.
+  if (req.method === "POST" && path === "/admin/loanmax") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    if (!id) return json({ error: "missing" }, 400);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    if (b.max === null || b.max === "") {
+      await kv.delete(["loanmax", id]);
+      return json({ ok: true, loanMax: LOAN_MAX_DEFAULT, loanMaxSet: false });
+    }
+    const max = round2(Number(b.max));
+    if (!Number.isFinite(max) || max < 0) return json({ error: "a cap is 0 or more" }, 400);
+    if (max > MAX_BET) return json({ error: "that is not a loan, that is a gift" }, 400);
+    await kv.set(["loanmax", id], max, { expireIn: LOAN_TTL });
+    return json({ ok: true, loanMax: max, loanMaxSet: true });
+  }
+
   // ---------- admin: chat ban / un-ban a user (the chat, and only the chat) ----------
   // The narrow ban. `banned` shuts the whole shrine; this shuts the room and
   // nothing else — they cannot read a line and cannot post one, while the
@@ -2810,6 +2886,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       .delete(["app", id])
       .delete(["name", lower])
       .delete(["cas", id])
+      .delete(["loan", id])
+      .delete(["loanmax", id])
       .delete(["bj", id])
       .delete(["mines", id])
       .delete(["beef", id]);
@@ -2943,11 +3021,117 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const now = Date.now();
       const next = rec.lastClaim + FAUCET_INTERVAL;
       if (rec.lastClaim && now < next) return json({ error: "cooldown", nextClaim: next }, 429);
-      const nb = round2(rec.bal + FAUCET_AMOUNT);
-      const res = await kv.atomic().check(cur)
-        .set(["cas", u.id], { bal: nb, lastClaim: now }, { expireIn: CAS_TTL }).commit();
-      if (res.ok) return json({ ok: true, balance: nb, claimed: FAUCET_AMOUNT, nextClaim: now + FAUCET_INTERVAL });
+      // The bank takes its half off the top while a debt stands — but only ever
+      // as much as is still owed, so the last claim of a loan hands back the
+      // remainder instead of overpaying it. Read and written in the SAME commit
+      // as the balance and the clock: a claim can never pay the player without
+      // also paying the debt down, or the other way about.
+      const loanE = await kv.get<Loan>(["loan", u.id]);
+      const owed = loanE.value && Number(loanE.value.owed) > 0 ? round2(Number(loanE.value.owed)) : 0;
+      const take = owed > 0 ? Math.min(round2(FAUCET_AMOUNT * LOAN_GARNISH), owed) : 0;
+      const gain = round2(FAUCET_AMOUNT - take);
+      const left = round2(owed - take);
+      const nb = round2(rec.bal + gain);
+      let op = kv.atomic().check(cur).check(loanE)
+        .set(["cas", u.id], { bal: nb, lastClaim: now }, { expireIn: CAS_TTL });
+      if (take > 0) {
+        op = left > 0
+          ? op.set(["loan", u.id], { ...loanE.value!, owed: left }, { expireIn: LOAN_TTL })
+          : op.delete(["loan", u.id]);
+      }
+      const res = await op.commit();
+      if (res.ok) {
+        return json({
+          ok: true, balance: nb, claimed: gain, faucet: FAUCET_AMOUNT,
+          garnished: take, owed: left > 0 ? left : 0, cleared: take > 0 && left <= 0,
+          nextClaim: now + FAUCET_INTERVAL,
+        });
+      }
     }
+  }
+
+  // ---------- the bank: what it will lend you, and what you still owe ----------
+  if (req.method === "GET" && path === "/bank") {
+    const u = await casUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const [loan, cap, c] = await Promise.all([loanOf(u.id), loanCap(u.id), getCas(u.id)]);
+    return json({
+      ok: true, balance: round2(c.bal),
+      owed: loan.owed, principal: loan.principal, cap,
+      interest: LOAN_INTEREST, garnish: LOAN_GARNISH, faucet: FAUCET_AMOUNT,
+      // the sum the bank would hand over right now, if you asked for the lot
+      canBorrow: loan.owed > 0 ? 0 : cap,
+    });
+  }
+
+  // ---------- borrow ----------
+  // One debt at a time, nothing over the cap, and the interest is added once,
+  // here, so what you owe never moves again except downward.
+  if (req.method === "POST" && path === "/bank/borrow") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("bank:" + u.id, 10, 60_000)) return tooMany(30);
+    const cap = await loanCap(u.id);
+    if (!(cap > 0)) return json({ error: "the bank will not lend to you." }, 403);
+    const want = round2(Number(b.amount));
+    if (!Number.isFinite(want) || want <= 0) return json({ error: "name a real number." }, 400);
+    if (want > cap) return json({ error: "the bank tops you out at " + cap + " sahurs.", cap }, 400);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const loanE = await kv.get<Loan>(["loan", u.id]);
+      if (loanE.value && Number(loanE.value.owed) > 0) {
+        return json({ error: "settle the last one first.", owed: round2(Number(loanE.value.owed)) }, 409);
+      }
+      const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
+      const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+      const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+      const nb = round2(base + want);
+      const owed = owedFor(want);
+      // the loan and the money it puts in your hand are one commit, so there is
+      // no instant where a debt exists that was never paid out, or the reverse
+      const res = await kv.atomic()
+        .check(loanE).check(cur)
+        .set(["loan", u.id], { principal: want, owed, ts: Date.now() }, { expireIn: LOAN_TTL })
+        .set(["cas", u.id], { ...rec, bal: nb }, { expireIn: CAS_TTL })
+        .commit();
+      if (res.ok) return json({ ok: true, borrowed: want, owed, balance: nb, cap });
+    }
+    return json({ error: "busy" }, 503);
+  }
+
+  // ---------- repay ----------
+  // Any amount, or leave it out for the lot. Never takes more than is owed and
+  // never more than is on the balance.
+  if (req.method === "POST" && path === "/bank/repay") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("bank:" + u.id, 10, 60_000)) return tooMany(30);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const loanE = await kv.get<Loan>(["loan", u.id]);
+      const owed = loanE.value && Number(loanE.value.owed) > 0 ? round2(Number(loanE.value.owed)) : 0;
+      if (owed <= 0) return json({ error: "you owe the bank nothing." }, 409);
+      const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
+      const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+      const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+      const asked = b.amount === undefined || b.amount === null || b.amount === "" ? owed : round2(Number(b.amount));
+      if (!Number.isFinite(asked) || asked <= 0) return json({ error: "name a real number." }, 400);
+      const pay = Math.min(asked, owed);
+      if (pay > base + 1e-9) return json({ error: "insufficient", owed, balance: round2(base) }, 402);
+      const left = round2(owed - pay);
+      const nb = round2(base - pay);
+      let op = kv.atomic().check(loanE).check(cur)
+        .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL });
+      op = left > 0
+        ? op.set(["loan", u.id], { ...loanE.value!, owed: left }, { expireIn: LOAN_TTL })
+        : op.delete(["loan", u.id]);
+      if ((await op.commit()).ok) {
+        return json({ ok: true, paid: pay, owed: left, balance: Math.max(0, nb), cleared: left <= 0 });
+      }
+    }
+    return json({ error: "busy" }, 503);
   }
 
   // ---------- tip / donate sahurs to another approved member ----------
@@ -3484,7 +3668,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // ---------- admin: VIEW balances ----------
   if (req.method === "GET" && path === "/admin/balances") {
     if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
-    const rows: { id: string; username: string; balance: number }[] = [];
+    const rows: {
+      id: string; username: string; balance: number; owed: number; loanMax: number; loanMaxSet: boolean;
+    }[] = [];
     // map app id -> username for approved users
     const names: Record<string, string> = {};
     // deno-lint-ignore no-explicit-any
@@ -3496,10 +3682,17 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const id = String(e.key[1]);
       const username = names[id];
       if (!username) continue;
-      rows.push({ id, username, balance: round2(e.value.bal || 0) });
+      const [loan, capE] = await Promise.all([loanOf(id), kv.get<number>(["loanmax", id])]);
+      const set = capOf(capE.value);
+      rows.push({
+        id, username, balance: round2(e.value.bal || 0),
+        owed: loan.owed,
+        loanMax: set === null ? LOAN_MAX_DEFAULT : set,
+        loanMaxSet: set !== null,   // false means they are simply on the house default
+      });
     }
     rows.sort((a, c) => c.balance - a.balance);
-    return json({ balances: rows });
+    return json({ balances: rows, loanMaxDefault: LOAN_MAX_DEFAULT });
   }
 
   // ---------- admin: shop management (list all / upsert / delete) ----------
@@ -3646,7 +3839,8 @@ A <b>ban</b> shuts the whole shrine — chat and casino both. A <b>chat ban</b> 
 </section>
 <section class="pane" id="pane-balances">
 <h2>Manage casino balances</h2>
-<p class="hint">Fun-money sahurs. Set a balance only as a moderation tool.</p>
+<p class="hint">Fun-money sahurs. Set a balance only as a moderation tool.
+Each member also has a <b>loan cap</b> &mdash; the most the Bank of Sahur Sahur Sahur will lend them at once. Leave it blank for the house default; set <b>0</b> to shut the bank to them.</p>
 <input class="search" id="search-balances" placeholder="search player balances…" autocomplete="off">
 <div id="balances"><div class="empty">load to see player balances.</div></div>
 </section>
@@ -3700,6 +3894,7 @@ if(window.__ADMIN_KEY){
 }
 var balances=document.getElementById("balances"),shop=document.getElementById("shop"),chatlog=document.getElementById("chatlog");
 var pendingCache=null,usersCache=null,balancesCache=null,pendingErr=null,usersErr=null,balancesErr=null;
+var balancesDefault=10;   /* the house loan cap, as the server reports it */
 try{var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}catch(e){}
 function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();refreshVeil();}
 document.getElementById("load").onclick=loadAll;
@@ -4004,7 +4199,7 @@ function refreshBalances(){
   balances.innerHTML='<div class="empty">loading...</div>';
   aget("/admin/balances").then(function(r){return r.json();}).then(function(d){
     if(d.error){balancesCache=null;balancesErr=d.error;renderBalances();return;}
-    balancesErr=null;balancesCache=d.balances||[];renderBalances();
+    balancesErr=null;balancesCache=d.balances||[];balancesDefault=d.loanMaxDefault;renderBalances();
   }).catch(function(){balancesCache=null;balancesErr="network error.";renderBalances();});
 }
 function renderBalances(){
@@ -4013,7 +4208,8 @@ function renderBalances(){
   if(!balancesCache){balances.innerHTML='<div class="empty">load to see player balances.</div>';return;}
   var q=qOf("search-balances");
   var shown=balancesCache.filter(function(u){
-    return matches(q, [u.username, u.id, String(u.balance), (u.balance!=null?Number(u.balance).toFixed(2):"")+" sahurs"]);
+    return matches(q, [u.username, u.id, String(u.balance), (u.balance!=null?Number(u.balance).toFixed(2):"")+" sahurs",
+      u.owed>0?"owes debt loan in the red":"clear no debt", "cap "+u.loanMax]);
   });
   if(!balancesCache.length){balances.innerHTML='<div class="empty">no balances yet (nobody has claimed sahurs).</div>';return;}
   if(!shown.length){balances.innerHTML='<div class="empty">no matching balances.</div>';return;}
@@ -4030,8 +4226,29 @@ function renderBalances(){
     var set=document.createElement("button");set.className="no";set.textContent="set balance";
     set.onclick=function(){setBalance(u.id,u.username,inp.value);};
     srow.appendChild(inp);srow.appendChild(set);el.appendChild(srow);
+    // the bank: what they still owe, and the most it will lend them
+    var lrow=document.createElement("div");lrow.className="row";lrow.style.marginTop="8px";
+    var llab=document.createElement("small");llab.className="vlab";
+    if(u.owed>0){llab.className="vlab rev";llab.textContent="owes the bank "+Number(u.owed).toFixed(2)+" sahurs";}
+    else llab.textContent="owes the bank nothing";
+    var cap=document.createElement("input");cap.type="number";cap.min="0";cap.step="0.01";cap.className="tin";
+    cap.placeholder="cap ("+(balancesDefault||10)+" default)";cap.style.flex="0 1 150px";
+    if(u.loanMaxSet)cap.value=Number(u.loanMax).toFixed(2);
+    var csave=document.createElement("button");csave.className="load";csave.textContent="set loan cap";
+    csave.onclick=function(){setLoanMax(u.id,u.username,cap.value);};
+    var cclr=document.createElement("button");cclr.className="load";cclr.textContent="default";
+    cclr.title="put them back on the house default";
+    cclr.onclick=function(){setLoanMax(u.id,u.username,null);};
+    lrow.appendChild(llab);lrow.appendChild(cap);lrow.appendChild(csave);lrow.appendChild(cclr);
+    el.appendChild(lrow);
     balances.appendChild(el);
   });
+}
+function setLoanMax(id,name,val){
+  var body={key:keyEl.value.trim(),id:id,max:(val===null||String(val).trim()==="")?null:Number(val)};
+  if(body.max!==null&&!(body.max>=0)){alert("a cap is 0 or more, or blank for the default");return;}
+  fetch("/admin/loanmax",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshBalances();});
 }
 function setBalance(id,name,val){
   var b=Number(val);
