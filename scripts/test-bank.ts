@@ -15,6 +15,9 @@ const ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const API = (Deno.env.get("API") || "http://127.0.0.1:8000").replace(/\/$/, "");
 const ADMIN = Deno.env.get("ADMIN_KEY") || "devadminkey";
 const INTEREST = 0.10;
+// the house cap, which the source is checked against below so this file and
+// server.ts cannot drift apart silently.
+const DEFAULT_CAP = 25;
 
 function must(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
@@ -38,6 +41,14 @@ must(/const take = owed > 0 \? Math\.min\(round2\(FAUCET_AMOUNT \* LOAN_GARNISH\
 must(/return Math\.ceil\(amount \* \(1 \+ LOAN_INTEREST\) \* 100 - 1e-9\) \/ 100;/.test(src),
   "interest must round up (so a small loan is not free) but through an epsilon, " +
     "or binary floating point charges a penny that is not interest");
+must(src.includes("const LOAN_MAX_DEFAULT = " + DEFAULT_CAP + ";"),
+  "this test is written against a house cap of " + DEFAULT_CAP + " — server.ts says otherwise");
+// the one-off has to come off in the SAME commit that writes the loan, or two
+// borrows racing could both lean on it.
+must(/\.check\(loanE\)\.check\(cur\)\.check\(boostE\)/.test(src),
+  "a borrow must check the one-off in the same commit it writes the loan");
+must(/if \(boostE\.value !== null\) op\.delete\(\["loanboost", u\.id\]\);/.test(src),
+  "and spend it there, not in a second write that could be lost");
 
 async function member(tag: string) {
   const n = tag + Math.random().toString(36).slice(2, 8);
@@ -48,7 +59,7 @@ async function member(tag: string) {
   const id = (pend.body.pending as { username: string; id: string }[] || []).find((x) => x.username === n)?.id;
   must(!!id, "not pending");
   must(!!(await post("/admin/decide", { key: ADMIN, id, action: "approve" })).body?.ok, "approve failed");
-  return { name: n, token, id };
+  return { name: n, token, id: id as string };
 }
 const fund = async (m: { id: string }, n: number) =>
   must(!!(await post("/admin/setbal", { key: ADMIN, id: m.id, balance: n })).body?.ok, "setbal failed");
@@ -58,13 +69,15 @@ const bank = async (t: string) => (await j("/bank?token=" + encodeURIComponent(t
 const A = await member("bkA");
 
 // ---------------------------------------------------------------------------
-// the counter: a default cap of ten, nothing owed
+// the counter: a default cap of twenty-five, no one-off, nothing owed
 {
   const d = await bank(A.token);
   must(d.ok === true, "the bank must answer: " + JSON.stringify(d));
-  must(d.cap === 10, "the house cap is ten sahurs: " + d.cap);
+  must(d.cap === DEFAULT_CAP, "the house cap is " + DEFAULT_CAP + " sahurs: " + d.cap);
+  must(d.boost === 0 && d.limit === DEFAULT_CAP,
+    "and nothing extra on top of it: " + JSON.stringify(d));
   must(d.owed === 0 && d.principal === 0, "a new member owes nothing");
-  must(d.canBorrow === 10, "and may take the lot: " + d.canBorrow);
+  must(d.canBorrow === DEFAULT_CAP, "and may take the lot: " + d.canBorrow);
   must(d.interest === INTEREST, "ten percent on top: " + d.interest);
 }
 
@@ -106,7 +119,7 @@ const A = await member("bkA");
   must((await bal(A.token)) === 13, "twenty less seven: " + (await bal(A.token)));
   must((await post("/bank/repay", { token: A.token })).status === 409, "nothing left to repay");
   // and the bank will lend again
-  must((await bank(A.token)).canBorrow === 10, "a settled member may borrow again");
+  must((await bank(A.token)).canBorrow === DEFAULT_CAP, "a settled member may borrow again");
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +175,7 @@ const A = await member("bkA");
 {
   const E = await member("bkE");
   await fund(E, 0);
-  must((await post("/bank/borrow", { token: E.token, amount: 11 })).status === 400,
+  must((await post("/bank/borrow", { token: E.token, amount: DEFAULT_CAP + 1 })).status === 400,
     "over the cap must be refused");
   must((await bal(E.token)) === 0, "and must pay out nothing");
 
@@ -181,11 +194,98 @@ const A = await member("bkA");
 
   // clearing the override puts them back on the house default
   const back = await post("/admin/loanmax", { key: ADMIN, id: E.id, max: null });
-  must(back.body?.loanMax === 10 && back.body?.loanMaxSet === false,
+  must(back.body?.loanMax === DEFAULT_CAP && back.body?.loanMaxSet === false,
     "clearing must restore the default, not pin it: " + JSON.stringify(back.body));
-  must((await bank(E.token)).cap === 10, "and the member is back on ten");
+  must((await bank(E.token)).cap === DEFAULT_CAP, "and the member is back on the house cap");
 
   must((await post("/admin/loanmax", { id: E.id, max: 5 })).status === 403, "the cap needs the admin key");
+}
+
+// ---------------------------------------------------------------------------
+// THE ONE-OFF. The second way tung can raise what the bank will lend, and the
+// whole point of it is that it does not behave like the first: it sits on top
+// of the standing cap, it is spent by taking a loan at all rather than by the
+// part of the loan that leaned on it, and the cap underneath is exactly where
+// it was afterwards. A favour that quietly became a new ceiling would be the
+// permanent one with extra steps.
+{
+  const H = await member("bkH");
+  await fund(H, 0);
+  // before the favour, the standing cap is the whole story
+  must((await post("/bank/borrow", { token: H.token, amount: 40 })).status === 400,
+    "over the cap must be refused before any one-off");
+
+  const grant = await post("/admin/loanboost", { key: ADMIN, id: H.id, extra: 20 });
+  must(grant.body?.ok === true && grant.body.boost === 20 && grant.body.limit === DEFAULT_CAP + 20,
+    "granting the one-off failed: " + JSON.stringify(grant.body));
+  const d = await bank(H.token);
+  must(d.cap === DEFAULT_CAP && d.boost === 20 && d.limit === DEFAULT_CAP + 20,
+    "the cap and the one-off must be reported apart: " + JSON.stringify(d));
+  must(d.canBorrow === DEFAULT_CAP + 20, "and the two together are what he will hand over");
+  must((await post("/bank/borrow", { token: H.token, amount: DEFAULT_CAP + 21 })).status === 400,
+    "over cap-plus-one-off must still be refused");
+
+  const big = await post("/bank/borrow", { token: H.token, amount: 40 });
+  must(big.body?.ok === true && big.body.spentBoost === 20,
+    "the loan must spend the one-off: " + JSON.stringify(big.body));
+  must((await bal(H.token)) === 40, "and forty must land: " + (await bal(H.token)));
+  await fund(H, 100);
+  await post("/bank/repay", { token: H.token });
+  const after = await bank(H.token);
+  must(after.cap === DEFAULT_CAP && after.boost === 0 && after.limit === DEFAULT_CAP,
+    "the favour is gone and the cap has not moved: " + JSON.stringify(after));
+  must((await post("/bank/borrow", { token: H.token, amount: 40 })).status === 400,
+    "so forty is over the line again");
+
+  // spent by the act of borrowing, not by the part of it that needed the room
+  const I = await member("bkI");
+  await fund(I, 0);
+  await post("/admin/loanboost", { key: ADMIN, id: I.id, extra: 15 });
+  must((await post("/bank/borrow", { token: I.token, amount: 1 })).body?.spentBoost === 15,
+    "one loan spends it, however small the loan");
+  await fund(I, 10);
+  await post("/bank/repay", { token: I.token });
+  must((await bank(I.token)).boost === 0, "so it is not still sitting there afterwards");
+
+  // taking an unspent one back, and the key it takes to hand one out
+  const J = await member("bkJ");
+  await post("/admin/loanboost", { key: ADMIN, id: J.id, extra: 12 });
+  must((await bank(J.token)).limit === DEFAULT_CAP + 12, "the one-off is on");
+  must((await post("/admin/loanboost", { key: ADMIN, id: J.id, extra: 0 })).body?.boost === 0,
+    "taking an unspent one back failed");
+  must((await bank(J.token)).limit === DEFAULT_CAP, "and the limit is the bare cap again");
+  must((await post("/admin/loanboost", { id: J.id, extra: 5 })).status === 403,
+    "a one-off needs the admin key");
+  must((await post("/admin/loanboost", { key: ADMIN, id: "nosuchid", extra: 5 })).status === 404,
+    "an unknown id is 404");
+  must((await post("/admin/loanboost", { key: ADMIN, id: J.id, extra: -1 })).status === 400,
+    "a negative one-off is refused");
+
+  // it rides on a personal cap too, not only the house one — and the pane sees both
+  const K = await member("bkK");
+  await fund(K, 1);
+  await post("/admin/loanmax", { key: ADMIN, id: K.id, max: 5 });
+  await post("/admin/loanboost", { key: ADMIN, id: K.id, extra: 3 });
+  const kd = await bank(K.token);
+  must(kd.cap === 5 && kd.boost === 3 && kd.limit === 8,
+    "a one-off sits on the personal cap, not the house one: " + JSON.stringify(kd));
+  const krows = (await j("/admin/balances?key=" + encodeURIComponent(ADMIN))).body;
+  const krow = (krows.balances as { id: string; loanMax: number; loanBoost: number; loanLimit: number }[])
+    .find((x) => x.id === K.id);
+  must(!!krow && krow.loanMax === 5 && krow.loanBoost === 3 && krow.loanLimit === 8,
+    "the balances pane must show the cap and the one-off apart: " + JSON.stringify(krow));
+
+  // and six borrows racing must not all lean on the same one-off
+  const L = await member("bkL");
+  await fund(L, 0);
+  await post("/admin/loanboost", { key: ADMIN, id: L.id, extra: 20 });
+  const race = await Promise.all(new Array(6).fill(0).map(() =>
+    post("/bank/borrow", { token: L.token, amount: 40 })
+  ));
+  must(race.filter((x) => x.body?.ok === true).length === 1,
+    "exactly one of six may win the one-off");
+  must((await bal(L.token)) === 40, "and it pays out exactly once: " + (await bal(L.token)));
+  must((await bank(L.token)).boost === 0, "with the one-off spent");
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +296,7 @@ const A = await member("bkA");
   await post("/bank/borrow", { token: F.token, amount: 3 });
   await post("/admin/loanmax", { key: ADMIN, id: F.id, max: 7 });
   const rows = (await j("/admin/balances?key=" + encodeURIComponent(ADMIN))).body;
-  must(rows.loanMaxDefault === 10, "the pane must know the house default");
+  must(rows.loanMaxDefault === DEFAULT_CAP, "the pane must know the house default");
   const row = (rows.balances as { id: string; owed: number; loanMax: number; loanMaxSet: boolean }[])
     .find((x) => x.id === F.id);
   must(!!row, "the member must be listed");
@@ -224,7 +324,8 @@ const A = await member("bkA");
 }
 
 console.log(
-  "the bank: lends up to a cap (ten by default, per-member override, nought to shut it), " +
+  "the bank: lends up to a cap (" + DEFAULT_CAP + " by default, per-member override, nought to shut it, " +
+    "plus a one-off raise that is spent by the next loan and leaves the cap where it was), " +
     "charges ten percent once at signing, takes repayment in part or in full, and garnishes " +
     "half of every faucet claim until square — never more than is owed, never paying the " +
     "player without paying the debt, and never writing two loans for one borrower",

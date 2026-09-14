@@ -280,7 +280,7 @@ nine times in ten, `BANK_RARE_IMG` the other one. Both paths and the odds
 Borrow up to your cap and you owe the loan plus ten percent, added once at
 signing, so what you owe never moves again except downward. One debt at a time:
 topping a loan up would mean charging interest on interest or tracking each
-slice's own rate, and neither is worth it for a tenner. Pay it back in part or
+slice's own rate, and neither is worth it at this size. Pay it back in part or
 in full whenever you like — or do not, and the bank takes half of every Shrine
 of Sahur claim until it is square. On a garnished claim the win toast shows the
 five that landed and says what the other five went to.
@@ -291,12 +291,20 @@ the debt. And a loan and the sahurs it puts in your hand are one commit, as are
 a claim's payout and the debt it pays down — there is no instant where a debt
 exists that was never paid out, or a player is paid without the debt moving.
 
-The cap is ten sahurs by default. Each member can be given their own on the
-**Casino balances** pane of `/admin`, which also shows what they currently owe
-and can write that debt straight to the ledger — no interest is added by the
-correction, and zero wipes it;
-zero shuts the bank to them, and clearing the field puts them back on the house
-default rather than pinning them to whatever it is today.
+The cap is twenty-five sahurs by default, and there are two ways to move it,
+both on the **Casino balances** pane of `/admin`. **Set loan cap** is the
+permanent one: it is their cap until it is set again, zero shuts the bank to
+them, and clearing the field puts them back on the house default rather than
+pinning them to whatever it is today. **Grant one-time** is the other: an extra
+that sits on top of whatever the cap is and is spent the moment they borrow —
+whatever size that loan turned out to be — so "go on, just this once" cannot
+quietly become a new ceiling. The bank screen shows the two apart, as a cap and
+a *this once*, for the same reason. An unspent one can be taken back.
+
+The one-off comes off in the same commit that writes the loan, so two borrows
+racing cannot both lean on it. The same pane shows what each member currently
+owes and can write that debt straight to the ledger — no interest is added by
+the correction, and zero wipes it.
 
 ## settings and skins
 

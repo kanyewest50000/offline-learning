@@ -33,6 +33,7 @@
 //   POST /admin/chatban {key, id, chatBanned}             -> {ok, chatBanned}  (chat only)
 //   POST /admin/mod     {key, id, mod}                    -> {ok, mod}         (delete msgs)
 //   POST /admin/loanmax {key, id, max}                    -> {ok, loanMax}     (null = default)
+//   POST /admin/loanboost {key, id, extra}                -> {ok, boost}       (spent on one loan)
 //   POST /admin/setdebt {key, id, owed}                   -> {ok, owed}        (0 wipes it)
 //   GET  /veil?token=                                     -> {live, allowed, url?}
 //   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
@@ -101,7 +102,7 @@ const CAS_TTL = 400 * 24 * 60 * 60 * 1000;   // balances persist ~13 months of i
 // One debt at a time. Topping a loan up would mean charging interest on
 // interest, or tracking each slice's own rate, and neither is worth it for a
 // tenner — so the bank wants the last one settled before it writes another.
-const LOAN_MAX_DEFAULT = 10;    // most a member may borrow, before any override
+const LOAN_MAX_DEFAULT = 25;    // most a member may borrow, before any override
 const LOAN_INTEREST = 0.10;     // what the bank puts on top, once, at signing
 const LOAN_GARNISH = 0.5;       // share of a faucet claim it takes while a debt stands
 const LOAN_TTL = CAS_TTL;       // a debt keeps as long as the balance it is against
@@ -110,7 +111,8 @@ const GAME_TTL = 6 * 60 * 60 * 1000;      // an abandoned in-progress hand self-
 // Casino KV key-space (layered on top of the chat key-space above):
 //   ["cas", id]        -> {bal, lastClaim}   a user's sahur balance + faucet clock
 //   ["loan", id]       -> {principal, owed, ts}  what the bank is still owed
-//   ["loanmax", id]    -> number              that member's own borrowing cap
+//   ["loanmax", id]    -> number              that member's own borrowing cap (standing)
+//   ["loanboost", id]  -> number              a one-off extra, spent by the next loan
 //   ["bj", id]         -> blackjack hand in progress (deleted when it resolves)
 //   ["mines", id]      -> mines board in progress
 //   ["beef", id]       -> beef (crash-chicken) walk in progress
@@ -342,6 +344,22 @@ function capOf(v: unknown): number | null {
 async function loanCap(uid: string): Promise<number> {
   const set = capOf((await kv.get<number>(["loanmax", uid])).value);
   return set === null ? LOAN_MAX_DEFAULT : set;
+}
+// The two ways tung can raise what somebody may borrow, and they are different
+// in kind. The cap above is standing: set it and it is their cap until it is
+// set again. This is the other one — a one-off extra that sits on top of the
+// cap until they actually take a loan, and is then gone, whatever size that
+// loan was. "Just this once" needs to mean once, so it is spent by the act of
+// borrowing rather than by the amount borrowed; the admin pane says as much.
+async function loanBoost(uid: string): Promise<number> {
+  const v = capOf((await kv.get<number>(["loanboost", uid])).value);
+  return v === null ? 0 : v;
+}
+// What the bank will hand over right now: the standing cap plus whatever
+// one-off is sitting on it.
+async function loanRoom(uid: string): Promise<{ cap: number; boost: number; limit: number }> {
+  const [cap, boost] = await Promise.all([loanCap(uid), loanBoost(uid)]);
+  return { cap, boost, limit: round2(cap + boost) };
 }
 // What a loan of `amount` costs to clear. Rounded UP to the penny, so the
 // interest cannot round away to nothing on a small enough loan — but with the
@@ -2965,6 +2983,33 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, loanMax: max, loanMaxSet: true });
   }
 
+  // ---------- admin: a one-off raise on what the bank will lend one member ----------
+  // The other half of /admin/loanmax, and deliberately not the same thing. That
+  // one moves their standing cap and stays moved. This sits on top of whatever
+  // the cap is and is spent by the next loan they take, whatever its size — so
+  // "go on, just this once" does not quietly become their new ceiling. Passing
+  // 0 (or null) takes an unspent one back.
+  if (req.method === "POST" && path === "/admin/loanboost") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    if (!id) return json({ error: "missing" }, 400);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    if (b.extra === null || b.extra === "" || Number(b.extra) === 0) {
+      await kv.delete(["loanboost", id]);
+      return json({ ok: true, boost: 0, limit: await loanCap(id) });
+    }
+    const extra = round2(Number(b.extra));
+    if (!Number.isFinite(extra) || extra < 0) return json({ error: "a one-off is 0 or more" }, 400);
+    const cap = await loanCap(id);
+    if (round2(cap + extra) > MAX_BET) return json({ error: "that is not a loan, that is a gift" }, 400);
+    await kv.set(["loanboost", id], extra, { expireIn: LOAN_TTL });
+    return json({ ok: true, boost: extra, limit: round2(cap + extra) });
+  }
+
   // ---------- admin: chat ban / un-ban a user (the chat, and only the chat) ----------
   // The narrow ban. `banned` shuts the whole shrine; this shuts the room and
   // nothing else — they cannot read a line and cannot post one, while the
@@ -3016,6 +3061,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       .delete(["cas", id])
       .delete(["loan", id])
       .delete(["loanmax", id])
+      .delete(["loanboost", id])
       .delete(["bj", id])
       .delete(["mines", id])
       .delete(["beef", id]);
@@ -3243,13 +3289,18 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/bank") {
     const u = await casUser(url.searchParams.get("token"));
     if (!u) return json({ error: "unauthorized" }, 401);
-    const [loan, cap, c] = await Promise.all([loanOf(u.id), loanCap(u.id), getCas(u.id)]);
+    const [loan, room, c] = await Promise.all([loanOf(u.id), loanRoom(u.id), getCas(u.id)]);
     return json({
       ok: true, balance: round2(c.bal),
-      owed: loan.owed, principal: loan.principal, cap,
+      owed: loan.owed, principal: loan.principal,
+      // `cap` is the standing one, `boost` the one-off sitting on top of it,
+      // `limit` what the two come to. The client paints all three so a one-off
+      // reads as a one-off rather than as a cap that mysteriously shrinks after
+      // the next loan.
+      cap: room.cap, boost: room.boost, limit: room.limit,
       interest: LOAN_INTEREST, garnish: LOAN_GARNISH, faucet: FAUCET_AMOUNT,
       // the sum the bank would hand over right now, if you asked for the lot
-      canBorrow: loan.owed > 0 ? 0 : cap,
+      canBorrow: loan.owed > 0 ? 0 : room.limit,
     });
   }
 
@@ -3262,11 +3313,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
     if (!allow("bank:" + u.id, 10, 60_000)) return tooMany(30);
-    const cap = await loanCap(u.id);
-    if (!(cap > 0)) return json({ error: "the bank will not lend to you." }, 403);
+    const room = await loanRoom(u.id);
+    if (!(room.limit > 0)) return json({ error: "the bank will not lend to you." }, 403);
     const want = round2(Number(b.amount));
     if (!Number.isFinite(want) || want <= 0) return json({ error: "name a real number." }, 400);
-    if (want > cap) return json({ error: "the bank tops you out at " + cap + " sahurs.", cap }, 400);
+    if (want > room.limit) {
+      return json({ error: "the bank tops you out at " + room.limit + " sahurs.", cap: room.limit }, 400);
+    }
     for (let attempt = 0; attempt < 8; attempt++) {
       const loanE = await kv.get<Loan>(["loan", u.id]);
       if (loanE.value && Number(loanE.value.owed) > 0) {
@@ -3277,14 +3330,25 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const base = Number.isFinite(rec.bal) ? rec.bal : 0;
       const nb = round2(base + want);
       const owed = owedFor(want);
+      // A one-off extra is spent by taking a loan at all, not by the part of
+      // the loan that leaned on it, so it comes off in the same commit. It is
+      // checked as well as deleted: two borrow attempts racing must not both
+      // get to lean on the same one-off.
+      const boostE = await kv.get<number>(["loanboost", u.id]);
       // the loan and the money it puts in your hand are one commit, so there is
       // no instant where a debt exists that was never paid out, or the reverse
-      const res = await kv.atomic()
-        .check(loanE).check(cur)
+      const op = kv.atomic()
+        .check(loanE).check(cur).check(boostE)
         .set(["loan", u.id], { principal: want, owed, ts: Date.now() }, { expireIn: LOAN_TTL })
-        .set(["cas", u.id], { ...rec, bal: nb }, { expireIn: CAS_TTL })
-        .commit();
-      if (res.ok) return json({ ok: true, borrowed: want, owed, balance: nb, cap });
+        .set(["cas", u.id], { ...rec, bal: nb }, { expireIn: CAS_TTL });
+      if (boostE.value !== null) op.delete(["loanboost", u.id]);
+      const res = await op.commit();
+      if (res.ok) {
+        return json({
+          ok: true, borrowed: want, owed, balance: nb,
+          cap: room.cap, spentBoost: capOf(boostE.value) ?? 0,
+        });
+      }
     }
     return json({ error: "busy" }, 503);
   }
@@ -3859,6 +3923,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const rows: {
       id: string; username: string; balance: number; owed: number; loanMax: number; loanMaxSet: boolean;
+      loanBoost: number; loanLimit: number;
     }[] = [];
     // map app id -> username for approved users
     const names: Record<string, string> = {};
@@ -3871,13 +3936,20 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const id = String(e.key[1]);
       const username = names[id];
       if (!username) continue;
-      const [loan, capE] = await Promise.all([loanOf(id), kv.get<number>(["loanmax", id])]);
+      const [loan, capE, boost] = await Promise.all([
+        loanOf(id),
+        kv.get<number>(["loanmax", id]),
+        loanBoost(id),
+      ]);
       const set = capOf(capE.value);
+      const loanMax = set === null ? LOAN_MAX_DEFAULT : set;
       rows.push({
         id, username, balance: round2(e.value.bal || 0),
         owed: loan.owed,
-        loanMax: set === null ? LOAN_MAX_DEFAULT : set,
+        loanMax,
         loanMaxSet: set !== null,   // false means they are simply on the house default
+        loanBoost: boost,           // an unspent one-off, 0 when there is none
+        loanLimit: round2(loanMax + boost),
       });
     }
     rows.sort((a, c) => c.balance - a.balance);
@@ -4416,7 +4488,8 @@ function renderBalances(){
   var q=qOf("search-balances");
   var shown=balancesCache.filter(function(u){
     return matches(q, [u.username, u.id, String(u.balance), (u.balance!=null?Number(u.balance).toFixed(2):"")+" sahurs",
-      u.owed>0?"owes debt loan in the red":"clear no debt", "cap "+u.loanMax]);
+      u.owed>0?"owes debt loan in the red":"clear no debt", "cap "+u.loanMax,
+      u.loanBoost>0?("one-off one time boost +"+u.loanBoost):"no one-off"]);
   });
   if(!balancesCache.length){balances.innerHTML='<div class="empty">no balances yet (nobody has claimed sahurs).</div>';return;}
   if(!shown.length){balances.innerHTML='<div class="empty">no matching balances.</div>';return;}
@@ -4454,6 +4527,29 @@ function renderBalances(){
     lrow.appendChild(llab);lrow.appendChild(debt);lrow.appendChild(dsave);
     lrow.appendChild(cap);lrow.appendChild(csave);lrow.appendChild(cclr);
     el.appendChild(lrow);
+    // the other kind of raise. "set loan cap" above is permanent — it is their
+    // cap until it is set again. this one sits on top of that cap and is spent
+    // by the next loan they take, whatever its size, so a favour stays a favour.
+    var brow=document.createElement("div");brow.className="row";brow.style.marginTop="8px";
+    var blab=document.createElement("small");blab.className="vlab";
+    if(u.loanBoost>0){
+      blab.className="vlab";
+      blab.textContent="one-off: +"+Number(u.loanBoost).toFixed(2)+" waiting \u2014 next loan may reach "
+        +Number(u.loanLimit).toFixed(2)+", then back to "+Number(u.loanMax).toFixed(2);
+    }else{
+      blab.textContent="one-off: none \u2014 the cap above is all they get";
+    }
+    var boost=document.createElement("input");boost.type="number";boost.min="0";boost.step="0.01";boost.className="tin";
+    boost.placeholder="extra, this once";boost.style.flex="0 1 150px";
+    if(u.loanBoost>0)boost.value=Number(u.loanBoost).toFixed(2);
+    var bsave=document.createElement("button");bsave.className="ok";bsave.textContent="grant one-time";
+    bsave.title="on top of their cap, and spent the moment they borrow \u2014 their cap does not move";
+    bsave.onclick=function(){setLoanBoost(u.id,u.username,boost.value);};
+    var bclr=document.createElement("button");bclr.className="load";bclr.textContent="take back";
+    bclr.title="remove an unspent one-off";
+    bclr.onclick=function(){setLoanBoost(u.id,u.username,0);};
+    brow.appendChild(blab);brow.appendChild(boost);brow.appendChild(bsave);brow.appendChild(bclr);
+    el.appendChild(brow);
     balances.appendChild(el);
   });
 }
@@ -4468,6 +4564,13 @@ function setLoanMax(id,name,val){
   var body={key:keyEl.value.trim(),id:id,max:(val===null||String(val).trim()==="")?null:Number(val)};
   if(body.max!==null&&!(body.max>=0)){alert("a cap is 0 or more, or blank for the default");return;}
   fetch("/admin/loanmax",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshBalances();});
+}
+function setLoanBoost(id,name,val){
+  var extra=(val===null||String(val).trim()==="")?0:Number(val);
+  if(!(extra>=0)){alert("a one-off is 0 or more, or blank to take it back");return;}
+  if(extra>0&&!confirm("Let "+name+" borrow "+extra.toFixed(2)+" sahurs over their cap, once?\\n\\nIt sits on top of their cap until they take a loan, then it is gone \u2014 however much of it they used. Their cap does not change."))return;
+  fetch("/admin/loanboost",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,extra:extra})})
     .then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshBalances();});
 }
 function setBalance(id,name,val){

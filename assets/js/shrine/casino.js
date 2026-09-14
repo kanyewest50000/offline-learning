@@ -596,6 +596,11 @@
       stat.innerHTML="";ctlwrap.innerHTML="";
       if(!d){sub.textContent="the bank is shut.";return;}
       var owed=Number(d.owed)||0, cap=Number(d.cap)||0;
+      /* the standing cap, and a one-off tung may have put on top of it for this
+         loan only. the server works both out; all we do is say which is which,
+         so nobody mistakes a favour for a new ceiling. */
+      var boost=Number(d.boost)||0;
+      var limit=Number(d.limit);if(!(limit>=0))limit=cap+boost;
       var pct=Math.round((Number(d.interest)||0)*100);
       var half=Math.round((Number(d.garnish)||0.5)*100);
       /* the counter: what you owe, and what he will lend */
@@ -607,6 +612,7 @@
       }
       stat.appendChild(cell("owed",money(owed)+" sahurs",owed>0));
       stat.appendChild(cell("your cap",money(cap)+" sahurs"));
+      if(boost>0)stat.appendChild(cell("this once","+"+money(boost)+" sahurs",true));
       stat.appendChild(cell("his cut",pct+"% on top"));
 
       if(owed>0){
@@ -632,11 +638,15 @@
         }
         pay.onclick=function(){repay({amount:Number(amt.value)},pay);};
         all.onclick=function(){repay({},all);};
-      }else if(cap>0){
-        sub.textContent="he lends up to "+money(cap)+" sahurs. he wants "+pct+"% on top.";
-        note.textContent="pay him back whenever you like \u2014 or do not, and he takes "+half+
-          "% of every shrine claim until it is square.";
-        var want=betField(money(cap));want.className="tin";
+      }else if(limit>0){
+        sub.textContent="he lends up to "+money(limit)+" sahurs. he wants "+pct+"% on top.";
+        note.textContent=boost>0
+          ? ("tung has stretched your "+money(cap)+" to "+money(limit)+" for this loan and this loan only. "+
+             "pay him back whenever you like \u2014 or do not, and he takes "+half+
+             "% of every shrine claim until it is square.")
+          : ("pay him back whenever you like \u2014 or do not, and he takes "+half+
+             "% of every shrine claim until it is square.");
+        var want=betField(money(limit));want.className="tin";
         var take=el("button","cbtn go","borrow");
         ctlwrap.appendChild(ctl("amount",want));
         var bw2=el("div","casrow");bw2.appendChild(take);
