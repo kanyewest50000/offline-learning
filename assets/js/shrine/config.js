@@ -28,7 +28,7 @@
      into about:blank, which has no base URL for relative paths to resolve against. */
   var TUNG_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;
   var TUNGGOD_IMG = new URL("assets/tungtunggod.png", location.href).href;
-  var LENDER_IMG = new URL("assets/lendersahur1.webp", location.href).href;
+  var LENDER_IMG = new URL("assets/lendersahur.jpg", location.href).href;
 
   /* html-escape for anything interpolated into the shrine document */
   function esc(s) {
