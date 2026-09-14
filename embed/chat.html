@@ -137,7 +137,11 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
 
   var TKEY = "shrine-token-v1";
   var TOKEN = null, ME = null, cursor = 0, polling = false, statusT = null, pollT = null, seenEids = {};
-  var POLL_MS = 8000;
+  // this account may delete messages. it comes off /status and is about this
+  // client alone — nothing the room can see ever carries it, so a moderator is
+  // indistinguishable from anybody else in here.
+  var IS_MOD = false;
+  var POLL_MS = 4000;
   var gate = document.getElementById("gate");
   var applyView = document.getElementById("applyView");
   var pendingView = document.getElementById("pendingView");
@@ -357,6 +361,26 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     replybar.style.display = "flex";
   }
   function cancelReply(){ replyTo = null; replybar.style.display = "none"; }
+  // taking a line off this screen — because a del event said so, or because we
+  // just pressed the bin — and asking the shrine to take it off everyone else's.
+  // already gone counts as done, so pressing twice is not an error.
+  function dropMsg(id){
+    var r = MSGS[id];
+    if (r && r.row && r.row.parentNode) r.row.parentNode.removeChild(r.row);
+    delete MSGS[id];
+  }
+  function delBtn(id){ var m = MSGS[id]; return m && m.row ? m.row.querySelector(".act.del") : null; }
+  function delMsg(id){
+    if (!TOKEN) { dropMsg(id); return; }
+    apiPost("/delete", { token:TOKEN, id:id }).then(function(r){
+      if (r && (r.ok || r.error === "gone")) { dropMsg(id); return; }
+      var b = delBtn(id);
+      if (b) { b.disabled = false; b.textContent = "🗑"; b.title = "the shrine would not — try again"; }
+    }).catch(function(){
+      var b = delBtn(id);
+      if (b) { b.disabled = false; b.textContent = "🗑"; }
+    });
+  }
   function add(m){
     var row = document.createElement("div");
     row.className = m.mine ? "msg me" : "msg";
@@ -382,9 +406,28 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     rb.addEventListener("click", function(ev){ ev.stopPropagation(); openPalette(m.id, rb); });
     var pb = document.createElement("button"); pb.type = "button"; pb.className = "act"; pb.textContent = "↩"; pb.title = "reply";
     pb.addEventListener("click", function(ev){ ev.stopPropagation(); setReply(m); input.focus(); });
-    acts.appendChild(rb); acts.appendChild(pb); row.appendChild(acts);
+    acts.appendChild(rb); acts.appendChild(pb);
+    // moderators get a third button and nobody else does. it arms on the first
+    // click and fires on the second, so one stray tap cannot destroy a line.
+    if (IS_MOD) {
+      var db = document.createElement("button"); db.type = "button"; db.className = "act del"; db.textContent = "🗑"; db.title = "delete this message";
+      var armed = 0, armT = null;
+      db.addEventListener("click", function(ev){
+        ev.stopPropagation();
+        if (!armed) {
+          armed = 1; db.textContent = "⚠"; db.title = "click again to delete";
+          if (armT) clearTimeout(armT);
+          armT = setTimeout(function(){ armed = 0; db.textContent = "🗑"; db.title = "delete this message"; }, 4000);
+          return;
+        }
+        if (armT) clearTimeout(armT);
+        armed = 0; db.disabled = true; delMsg(m.id);
+      });
+      acts.appendChild(db);
+    }
+    row.appendChild(acts);
     var rc = document.createElement("div"); rc.className = "reacts"; row.appendChild(rc);
-    MSGS[m.id] = { reactEl:rc, counts:{}, mine:{}, meta:meta };
+    MSGS[m.id] = { reactEl:rc, counts:{}, mine:{}, meta:meta, row:row };
     log.appendChild(row);
     log.scrollTop = log.scrollHeight;
   }
@@ -418,6 +461,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   function applyWarn(t){ if (warnEl) warnEl.textContent = t; }
   function applyEvent(ev){
     if (!ev) return;
+    if (ev.type === "del") { dropMsg(ev.id); return; }
     if (ev.type === "react") { if (seenEids[ev.eid]) return; seenEids[ev.eid] = 1; applyReact(ev.id, ev.e, ev.op); return; }
     if (ev.type === "msg") {
       if (MSGS[ev.id]) { if (MSGS[ev.id].meta) stampWhen(MSGS[ev.id].meta, ev.ts); return; }
@@ -464,6 +508,7 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     if (pageHidden()) return;
     api("/status?token=" + encodeURIComponent(TOKEN)).then(function(s){
       if (!s || typeof s.status !== "string") return;
+      IS_MOD = s.status === "approved" && s.mod === true;
       if (s.status === "approved") {
         if (s.blocked) showBan(s);
         else if (s.chatBanned) showBan({ reason: "chatban" });

@@ -17,6 +17,7 @@
 //   GET  /events?since=&token=                            -> {events, cursor}
 //   POST /send          {token, id, text, reply}          -> {ok, ts}
 //   POST /react         {token, id, e, op, eid}           -> {ok}
+//   POST /delete        {token, id}                       -> {ok, id}  (moderators)
 //   GET  /cas/resume?token=                               -> {ok, game, ...} an unfinished board
 //   GET  /bank?token=                                     -> {ok, owed, cap, canBorrow, ...}
 //   POST /bank/borrow   {token, amount}                   -> {ok, borrowed, owed, balance}
@@ -30,6 +31,7 @@
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 //   POST /admin/ban     {key, id, banned}                 -> {ok, banned}      (whole shrine)
 //   POST /admin/chatban {key, id, chatBanned}             -> {ok, chatBanned}  (chat only)
+//   POST /admin/mod     {key, id, mod}                    -> {ok, mod}         (delete msgs)
 //   POST /admin/loanmax {key, id, max}                    -> {ok, loanMax}     (null = default)
 //   POST /admin/setdebt {key, id, owed}                   -> {ok, owed}        (0 wipes it)
 //   GET  /veil?token=                                     -> {live, allowed, url?}
@@ -914,7 +916,7 @@ async function veilLive(): Promise<boolean> {
 // id and the server fills the words in from here — the client is never trusted
 // to say what it is quoting. Reactions look a message up here too, so you
 // cannot react to something that was never posted.
-type MsgRef = { name: string; text: string; from: string | null };
+type MsgRef = { name: string; text: string; from: string | null; seq?: number };
 
 async function appendEvent(ev: Record<string, unknown>) {
   const seq = await nextSeq();
@@ -926,9 +928,11 @@ async function appendEvent(ev: Record<string, unknown>) {
   // monotonic seq still orders what remains.
   if (ev.type === "msg") ev.ts = Date.now();
   if (ev.type === "msg" && typeof ev.id === "string") {
+    // seq rides along so a moderator delete can go straight to the one
+    // ["ev", seq] entry that carries this message instead of hunting the log.
     await kv.set(
       ["msg", ev.id],
-      { name: ev.name, text: ev.text, from: ev.from ?? null } as MsgRef,
+      { name: ev.name, text: ev.text, from: ev.from ?? null, seq } as MsgRef,
       { expireIn: TTL_MS },
     );
   }
@@ -956,6 +960,43 @@ async function recentWindow(): Promise<{ events: any[]; floor: number }> {
   collected.reverse();
   const floor = collected.length && typeof collected[0]?.seq === "number" ? collected[0].seq : 0;
   return { events: collected, floor };
+}
+
+// Take one line out of the room, for good. The log is append-only, so a delete
+// is three things at once: the ["ev", seq] entry stops existing, so a fresh
+// open never replays it; the ["msg", id] quote index goes with it, so nothing
+// can be replied to or reacted to after the fact; and a "del" event is appended
+// so every client already holding the line on screen drops it on its next poll.
+// The seq normally comes off the quote index; a message posted before that
+// field existed falls back to one bounded reverse walk of the retained window.
+// Returns false when there was nothing there — aged out, or never said.
+async function deleteMessage(id: string): Promise<boolean> {
+  const ref = await kv.get<MsgRef>(["msg", id]);
+  let seq = typeof ref.value?.seq === "number" ? ref.value.seq : 0;
+  let found = !!ref.value;
+  if (seq) {
+    // the index can outlive its log entry (the log is trimmed to HISTORY, the
+    // index is not), and an id is only ever claimed once, so a mismatch here
+    // means the entry is already gone rather than that we have the wrong one.
+    // deno-lint-ignore no-explicit-any
+    const at = await kv.get<any>(["ev", seq]);
+    if (!at.value || at.value.type !== "msg" || at.value.id !== id) seq = 0;
+  } else {
+    // deno-lint-ignore no-explicit-any
+    for await (const e of kv.list<any>({ prefix: ["ev"] }, { reverse: true, limit: HISTORY })) {
+      const v = e.value;
+      if (v && v.type === "msg" && v.id === id) {
+        seq = typeof v.seq === "number" ? v.seq : Number(e.key[1]);
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!found) return false;
+  if (seq) await kv.delete(["ev", seq]);
+  await kv.delete(["msg", id]);
+  await appendEvent({ type: "del", id });
+  return true;
 }
 
 // Admin dump of retained chat lines. Public /events?since=0 only ships
@@ -1911,13 +1952,21 @@ Deno.serve({ port: listenPort }, async (req, info) => {
 
   // One token cannot dump HISTORY every few ms. Shared-IP classrooms each
   // have their own token, so they do not share this bucket.
+  //
+  // The two halves of /events are not the same expense, so they are not the
+  // same bucket. A fresh open (since=0) replays the whole public window and
+  // stays at six a minute. An incremental poll only reads whatever landed past
+  // the cursor, which is usually nothing — a visible tab does one every four
+  // seconds, so fifteen a minute is the steady state and the cap sits well
+  // above it, with room for the extra catch-up poll each return to the tab
+  // fires. Anything above that is not a chat client.
   if (path === "/events") {
     const since = Number(url.searchParams.get("since") || "0") || 0;
     const tok = clip(url.searchParams.get("token"), 64);
     if (tok) {
       if (since <= 0) {
         if (!allow("hist:" + tok, 6, 60_000)) return tooMany(60);
-      } else if (!allow("ev:" + tok, 20, 60_000)) return tooMany(30);
+      } else if (!allow("ev:" + tok, 40, 60_000)) return tooMany(30);
     }
   }
 
@@ -1976,6 +2025,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       reason: bs.reason,
       until: bs.until,
       chatBanned: !!app.value.chatBanned,
+      mod: app.value.mod === true,
     });
   }
 
@@ -1996,7 +2046,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // `blocked` is the shrine-wide verdict (the casino gate reads it too);
     // `chatBanned` is the narrow one, so a client can shut the room without
     // shutting anything else.
-    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, chatBanned: !!app.value.chatBanned, thread: app.value.thread || [] });
+    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, chatBanned: !!app.value.chatBanned, mod: app.value.mod === true, thread: app.value.thread || [] });
   }
 
   // ---------- respond (applicant replies to tung's follow-up question) ----------
@@ -2180,6 +2230,34 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!(await flip.commit()).ok) return json({ ok: true, state: on ? 1 : 0, noop: true });
     await appendEvent({ type: "react", id, e, op: wants ? 1 : -1, eid, name: user.username });
     return json({ ok: true, state: wants ? 1 : 0 });
+  }
+
+  // ---------- delete a message (moderators) ----------
+  // The one power the moderator flag buys. A moderator is an ordinary approved
+  // member everywhere it can be seen: the flag never rides on a chat event, a
+  // reaction or a profile, so nobody in the room can work out who holds it. The
+  // only place it is disclosed is /status and /login, to the account itself, so
+  // its own client knows to draw the bin. Chat bans and timeouts still apply —
+  // somebody barred from the room does not get to reach into it.
+  if (req.method === "POST" && path === "/delete") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    // tung's own key works here too, so the room can be cleaned up without
+    // first handing the flag to an account.
+    const byKey = ADMIN_KEY !== "" && String(b.key ?? "") === ADMIN_KEY;
+    if (!byKey) {
+      const user = await authUser(b.token);
+      if (!user) return json({ error: "unauthorized" }, 401);
+      if (user.mod !== true) return json({ error: "forbidden" }, 403);
+      const dbs = chatBlock(user);
+      if (dbs.blocked) return json({ error: "blocked", reason: dbs.reason, until: dbs.until }, 403);
+      if (!allow("del:" + user.id, 20, 10_000)) return tooMany(10);
+      if (!await allowGlobal("del:" + user.id, 20, 10_000)) return tooMany(10);
+    }
+    const id = clip(b.id, 32);
+    if (!id) return json({ error: "bad" }, 400);
+    if (!await deleteMessage(id)) return json({ error: "gone" }, 404);
+    return json({ ok: true, id });
   }
 
   // ---------- web veil: is it open, and where does it go? ----------
@@ -2809,6 +2887,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
           banned: !!e.value.banned, chatBanned: !!e.value.chatBanned,
           timeoutUntil: e.value.timeoutUntil || 0,
           note: e.value.note || "", veil: e.value.veil === true,
+          mod: e.value.mod === true,
         });
       }
     }
@@ -2901,6 +2980,21 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (next === "missing") return json({ error: "not found" }, 404);
     if (next === "busy") return json({ error: "busy" }, 503);
     return json({ ok: true, chatBanned });
+  }
+
+  // ---------- admin: grant / revoke chat moderator powers ----------
+  // A moderator can delete any chat message and nothing else. Deliberately
+  // invisible: there is no badge, no mark and no field on any event that would
+  // let the room tell a moderator from anyone else. See POST /delete.
+  if (req.method === "POST" && path === "/admin/mod") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const mod = b.mod !== false; // default true; pass mod:false to take it away
+    const next = await patchApp(clip(b.id, 32), { mod });
+    if (next === "missing") return json({ error: "not found" }, 404);
+    if (next === "busy") return json({ error: "busy" }, 503);
+    return json({ ok: true, mod });
   }
 
   // ---------- admin: delete a user entirely ----------
@@ -3927,8 +4021,9 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 </section>
 <section class="pane" id="pane-users">
 <h2>Manage users</h2>
-<p class="hint">Approved users: rename, ban, chat-ban, timeout, web-veil access, note, re-review, or delete.
-A <b>ban</b> shuts the whole shrine — chat and casino both. A <b>chat ban</b> shuts only the chat: they cannot read it or post in it, and the casino, the pit, the games, the shop and the veil keep working normally.</p>
+<p class="hint">Approved users: rename, ban, chat-ban, timeout, moderator powers, web-veil access, note, re-review, or delete.
+A <b>ban</b> shuts the whole shrine — chat and casino both. A <b>chat ban</b> shuts only the chat: they cannot read it or post in it, and the casino, the pit, the games, the shop and the veil keep working normally.
+A <b>moderator</b> gets a bin next to react and reply on every chat message and can delete any of them. Nothing marks them out in the room — no badge, no tag — so only this page knows.</p>
 <input class="search" id="search-users" placeholder="search approved users…" autocomplete="off">
 <div id="users"><div class="empty">load to see approved users.</div></div>
 </section>
@@ -4196,7 +4291,7 @@ function renderUsers(){
   var shown=usersCache.filter(function(u){
     var st=u.banned?"banned":(u.timeoutUntil&&u.timeoutUntil>Date.now()?"timeout timed out":"active");
     var cst=u.chatBanned?"chatban chat banned chat-banned":"chat open";
-    return matches(q, [u.username, u.id, u.note||"", st, cst, u.veil?"veil approved":"veil not approved"]);
+    return matches(q, [u.username, u.id, u.note||"", st, cst, u.veil?"veil approved":"veil not approved", u.mod?"mod moderator":"not a moderator"]);
   });
   if(!usersCache.length){users.innerHTML='<div class="empty">no approved users yet.</div>';return;}
   if(!shown.length){users.innerHTML='<div class="empty">no matching users.</div>';return;}
@@ -4236,6 +4331,17 @@ function renderUsers(){
     else{cbtn.className="no";cbtn.textContent="ban from chat";cbtn.title="chat only — they can no longer read it or post in it, but the casino, games, shop and veil keep working";cbtn.onclick=function(){setChatBan(u.id,true,u.username);};}
     crow.appendChild(clab);crow.appendChild(cbtn);
     el.appendChild(crow);
+    // moderator powers: they can delete any chat message. nothing about this
+    // shows in the room — no badge, no mark — so only this pane and their own
+    // client ever know. see POST /delete in server.ts.
+    var mrow=document.createElement("div");mrow.className="row";
+    var mlab=document.createElement("small");mlab.className="vlab";
+    mlab.textContent=u.mod?"moderator: can delete any chat message":"moderator: no";
+    var mbtn=document.createElement("button");
+    if(u.mod){mbtn.className="no";mbtn.textContent="revoke moderator";mbtn.title="take the bin away again";mbtn.onclick=function(){setMod(u.id,false);};}
+    else{mbtn.className="ok";mbtn.textContent="make moderator";mbtn.title="a bin appears next to react and reply on every chat message, for them only. nobody in the room can tell they have it.";mbtn.onclick=function(){setMod(u.id,true,u.username);};}
+    mrow.appendChild(mlab);mrow.appendChild(mbtn);
+    el.appendChild(mrow);
     var vrow=document.createElement("div");vrow.className="row";
     var vlab=document.createElement("small");vlab.className="vlab";
     vlab.textContent=u.veil?"web veil: approved":"web veil: not approved";
@@ -4254,10 +4360,11 @@ function renderUsers(){
     var meta=document.createElement("small");
     var idline=" · id "+u.id;
     var cbline=u.chatBanned?" · chat banned":"";
-    if(u.banned){meta.textContent="banned (permanent)"+cbline+idline;meta.className="rev";}
-    else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString()+cbline+idline;meta.className="rev";}
-    else if(u.chatBanned){meta.textContent="chat banned · everything else open · joined "+new Date(u.ts).toLocaleString()+idline;meta.className="rev";}
-    else{meta.textContent="active · joined "+new Date(u.ts).toLocaleString()+idline;}
+    var modline=u.mod?" · moderator":"";
+    if(u.banned){meta.textContent="banned (permanent)"+cbline+modline+idline;meta.className="rev";}
+    else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString()+cbline+modline+idline;meta.className="rev";}
+    else if(u.chatBanned){meta.textContent="chat banned · everything else open · joined "+new Date(u.ts).toLocaleString()+modline+idline;meta.className="rev";}
+    else{meta.textContent="active · joined "+new Date(u.ts).toLocaleString()+modline+idline;}
     el.appendChild(meta);
     users.appendChild(el);
   });
@@ -4272,6 +4379,10 @@ function setBan(id,banned){
 function setChatBan(id,chatBanned,name){
   if(chatBanned&&!confirm("Ban "+name+" from the chat?\\n\\nThey will not be able to read the chat or post in it. The casino, the pit, the games, the shop and the veil stay open to them. This is not the full ban."))return;
   fetch("/admin/chatban",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,chatBanned:chatBanned})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+function setMod(id,mod,name){
+  if(mod&&!confirm("Give "+name+" moderator powers?\\n\\nThey will be able to delete any message in the chat. A bin appears next to react and reply for them only — nobody else in the room can tell they have it."))return;
+  fetch("/admin/mod",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,mod:mod})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 function setTimeoutUntil(id,until){
   fetch("/admin/timeout",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,until:until})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});

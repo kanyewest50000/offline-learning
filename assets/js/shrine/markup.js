@@ -52,8 +52,10 @@
       '<button id="choosePlay" class="bigbtn ghost" type="button">' +
       '<img class="bimg" src="' + esc(TUNG_IMG) + '" alt="">' +
       '<span>' + LBL_CURATED + '</span></button>' +
-      /* casino button: same bigbtn as curated catalog */
-      '<button id="chooseCasino" class="bigbtn ghost" type="button">' +
+      /* casino button: same bigbtn as curated catalog. ships hidden — chat.js
+         only reveals it once /status says tung has approved this member, so an
+         applicant who is still waiting never sees a casino at all. */
+      '<button id="chooseCasino" class="bigbtn ghost" type="button" style="display:none">' +
       SPADE(18).replace('<svg viewBox', '<svg class="bicon" viewBox') +
       '<span>Tung’s Casino</span></button>' +
       '<button id="chooseOriginals" class="bigbtn ghost" type="button">' +

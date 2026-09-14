@@ -46,6 +46,13 @@ has to load last. The shrine window is written with `document.write` into an
 `about:blank` popup, so its stylesheet and its two clients travel as strings
 rather than as `<link>` and `<script src>`.
 
+The casino is members-only and the chooser reflects that: its tile ships hidden
+and is only put back once `/status` answers `approved`, so somebody still
+waiting on their application never sees a casino at all. That is presentation —
+the gate itself is `casUser()`, which refuses every table, the pit, the shop and
+the faucet to a token that has not been approved, so unhiding the tile from
+devtools buys nothing.
+
 Outcomes are the server's, never the client's: the casino code only sends bets
 and paints whatever `server.ts` replies, so editing it in devtools changes
 nothing. The same rule runs through the chat — a reply quotes a message by id
@@ -370,6 +377,24 @@ all of it — both halves of the room shut (including a giveaway claim, which
 announces the claimant by name, and including a request that pads itself with
 the admin key to try to widen the history window), everything else still open,
 and the room handed back when the ban is lifted.
+
+**Moderators** are the third switch on the same card, and the only one that
+hands power out rather than taking it away. A moderator gets a bin next to the
+react and reply buttons on every chat message and can delete any of them;
+`POST /delete` refuses everybody else, including somebody whose flag was taken
+back and somebody barred from the room. A delete is not a hidden flag on the
+line — the `["ev", seq]` entry stops existing, so a fresh open never replays it,
+the `["msg", id]` quote index goes with it, so the line can no longer be quoted
+or reacted to, and a `del` event tells every client already holding it on screen
+to drop it. The flag itself is deliberately invisible: it rides on `/status` and
+`/login` to the account that holds it and on `/admin/users` to this page, and
+nowhere else — no event, no reaction, no profile and no room dump carries it, so
+nobody in the chat can work out who the moderators are.
+`scripts/test-moderation.ts` walks both halves: the bin works and only for
+moderators, and every route another member can read is checked for the flag.
+
+The chat polls `/events` every 4 seconds while the tab is visible, and not at
+all while it is hidden.
 
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a

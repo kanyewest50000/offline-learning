@@ -25,6 +25,11 @@
     '(function(){' +
     'var API=SHRINE_API,TKEY="shrine-token-v1";' +
     'var TOKEN=null,ME=null,cursor=0,polling=false,statusT=null,pollT=null,seenEids={};' +
+    /* IS_MOD: this account may delete messages. APPROVED: tung has let them in.
+       both come off /status and both are about THIS client only — the moderator
+       flag is never on anything the room can see, so a moderator looks exactly
+       like everybody else to everybody else. */
+    'var IS_MOD=false,APPROVED=false;' +
     'if(typeof SHRINE_BOOT_TOKEN==="string"&&SHRINE_BOOT_TOKEN){try{if(!localStorage.getItem(TKEY))localStorage.setItem(TKEY,SHRINE_BOOT_TOKEN);}catch(e){}}' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
@@ -337,6 +342,15 @@
     'g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";' +
     'g.note.textContent=(r&&r.error==="blocked")?"not you.":"the shrine did not answer. try again.";' +
     '}).catch(function(){g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";g.note.textContent="the shrine did not answer. try again.";});}' +
+    /* taking a line off this screen — because a del event said so, or because we
+       just pressed the bin — and asking the shrine to take it off everyone else's.
+       already gone counts as done, so pressing twice is not an error. */
+    'function dropMsg(id){var r=MSGS[id];if(r&&r.row&&r.row.parentNode)r.row.parentNode.removeChild(r.row);delete MSGS[id];}' +
+    'function delBtn(id){var m=MSGS[id];return m&&m.row?m.row.querySelector(".act.del"):null;}' +
+    'function delMsg(id){if(!TOKEN){dropMsg(id);return;}apiPost("/delete",{token:TOKEN,id:id}).then(function(r){' +
+    'if(r&&(r.ok||r.error==="gone")){dropMsg(id);return;}' +
+    'var b=delBtn(id);if(b){b.disabled=false;b.textContent="🗑";b.title="the shrine would not — try again";}' +
+    '}).catch(function(){var b=delBtn(id);if(b){b.disabled=false;b.textContent="🗑";}});}' +
     'function add(m){var isT=isTung(m);var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(isT)row.classList.add("tung");if(m.id)row.setAttribute("data-id",m.id);' +
     'var meta=document.createElement("div");meta.className="meta";' +
     'var w=document.createElement("button");w.type="button";w.className="who";w.textContent=m.name;w.title="view profile";' +
@@ -346,7 +360,14 @@
     'w.addEventListener("click",function(ev){ev.stopPropagation();openProfile(m.name,isT);});meta.appendChild(w);stampWhen(meta,m.ts);row.appendChild(meta);' +
     'if(m.reply){var q=document.createElement("div");q.className="quote";var qn=document.createElement("b");qn.textContent=m.reply.name+": ";q.appendChild(qn);q.appendChild(document.createTextNode(emojify(m.reply.text)));q.addEventListener("click",function(){var t=document.querySelector("[data-id="+m.reply.id+"]");if(t){t.scrollIntoView({block:"center"});t.className+=" flash";setTimeout(function(){t.className=t.className.replace(" flash","");},700);}});row.appendChild(q);}' +
     'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
-    'var acts=document.createElement("div");acts.className="acts";var rb=document.createElement("button");rb.type="button";rb.className="act";rb.textContent="😀";rb.title="react";rb.addEventListener("click",function(ev){ev.stopPropagation();openPalette(m.id,rb);});var pb=document.createElement("button");pb.type="button";pb.className="act";pb.textContent="↩";pb.title="reply";pb.addEventListener("click",function(ev){ev.stopPropagation();setReply(m);});acts.appendChild(rb);acts.appendChild(pb);row.appendChild(acts);' +
+    'var acts=document.createElement("div");acts.className="acts";var rb=document.createElement("button");rb.type="button";rb.className="act";rb.textContent="😀";rb.title="react";rb.addEventListener("click",function(ev){ev.stopPropagation();openPalette(m.id,rb);});var pb=document.createElement("button");pb.type="button";pb.className="act";pb.textContent="↩";pb.title="reply";pb.addEventListener("click",function(ev){ev.stopPropagation();setReply(m);});acts.appendChild(rb);acts.appendChild(pb);' +
+    /* moderators get a third button and nobody else does. it arms on the first
+       click and fires on the second, so one stray tap on a tiny target cannot
+       destroy a line; it disarms itself again after four seconds. */
+    'if(IS_MOD){var db=document.createElement("button");db.type="button";db.className="act del";db.textContent="🗑";db.title="delete this message";var armed=0,armT=null;' +
+    'db.addEventListener("click",function(ev){ev.stopPropagation();if(!armed){armed=1;db.textContent="⚠";db.title="click again to delete";if(armT)clearTimeout(armT);armT=setTimeout(function(){armed=0;db.textContent="🗑";db.title="delete this message";},4000);return;}' +
+    'if(armT)clearTimeout(armT);armed=0;db.disabled=true;delMsg(m.id);});acts.appendChild(db);}' +
+    'row.appendChild(acts);' +
     'if(m.gift&&m.gift.id){var gw=document.createElement("div");gw.className="giftbox";' +
     'var gb=document.createElement("button");gb.type="button";gb.className="giftbtn";gb.textContent="claim "+m.gift.amount+" sahurs";' +
     'var gn=document.createElement("span");gn.className="giftnote";' +
@@ -354,7 +375,7 @@
     'gb.addEventListener("click",function(ev){ev.stopPropagation();claimGift(m.gift.id);});' +
     'gw.appendChild(gb);gw.appendChild(gn);row.appendChild(gw);}' +
     'var rc=document.createElement("div");rc.className="reacts";row.appendChild(rc);' +
-    'MSGS[m.id]={reactEl:rc,counts:{},mine:{},meta:meta};' +
+    'MSGS[m.id]={reactEl:rc,counts:{},mine:{},meta:meta,row:row};' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
     /* ---- view switching + application/token auth against the backend ---- */
     'function show(v){gate.style.display=(v==="apply"||v==="pending")?"flex":"none";chat.style.display=v==="chat"?"flex":"none";applyView.style.display=v==="apply"?"block":"none";pendingView.style.display=v==="pending"?"block":"none";banEl.style.display=v==="ban"?"flex":"none";var lb=document.getElementById("loginBox");if(lb)lb.style.display=(v==="apply"&&!TOKEN)?"flex":"none";}' +
@@ -373,15 +394,22 @@
     'show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}' +
     'if((isTo||isChat)&&!pageHidden())statusT=setTimeout(refreshGate,isChat?15000:5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
-    'function applyEvent(ev){if(!ev)return;if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id]){if(MSGS[ev.id].meta)stampWhen(MSGS[ev.id].meta,ev.ts);return;}add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null,ts:ev.ts||null});}}' +
-    /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 8s. */
-    'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}if(r&&r.mine)markMine(r.mine);}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,8000);});}' +
+    'function applyEvent(ev){if(!ev)return;if(ev.type==="del"){dropMsg(ev.id);return;}if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id]){if(MSGS[ev.id].meta)stampWhen(MSGS[ev.id].meta,ev.ts);return;}add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null,ts:ev.ts||null});}}' +
+    /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 4s. */
+    'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}if(r&&r.mine)markMine(r.mine);}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,4000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
     'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();}' +
     /* render tung<->applicant follow-up messages on the pending screen; show the
        reply box only once tung has actually asked something. */
     'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");var tw=document.createElement("div");tw.className="twhen";tw.textContent=(m.from==="admin"?"tung":"you")+(m.ts?" · "+fmtWhen(m.ts):"");var tx=document.createElement("div");tx.textContent=m.text;b.appendChild(tw);b.appendChild(tx);appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
-    'function refreshGate(){TOKEN=loadToken();paintKey();if(!TOKEN){show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(!s||typeof s.status!=="string")return;if(s.status==="approved"){if(s.blocked){showBan(s);}else if(s.chatBanned){showBan({reason:"chatban"});}else{startChat(s.username||"");}}else if(s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else if(s.status==="none"||s.status==="rejected"){clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){});}' +
+    /* the casino is members-only, so its door is not even drawn until tung has
+       approved you — the server refuses every table to an unapproved token anyway,
+       this just stops the tile existing. the moderator flag rides in on the same
+       answer. both start off and are only ever turned on by a real /status. */
+    'function paintCasinoGate(){if(chooseCasino)chooseCasino.style.display=APPROVED?"":"none";}' +
+    'function syncAccess(s){APPROVED=!!(s&&s.status==="approved");IS_MOD=APPROVED&&s.mod===true;paintCasinoGate();}' +
+    'function pokeAccess(){var t=loadToken();if(!t){syncAccess(null);return;}api("/status?token="+encodeURIComponent(t)).then(function(s){if(s&&typeof s.status==="string")syncAccess(s);}).catch(function(){});}' +
+    'function refreshGate(){TOKEN=loadToken();paintKey();if(!TOKEN){syncAccess(null);show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(!s||typeof s.status!=="string")return;syncAccess(s);if(s.status==="approved"){if(s.blocked){showBan(s);}else if(s.chatBanned){showBan({reason:"chatban"});}else{startChat(s.username||"");}}else if(s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else if(s.status==="none"||s.status==="rejected"){clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'recheckBtn.addEventListener("click",function(){refreshGate();});' +
     'if(copyHashBtn)copyHashBtn.addEventListener("click",function(){copyKey(copyHashBtn);});' +
@@ -430,7 +458,7 @@
     '});' +
     'oback.addEventListener("click",function(){if(origplay.style.display==="flex"){hideOrigPlay();}else{topShow("choose");}});' +
     'pback.addEventListener("click",function(){topShow("choose");});' +
-    'chooseCasino.addEventListener("click",function(){topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
+    'chooseCasino.addEventListener("click",function(){if(!APPROVED)return;topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the catalog grid to the chooser screen */
     'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("choose");});' +   /* casino "← back" returns to the chooser */
     'shopBtn.addEventListener("click",function(){if(window.__casinoShop)window.__casinoShop();});' +   /* shop lives on the casino header */
@@ -445,6 +473,7 @@
     'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}document.title=cloakTitle();});' +
     'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}var fl=document.getElementById("cloakfav");if(fl)fl.href=cloakFav();});' +
     'document.title=cloakTitle();' +
+    'paintCasinoGate();pokeAccess();' +
     'topShow("choose");' +
     'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();if(pendingView.style.display==="block"||banEl.style.display==="flex")refreshGate();});' +
     /* the three lines from before, verbatim */
