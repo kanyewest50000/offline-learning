@@ -563,7 +563,7 @@
     };
   }
 
-  /* ---------- THE BANK OF SAHUR SAHUR SAHUR ----------
+  /* ---------- THE BANK OF ISRAEL SAHUR ----------
      Laid out like the shrine's altar next door, because it is the same kind of
      place: one character, one thing he does, one button. The difference is that
      the shrine gives and the bank lends, and the lending has a price on it.
@@ -572,7 +572,7 @@
      about interest, caps or what is owed — it asks /bank and paints the answer,
      the same way the pit paints a duel. */
   function viewBank(){
-    var v=mount("Bank of Sahur Sahur Sahur","\uD83C\uDFE6");VIEW="bank";hideBroke();
+    var v=mount("Bank of Israel Sahur","\uD83C\uDFE6");VIEW="bank";hideBroke();
     var altar=el("div","altar");
     var img=el("img","godimg lender");
     img.src=(typeof LENDER_IMG!=="undefined")?LENDER_IMG:"";
