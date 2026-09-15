@@ -463,6 +463,47 @@
       '.pitscore{display:flex;align-items:center;justify-content:center;gap:16px}' +
       '.pitscore .sv{font-size:32px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums;line-height:1}' +
       '.pitscore .sl{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8a6a3a}' +
+      /* the poker table. Five seats have to fit a phone, so a seat is a narrow
+         card that wraps rather than a place around an oval — the oval is the
+         first thing to break at 380px and it buys nothing a stack and a bet
+         do not already say. */
+      '.pkhead{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;color:#8a6a3a}' +
+      '.pkblind{font-size:17px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
+      '.pklvl,.pkhand{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}' +
+      '.pkup{font-size:11px;color:#c8823c;font-variant-numeric:tabular-nums}' +
+      '.pkboard{display:flex;justify-content:center;gap:7px;flex-wrap:wrap}' +
+      '.pkboard .pcard{width:62px;height:88px}' +
+      '.pkboard .pcface{font-size:21px;border-radius:9px}' +
+      '.pkslot{width:62px;height:88px;border:1px dashed #3a2410;border-radius:9px;opacity:.45}' +
+      '.pkpot{text-align:center;font-size:14px;font-weight:700;color:#f2c063;font-variant-numeric:tabular-nums}' +
+      '.pkseats{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;width:100%}' +
+      '.pkseat{flex:0 1 128px;min-width:108px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:8px 6px;text-align:center}' +
+      '.pkseat.you{border-color:#c8823c}' +
+      '.pkseat.turn{border-color:#f2c063;box-shadow:0 0 0 2px #f2c06340}' +
+      '.pkseat.folded{opacity:.5}' +
+      '.pkseat.out{opacity:.3}' +
+      '.pkname{display:flex;align-items:center;justify-content:center;gap:5px;font-size:12px;font-weight:700;color:#f5efe0}' +
+      '.pkwho{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:84px}' +
+      '.pkdealer{flex:0 0 auto;width:16px;height:16px;border-radius:50%;background:#c8823c;color:#1d1206;font-size:10px;font-weight:800;line-height:16px}' +
+      '.pkhole{display:flex;justify-content:center;gap:4px;margin:6px 0;min-height:56px}' +
+      '.pkhole .pcard{width:40px;height:56px}' +
+      '.pkhole .pcface{font-size:15px;border-radius:7px}' +
+      '.pkstack{font-size:15px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
+      '.pkbet{font-size:11px;color:#c8823c;min-height:15px;font-variant-numeric:tabular-nums}' +
+      '.pkacts{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}' +
+      '.pkacts .cbtn{min-width:118px}' +
+      '.pkraise{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;align-items:center}' +
+      '.pkamt{width:112px;text-align:center;font-variant-numeric:tabular-nums}' +
+      '.pkshow{display:flex;flex-direction:column;gap:6px;width:100%;max-width:420px}' +
+      '.pkshowrow{display:flex;align-items:center;gap:8px;background:#241505;border:1px solid #3a2410;border-radius:10px;padding:6px 10px}' +
+      '.pkshowrow.won{border-color:#c8823c}' +
+      '.pkshowname{flex:0 0 auto;font-size:12px;font-weight:700;color:#f5efe0;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.pkshowcards{display:flex;gap:3px}' +
+      '.pkshowcards .pcard{width:26px;height:36px}' +
+      '.pkshowcards .pcface{font-size:11px;border-radius:5px}' +
+      '.pkshowhand{flex:1;text-align:right;font-size:11px;color:#c8823c}' +
+      '.pklog{width:100%;max-width:420px;display:flex;flex-direction:column;gap:2px}' +
+      '.pklogline{font-size:11px;color:#8a6a3a;line-height:1.5}' +
       '.pitmoves{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}' +
       '.pitmove{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-width:104px;padding:16px 14px;' +
       'background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;border-radius:14px;color:#f2c063;font-weight:800;' +
@@ -759,6 +800,16 @@
       '& .brokebar h4{color:{text}}' +
       '& .brokebar p,& .pitrow p{color:{muted}}' +
       '& .pitblurb,& .pitpot,& .pitscore .sv,& .pitrow .price{color:{heading}}' +
+      /* the poker table, in whatever skin is on */
+      '& .pkseat,& .pkshowrow{background:{raised};border-color:{line}}' +
+      '& .pkseat.you,& .pkseat.turn,& .pkshowrow.won{border-color:{lineHot}}' +
+      '& .pkseat.turn{box-shadow:0 0 0 2px {lineHotA33}}' +
+      '& .pkname,& .pkshowname{color:{text}}' +
+      '& .pkdealer{background:{lineHot};color:{solidInk}}' +
+      '& .pkblind,& .pkstack,& .pkpot{color:{heading}}' +
+      '& .pkhead,& .pklogline{color:{muted}}' +
+      '& .pkup,& .pkbet,& .pkshowhand{color:{textDim}}' +
+      '& .pkslot{border-color:{line}}' +
       '& .pitmove{background:linear-gradient(155deg,{hover},{bgCore});border-color:{line};color:{heading}}' +
       '& .pitmove:hover:not(:disabled){border-color:{textDim}}' +
       '& .pitclock{color:{textDim}}' +

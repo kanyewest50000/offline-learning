@@ -1780,6 +1780,11 @@ type PokerState = {
   board: string[];
   seats: PokerSeat[];
   toAct: number;      // seat index, or -1 between hands
+  // Where the search for the next player to act begins, inclusive. Kept as its
+  // own field rather than derived from toAct: after a deal the first to speak
+  // is a specific seat and must not be stepped over, while after an action it
+  // is the seat along — one rule, two very different starting points.
+  from: number;
   call: number;       // the amount to match this street
   minRaise: number;   // smallest legal raise on top of it
   log: string[];
@@ -1960,9 +1965,12 @@ function pokerNewHand(ps: PokerState, names: string[]): void {
   pokerPut(ps.seats[bbSeat], bb);
   ps.call = bb;
   ps.minRaise = bb;
-  // first to speak is the seat after the big blind — which heads-up wraps back
-  // round to the button
-  ps.toAct = pokerFrom(ps, bbSeat).find((i) => !ps.seats[i].folded && !ps.seats[i].allIn) ?? -1;
+  // First to speak is the seat after the big blind, which heads-up wraps back
+  // round to the button — so the button is the small blind AND acts first
+  // before the flop, then last after it. pokerStep() picks the actual player
+  // up from here, skipping anyone the blinds already put all in.
+  ps.toAct = -1;
+  ps.from = (bbSeat + 1) % ps.seats.length;
   ps.note = "hand " + ps.hand + " — blinds " + sb + "/" + bb;
   ps.log = (ps.log || []).concat([
     "hand " + ps.hand + ": " + names[sbSeat] + " posts " + sb + ", " + names[bbSeat] + " posts " + bb,
@@ -2092,11 +2100,12 @@ function pokerDeadline(ps: PokerState): number {
 // Whose turn it is, searching from whoever went last. A player still owing
 // chips is asked again even if they have already spoken this street, which is
 // what makes a raise come back round.
-function pokerNextActor(ps: PokerState): number {
-  const start = ps.toAct >= 0 ? ps.toAct : ps.button;
-  for (const i of pokerFrom(ps, start)) {
+function pokerNextActor(ps: PokerState, from: number): number {
+  const n = ps.seats.length;
+  for (let k = 0; k < n; k++) {
+    const i = ((from % n) + n + k) % n;
     const s = ps.seats[i];
-    if (s.folded || s.allIn || s.out) continue;
+    if (s.out || s.folded || s.allIn) continue;
     if (!s.acted || s.inStreet !== ps.call) return i;
   }
   return -1;
@@ -2109,9 +2118,10 @@ function pokerStep(ps: PokerState, names: string[]): void {
   for (let guard = 0; guard < 64; guard++) {
     if (ps.next > 0) return;   // a finished hand is on the table; it deals on its own clock
     if (!pokerStreetClosed(ps)) {
-      const nxt = pokerNextActor(ps);
+      const nxt = pokerNextActor(ps, ps.from);
       if (nxt >= 0) { ps.toAct = nxt; return; }
     }
+    ps.toAct = -1;
     if (pokerLive(ps).length <= 1 || ps.street >= 3) {
       pokerFinishHand(ps, names);
       return;
@@ -2119,7 +2129,9 @@ function pokerStep(ps: PokerState, names: string[]): void {
     pokerCollect(ps);
     ps.street += 1;
     pokerBoard(ps);
-    ps.toAct = ps.button;   // so the next search begins left of the button
+    // after the flop the first to speak is the seat left of the button, every
+    // street, heads-up included — which is the reverse of before it
+    ps.from = (ps.button + 1) % ps.seats.length;
   }
 }
 
@@ -2169,6 +2181,8 @@ function pokerApply(ps: PokerState, i: number, action: string, amount: number, n
   } else {
     return "no such move";
   }
+  // they have spoken, so the search moves along one
+  ps.from = (i + 1) % ps.seats.length;
   pokerStep(ps, names);
   return null;
 }
@@ -2191,7 +2205,7 @@ function pokerStart(people: DuelSide[]): PokerState {
       chips: POKER_STACK, inStreet: 0, inHand: 0, cards: [],
       folded: false, allIn: false, out: false, acted: false,
     })),
-    toAct: -1, call: 0, minRaise: 0, log: [], show: null, note: "", next: 0,
+    toAct: -1, from: 0, call: 0, minRaise: 0, log: [], show: null, note: "", next: 0,
   };
   pokerNewHand(ps, people.map((p) => p.name));
   pokerStep(ps, people.map((p) => p.name));

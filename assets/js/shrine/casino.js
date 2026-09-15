@@ -102,12 +102,22 @@
     s.appendChild(sv("path",{d:"M12 8.2V12l2.7 1.7",fill:"none",stroke:"currentColor","stroke-width":"1.7","stroke-linecap":"round","stroke-linejoin":"round"}));
     return s;
   }
+  /* two cards held at an angle — the one shape that reads as poker at 26px and
+     is not already the ace the casino button wears */
+  function icoPoker(){
+    var s=sv("svg",{viewBox:"0 0 24 24",width:"26",height:"26","aria-hidden":"true"});
+    s.appendChild(sv("rect",{x:"4.2",y:"5.6",width:"9",height:"12.6",rx:"1.8",fill:"currentColor","fill-opacity":".14",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(-13 8.7 11.9)"}));
+    s.appendChild(sv("rect",{x:"10.8",y:"5.6",width:"9",height:"12.6",rx:"1.8",fill:"currentColor","fill-opacity":".22",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(11 15.3 11.9)"}));
+    s.appendChild(sv("path",{d:"M15.3 9.4c-.9.9-2.2 2-2.2 3.1a1.5 1.5 0 0 0 2.2 1.2 1.5 1.5 0 0 0 2.2-1.2c0-1.1-1.3-2.2-2.2-3.1z",fill:"currentColor"}));
+    return s;
+  }
   function gameIcon(id){
     if(id==="plinko")return icoPlinko();
     if(id==="blackjack")return icoBlackjack();
     if(id==="pit-tung")return icoPitTung();
     if(id==="pit-cut")return icoCut();
     if(id==="pit-comp")return icoComp();
+    if(id==="pit-poker")return icoPoker();
     return el("span",null,{roulette:"◉",mines:"💣",beef:"🐄",limbo:"📈",dice:"🎲"}[id]||"");
   }
   function money(n){return (Math.round(Number(n)*100)/100).toFixed(2);}
@@ -719,7 +729,7 @@
     // the pit first: the tables where the opponent is a person, not the house
     w.appendChild(el("div","seclabel","the pit — player against player"));
     var pit=el("div","casmenu pit");
-    [["Tung, Wood, Fire","pit-tung"],["The Cut","pit-cut"],["Competitive Gambling","pit-comp"]].forEach(function(g){
+    [["Tung, Wood, Fire","pit-tung"],["The Cut","pit-cut"],["Competitive Gambling","pit-comp"],["Poker","pit-poker"]].forEach(function(g){
       var b=el("button","casgame pvp");
       var ci=el("div","ci");ci.appendChild(gameIcon(g[1]));
       b.appendChild(ci);
@@ -1850,7 +1860,10 @@
       sub:"nothing to play. the deck is cut the moment everyone at the table says yes. a tie is re-cut."},
     comp:{name:"Competitive Gambling",moves:[],
       blurb:"three minutes on the floor. a stack of wood each. the biggest pile at the buzzer takes the pot.",
-      sub:"two, three or four of you, the whole floor, played in wood. it is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends, while your sahurs sit in the pot the whole time. run the wood out with nothing left on a table and you are done, and the round ends the moment there is nobody left to play against. finish level at the top and the pot is split."}
+      sub:"two, three or four of you, the whole floor, played in wood. it is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends, while your sahurs sit in the pot the whole time. run the wood out with nothing left on a table and you are done, and the round ends the moment there is nobody left to play against. finish level at the top and the pot is split."},
+    poker:{name:"Poker",moves:[],
+      blurb:"everyone buys in for the same stake. everyone gets the same chips. it ends when one of you has all of them.",
+      sub:"two to five seats, no limit hold'em. the chips are dealt by the table and are worth nothing off it \u2014 your sahurs sit in the pot the whole time and go to whoever is last standing. the blinds go up every three minutes and do not stop going up, so it finishes."}
   };
   function pitStop(){
     if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;}
@@ -1898,6 +1911,151 @@
   }
   function moveName(m){return m==="tung"?"tung":(m==="wood"?"wood":"fire");}
 
+  /* ---- the poker table ----
+     Everything here is the server's. The client paints what it was sent and
+     sends back one of four words; it never decides a winner, a pot or whose
+     turn it is, so editing any of it from devtools changes what you are
+     looking at and nothing about the game. Hole cards it was not sent are
+     drawn face down because they genuinely are not here. */
+  function chips(n){
+    n=Math.round(Number(n)||0);
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g,",");
+  }
+  function pokerTable(body,d,note){
+    var p=d.poker;
+    if(!p){body.appendChild(el("p","pitsub","dealing…"));return;}
+
+    /* the blinds, and how long they stay these blinds */
+    var head=el("div","pkhead");
+    head.appendChild(el("span","pkblind",chips(p.blinds[0])+" / "+chips(p.blinds[1])));
+    head.appendChild(el("span","pklvl","level "+p.level+" of "+p.levels));
+    if(p.nextLevel>0)head.appendChild(el("span","pkup","up in "+pitClockText(Math.max(0,p.nextLevel-p.now))));
+    head.appendChild(el("span","pkhand","hand "+p.hand));
+    body.appendChild(head);
+
+    /* the board, with the cards still to come left as empty slots so the row
+       does not jump width as they arrive */
+    var board=el("div","pkboard");
+    for(var i=0;i<5;i++){
+      if(i<p.board.length)board.appendChild(cardEl(p.board[i]));
+      else board.appendChild(el("div","pcard pkslot"));
+    }
+    body.appendChild(board);
+    body.appendChild(el("div","pkpot",chips(p.pot)+" in the pot"));
+
+    var seats=el("div","pkseats");
+    p.seats.forEach(function(s,i){
+      var cls="pkseat";
+      if(s.you)cls+=" you";
+      if(s.out)cls+=" out";
+      else if(s.folded)cls+=" folded";
+      if(i===p.toAct&&!p.showing)cls+=" turn";
+      var box=el("div",cls);
+      var top=el("div","pkname");
+      top.appendChild(el("span","pkwho",s.name+(s.you?" (you)":"")));
+      if(i===p.button)top.appendChild(el("span","pkdealer","D"));
+      box.appendChild(top);
+      var hole=el("div","pkhole");
+      if(!s.out){
+        if(s.cards&&s.cards.length)s.cards.forEach(function(c){hole.appendChild(cardEl(c));});
+        else for(var k=0;k<(s.held||0);k++)hole.appendChild(cardEl("??"));
+      }
+      box.appendChild(hole);
+      box.appendChild(el("div","pkstack",s.out?"out":chips(s.chips)));
+      var tag="";
+      if(s.out)tag="";
+      else if(s.allIn)tag="all in";
+      else if(s.folded)tag="folded";
+      else if(s.inStreet>0)tag=chips(s.inStreet);
+      box.appendChild(el("div","pkbet",tag));
+      seats.appendChild(box);
+    });
+    body.appendChild(seats);
+
+    /* what just happened, while it is still up */
+    if(p.showing){
+      body.appendChild(el("p","pitsay",p.note||""));
+      if(p.show&&p.show.length){
+        var sd=el("div","pkshow");
+        p.show.forEach(function(x){
+          var r=el("div","pkshowrow"+(x.won>0?" won":""));
+          r.appendChild(el("span","pkshowname",x.name));
+          var cc=el("span","pkshowcards");
+          x.cards.forEach(function(c){cc.appendChild(cardEl(c));});
+          r.appendChild(cc);
+          r.appendChild(el("span","pkshowhand",x.hand+(x.won>0?" — takes "+chips(x.won):"")));
+          sd.appendChild(r);
+        });
+        body.appendChild(sd);
+      }
+      body.appendChild(el("p","pitsub","next hand in a moment."));
+    }else if(p.yourSeat<0||(p.seats[p.yourSeat]&&p.seats[p.yourSeat].out)){
+      body.appendChild(el("p","pitsay","you are out."));
+      body.appendChild(el("p","pitsub","the table plays on without you. the pot is settled when somebody has every chip."));
+    }else if(p.yourTurn){
+      var acts=el("div","pkacts");
+      var fire=function(action,amount){
+        Array.prototype.forEach.call(acts.querySelectorAll("button"),function(x){x.disabled=true;});
+        pitSend("/duel/poker",{id:d.id,action:action,amount:amount||0},function(e){
+          Array.prototype.forEach.call(acts.querySelectorAll("button"),function(x){x.disabled=false;});
+          bad(note,e==="not your turn"?"somebody got there first.":(e||"that did not land."));
+        });
+      };
+      var fold=el("button","cbtn","fold");
+      fold.onclick=function(){fire("fold");};
+      acts.appendChild(fold);
+      if(p.canCheck){
+        var ck=el("button","cbtn go","check");
+        ck.onclick=function(){fire("check");};
+        acts.appendChild(ck);
+      }else{
+        var cl=el("button","cbtn go","call "+chips(Math.min(p.toCall,p.maxTo)));
+        cl.onclick=function(){fire("call");};
+        acts.appendChild(cl);
+      }
+      body.appendChild(acts);
+      /* a raise is only offered when there is something left to raise with —
+         a stack that can do no more than call is all in or nothing */
+      if(p.maxTo>p.call){
+        var rrow=el("div","pkraise");
+        var amt=el("input","pkamt");
+        amt.type="number";amt.min=String(p.raiseTo);amt.max=String(p.maxTo);amt.step="1";amt.value=String(p.raiseTo);
+        var go=el("button","cbtn","raise to");
+        go.onclick=function(){
+          var n=Math.floor(Number(amt.value));
+          if(!(n>=p.raiseTo)){bad(note,"raise to at least "+chips(p.raiseTo)+".");return;}
+          Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=true;});
+          pitSend("/duel/poker",{id:d.id,action:"raise",amount:n},function(e){
+            Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=false;});
+            bad(note,e||"that did not land.");
+          });
+        };
+        var shove=el("button","cbtn","all in "+chips(p.maxTo));
+        shove.onclick=function(){
+          Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=true;});
+          pitSend("/duel/poker",{id:d.id,action:"allin",amount:0},function(e){
+            Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=false;});
+            bad(note,e||"that did not land.");
+          });
+        };
+        rrow.appendChild(go);rrow.appendChild(amt);rrow.appendChild(shove);
+        body.appendChild(rrow);
+      }
+      body.appendChild(el("p","pitsub",p.toCall>0
+        ?("there is "+chips(p.toCall)+" to you. say nothing for long enough and it folds for you.")
+        :"it is on you. say nothing for long enough and it checks for you."));
+    }else{
+      var w=p.seats[p.toAct];
+      body.appendChild(el("p","pitsub","waiting on "+(w?w.name:"the table")+"."));
+    }
+
+    if(p.log&&p.log.length){
+      var lg=el("div","pklog");
+      p.log.slice(-6).forEach(function(line){lg.appendChild(el("div","pklogline",line));});
+      body.appendChild(lg);
+    }
+  }
+
   /* ---- the pit lobby: who is waiting, and a form to wait yourself ---- */
   function viewPit(game){
     var cfg=PIT_GAMES[game]||PIT_GAMES.tung;
@@ -1909,7 +2067,10 @@
     var bet=betField("1");
     /* the two games that can seat more than two. tung, wood, fire is a hand
        against ONE opponent, so it never offers the choice. */
-    var seatsSel=(game==="cut"||game==="comp")?selectOf([["2","2"],["3","3"],["4","4"]],"2"):null;
+    /* poker goes to five, because five-handed is what a home game means */
+    var seatsSel=(game==="cut"||game==="comp")
+      ?selectOf([["2","2"],["3","3"],["4","4"]],"2")
+      :(game==="poker"?selectOf([["2","2 — heads up"],["3","3"],["4","4"],["5","5"]],"2"):null);
     var open=el("button","cbtn go","put up a table");
     var row=el("div","ctlrow");
     row.appendChild(ctl("stake",bet));
@@ -1924,7 +2085,9 @@
       ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, it does not fill within 10 minutes, or anyone does not confirm."
       :(game==="comp"
         ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, it does not fill within 10 minutes, or anyone does not confirm. the wood inside the round is worth nothing outside it \u2014 the stakes are the only sahurs on the table."
-        :"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm.")));
+        :(game==="poker"
+          ?"your stake is held the moment you sit down, and comes straight back if the table is cancelled, it does not fill within 10 minutes, or anyone does not confirm. once it deals, it is played out \u2014 the buy-ins go to whoever ends up with every chip."
+          :"your stake is held the moment you sit down, and comes straight back if the table is cancelled, nobody joins within 10 minutes, or either of you does not confirm."))));
 
     open.onclick=function(){
       open.disabled=true;r.className="casres";r.textContent="";
@@ -2032,7 +2195,19 @@
     }
     var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
     var who=(d.players||[]).map(function(p){return p.name+":"+(p.confirmed?"1":"0")+(p.bot?":t":"");}).join(",");
-    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,d.tungs,who].join("|");
+    /* A poker table changes under every one of those keys and none of them:
+       same state, same round, same everybody — and a different pot, board and
+       player to act. So it carries its own fingerprint, covering exactly what
+       is drawn. The act clock is deliberately NOT in it: a countdown must not
+       rebuild the screen, or the buttons move out from under the hand reaching
+       for them, which is the whole reason this gate exists. */
+    var pk=d.poker;
+    var pkShape=pk?[pk.hand,pk.street,pk.toAct,pk.pot,pk.call,pk.level,pk.showing?1:0,
+      (pk.board||[]).join(""),(pk.yourCards||[]).join(""),
+      (pk.seats||[]).map(function(s){
+        return s.chips+"."+s.inStreet+"."+(s.folded?1:0)+(s.allIn?1:0)+(s.out?1:0)+"."+(s.cards||[]).join("");
+      }).join(",")].join("~"):"";
+    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,d.tungs,who,pkShape].join("|");
     if(shape===PIT.shape){pitPaintClock();return;}
     PIT.shape=shape;
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
@@ -2133,6 +2308,9 @@
       if(d.game==="comp"){
         body.appendChild(el("p","pitsub","say yes and everyone at the table is handed "+money(d.stack)+" wood and three minutes to do something with it. the biggest pile at the buzzer takes the pot; level at the top and it is split."));
       }
+      if(d.game==="poker"){
+        body.appendChild(el("p","pitsub","say yes and everyone is dealt a stack and the first hand goes out. it runs until one of you has every chip — the blinds climb the whole way, so that will happen."));
+      }
       body.appendChild(el("p","pitsub",many
         ?"if anyone does not confirm, every stake comes straight back."
         :"if either of you does not confirm, both stakes come straight back."));
@@ -2149,6 +2327,8 @@
       body.appendChild(floorMenu("comp"));
       body.appendChild(el("p","pitsub","the whole floor, and the round follows you onto whatever you pick. a hand still open when the clock stops is a stake you paid and never played, so finish what you start \u2014 and while one is still open you are not out, however empty the stack reads."+
         (many2(d)?" run the wood out here and you are done, but the round plays on while two of you still have something.":"")));
+    }else if(d.state==="live"&&d.game==="poker"){
+      pokerTable(body,d,note);
     }else if(d.state==="live"){
       var score=el("div","pitscore");
       score.appendChild(el("span","sv",String(d.yourWins)));

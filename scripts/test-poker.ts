@@ -332,6 +332,45 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
   console.log("  refusals: out of turn, not your table, checking into a bet, short raise, invented move");
 }
 
+// ---------------------------------------------------------------------------
+// who speaks first. Heads-up is the case every poker engine gets wrong once:
+// the button posts the small blind and acts FIRST before the flop, then LAST
+// on every street after it. Getting this backwards is not cosmetic — it hands
+// position to the wrong player for the whole tournament.
+{
+  const a = await member("pko", 50), b = await member("pko", 50);
+  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN, seats: 2 });
+  const id = made.duel.id;
+  await post("/duel/join", { token: b.token, id });
+  await post("/duel/confirm", { token: a.token, id });
+  await post("/duel/confirm", { token: b.token, id });
+
+  const look = async () => (await call("/duel/state?token=" + a.token + "&id=" + id)).duel.poker;
+  let p = await look();
+  const players = [a, b];
+
+  must(p.toAct === p.button,
+    `heads-up preflop the button acts first: button ${p.button}, to act ${p.toAct}`);
+  // the button is also the small blind, so it has the smaller amount out
+  const sb = p.seats[p.button], bb = p.seats[1 - p.button];
+  must(sb.inStreet < bb.inStreet,
+    `the heads-up button posts the small blind: ${sb.inStreet} vs ${bb.inStreet}`);
+  must(sb.inStreet === p.blinds[0] && bb.inStreet === p.blinds[1],
+    `the blinds must be posted as ${p.blinds.join("/")}, got ${sb.inStreet}/${bb.inStreet}`);
+
+  // walk it to a flop: the button calls, the big blind checks
+  await post("/duel/poker", { token: players[p.toAct].token, id, action: "call", amount: 0 });
+  p = await look();
+  must(p.street === 0, "calling the small blind must not end the street — the big blind still has an option");
+  await post("/duel/poker", { token: players[p.toAct].token, id, action: "check", amount: 0 });
+  p = await look();
+  must(p.street === 1, "a call and a check must bring the flop, got street " + p.street);
+  must(p.board.length === 3, "a flop is three cards, got " + p.board.length);
+  must(p.toAct === 1 - p.button,
+    `after the flop the button acts LAST heads-up: button ${p.button}, to act ${p.toAct}`);
+  console.log("  order: heads-up button acts first preflop and last after it, blinds posted correctly");
+}
+
 console.log("tournaments:");
 const seen: Seen = { showdowns: 0, rivers: 0, sidePots: 0, raises: 0 };
 for (const seats of [2, 3, 4, 5]) await tournament(seats, "wild", seen);

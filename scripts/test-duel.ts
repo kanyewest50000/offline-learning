@@ -77,8 +77,16 @@ must(/const field = among && among\.length \? among : people;/.test(src),
   "an empty field must fall back to the whole table, not settle a pot onto nobody");
 must(/const theirs = await stakesOpen\(other\.id, duelId\);[\s\S]{0,120}guard\.push\(\.\.\.theirs\.guard\);/.test(src),
   "deciding who is still standing must guard on the tables it read, or a hand dealt mid-decision is ignored");
-must(/const MULTI_SEAT = new Set\(\["cut", "comp"\]\);/.test(src),
-  "the cut and competitive gambling are the games that seat more than two");
+// Which games can wait for a third chair. Read as a set rather than matched as
+// a literal line, so adding a game to the pit updates one place instead of two
+// — what actually matters is that Tung, Wood, Fire is never in it.
+const multiSeat = (src.match(/const MULTI_SEAT = new Set\(\[([^\]]*)\]\);/) || [])[1] || "";
+must(multiSeat.length > 0, "could not find MULTI_SEAT");
+for (const g of ["cut", "comp", "poker"]) {
+  must(multiSeat.indexOf('"' + g + '"') >= 0, g + " must be able to seat more than two: " + multiSeat);
+}
+must(multiSeat.indexOf('"tung"') < 0,
+  "tung, wood, fire is a hand against ONE opponent — its rounds, score and forfeit rule are written for two, so it must never seat more");
 must(/if \(retire\) op = op\.check\(retire\.entry\)\.delete\(retire\.key\);/.test(src),
   "a game record and the wood it pays must be retired in one commit, or a hand could cash out twice");
 // every release of the escrow has to ride the same guarded commit

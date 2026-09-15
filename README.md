@@ -99,7 +99,7 @@ the casino and the originals but no catalog tabs.
 
 ## the pit
 
-Three tables in the casino where the opponent is another member rather than the
+Four tables in the casino where the opponent is another member rather than the
 house: **Tung, Wood, Fire** (tung splits the wood, the wood feeds the fire, the
 fire takes tung — first to two rounds, a tie is replayed), **The Cut** (one
 card each, high card takes it) and **Competitive Gambling** (three minutes on
@@ -131,10 +131,11 @@ clothes, and it changes exactly one thing, which is the money. His stake is the
 house's, so the pot pays the house's 0.1% edge, the same as the wheel. Between
 players there is no rake and never will be. The table says which it is.
 
-The Cut and Competitive Gambling both seat two, three or four; Tung, Wood, Fire
-is a hand against one opponent — its rounds, its score and its forfeit rule are
-all written for a pair — so it stays two however many a client asks for. A table
-waits, and can still be taken down, until its last chair is filled.
+The Cut and Competitive Gambling both seat two, three or four, and poker goes to
+five; Tung, Wood, Fire is a hand against one opponent — its rounds, its score
+and its forfeit rule are all written for a pair — so it stays two however many a
+client asks for. A table waits, and can still be taken down, until its last
+chair is filled.
 
 Finishing level at the top is not a void: the players on the biggest pile split
 what is on the table. Each share is the gap between two floored running totals,
@@ -225,6 +226,43 @@ settles an overdue one first, and the lobby sweeps abandoned tables — so a sta
 always finds its way home even if the host never reopens the page.
 `scripts/test-duel.ts` walks every exit and counts the money after each, with a
 dozen readers racing the same expiry.
+
+### poker
+
+The fourth table, and the only one that does not resolve in a single stroke.
+Two to five seats, no limit hold'em: everyone buys in for the same stake, is
+handed a thousand chips, and plays until one of them holds all of them. The
+buy-ins are escrowed by the same create-and-join every other table uses and are
+released to the last player standing by the same `commitDuel()`, so nothing new
+touches anybody's balance.
+
+The chips are the wood again under another name — dealt by the table, moved
+around inside it, gone when it ends. What makes them different is that they have
+to survive dozens of hands, so the whole tournament is carried on the duel
+record and moves with the same atomic commit the escrow rides.
+
+The blinds are what make it end. They step up every three minutes and are
+250/500 at eighteen, then keep going to 1000/2000 — at which point a starting
+stack is half a big blind and the hands play themselves. Without that, a
+tournament nobody is winning would sit in the pit all night holding five
+people's sahurs.
+
+Hole cards are hidden the way a move in Tung, Wood, Fire is hidden: you are sent
+your own two and nobody else's, and the rest of the table arrives as a count of
+face-down cards rather than as cards. A showdown is the only thing that turns
+them over, and the finished hand then stays up for a few seconds before the next
+is dealt — otherwise paying the pot, busting the empty and dealing again all
+happen in one pass, and the cards that won are cleared before anyone can see
+them.
+
+Nothing runs on a timer here either. A player who says nothing checks if it is
+free and folds if it is not, and the next hand deals itself, both off the same
+lazy deadline every other table uses. `scripts/test-poker.ts` plays 2-, 3-, 4-
+and 5-handed tournaments out over the wire and counts the chips on every look at
+the table: what is in the stacks plus what is in the pot has to equal what was
+dealt, through every side pot an all-in cuts. It also asserts a run actually
+reached a showdown, because one that never does has proved nothing about the
+hand rankings however green it looks.
 
 ## working on it
 
