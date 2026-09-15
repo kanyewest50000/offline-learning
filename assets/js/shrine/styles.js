@@ -471,25 +471,52 @@
       '.pkblind{font-size:17px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
       '.pklvl,.pkhand{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}' +
       '.pkup{font-size:11px;color:#c8823c;font-variant-numeric:tabular-nums}' +
-      '.pkboard{display:flex;justify-content:center;gap:7px;flex-wrap:wrap}' +
-      '.pkboard .pcard{width:62px;height:88px}' +
-      '.pkboard .pcface{font-size:21px;border-radius:9px}' +
-      '.pkslot{width:62px;height:88px;border:1px dashed #3a2410;border-radius:9px;opacity:.45}' +
-      '.pkpot{text-align:center;font-size:14px;font-weight:700;color:#f2c063;font-variant-numeric:tabular-nums}' +
-      '.pkseats{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;width:100%}' +
-      '.pkseat{flex:0 1 128px;min-width:108px;background:#241505;border:1px solid #3a2410;border-radius:12px;padding:8px 6px;text-align:center}' +
-      '.pkseat.you{border-color:#c8823c}' +
-      '.pkseat.turn{border-color:#f2c063;box-shadow:0 0 0 2px #f2c06340}' +
-      '.pkseat.folded{opacity:.5}' +
-      '.pkseat.out{opacity:.3}' +
-      '.pkname{display:flex;align-items:center;justify-content:center;gap:5px;font-size:12px;font-weight:700;color:#f5efe0}' +
-      '.pkwho{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:84px}' +
-      '.pkdealer{flex:0 0 auto;width:16px;height:16px;border-radius:50%;background:#c8823c;color:#1d1206;font-size:10px;font-weight:800;line-height:16px}' +
-      '.pkhole{display:flex;justify-content:center;gap:4px;margin:6px 0;min-height:56px}' +
-      '.pkhole .pcard{width:40px;height:56px}' +
-      '.pkhole .pcface{font-size:15px;border-radius:7px}' +
-      '.pkstack{font-size:15px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
-      '.pkbet{font-size:11px;color:#c8823c;min-height:15px;font-variant-numeric:tabular-nums}' +
+      /* the table itself: an oval of felt inside a wooden rail, with the seats
+         set around its rim by angle rather than laid out in a row. The player
+         looking at it is always at the bottom. */
+      '.pkstage{position:relative;width:100%;max-width:470px;aspect-ratio:1/1.06;margin:0 auto}' +
+      '.pkfelt{position:absolute;left:5%;right:5%;top:15%;bottom:15%;border-radius:50%;' +
+      'background:radial-gradient(120% 120% at 50% 32%,#2f5d3f 0%,#23472f 45%,#183121 100%);' +
+      'border:7px solid #3a2410;box-shadow:inset 0 0 26px #0009,0 10px 26px #0007,0 0 0 2px #241505}' +
+      '.pkmid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;z-index:1}' +
+      '.pkboard{display:flex;justify-content:center;gap:clamp(3px,1.1vw,5px)}' +
+      '.pkboard .pcard{width:clamp(25px,7.2vw,34px);height:clamp(35px,10.1vw,48px)}' +
+      '.pkboard .pcface{font-size:clamp(10px,2.9vw,14px);border-radius:4px;box-shadow:0 3px 8px #0007}' +
+      '.pkslot{width:clamp(25px,7.2vw,34px);height:clamp(35px,10.1vw,48px);border:1px dashed #ffffff26;border-radius:5px;background:#ffffff08}' +
+      '.pkpot{font-size:clamp(15px,4.4vw,20px);font-weight:800;color:#f7e6b8;font-variant-numeric:tabular-nums;text-shadow:0 2px 4px #0009;line-height:1}' +
+      '.pkpotlab{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#ffffff66}' +
+      /* a seat straddles the rim, its cards above its name plate */
+      '.pkseat{position:absolute;transform:translate(-50%,-50%);width:clamp(62px,17.5vw,82px);' +
+      'display:flex;flex-direction:column;align-items:center;gap:3px;z-index:2}' +
+      '.pkseat.folded{opacity:.42}' +
+      '.pkseat.out{opacity:.26}' +
+      '.pkplate{width:100%;background:#241505;border:1px solid #3a2410;border-radius:9px;padding:4px 5px;text-align:center;box-shadow:0 3px 9px #0007}' +
+      '.pkseat.you .pkplate{border-color:#c8823c}' +
+      '.pkseat.turn .pkplate{border-color:#f2c063;box-shadow:0 0 0 2px #f2c06355,0 3px 9px #0007}' +
+      '.pkname{display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;font-weight:700;color:#f5efe0;line-height:1.2}' +
+      '.pkwho{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:58px}' +
+      '.pkdealer{flex:0 0 auto;width:14px;height:14px;border-radius:50%;background:#c8823c;color:#1d1206;font-size:9px;font-weight:800;line-height:14px}' +
+      '.pkstack{font-size:13px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums;line-height:1.3}' +
+      '.pktag{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c8823c}' +
+      '.pkmade{font-size:10px;font-weight:700;color:#c8823c;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.pkhole{display:flex;justify-content:center;gap:3px;min-height:1px}' +
+      '.pkhole .pcard{width:clamp(22px,6.4vw,30px);height:clamp(31px,9vw,42px)}' +
+      '.pkhole .pcface{font-size:clamp(9px,2.6vw,13px);border-radius:4px;box-shadow:0 2px 6px #0008}' +
+      /* your own two are dealt bigger, the way they are on every table */
+      '.pkseat.you .pkhole .pcard{width:clamp(30px,8.6vw,40px);height:clamp(42px,12vw,56px)}' +
+      '.pkseat.you .pkhole .pcface{font-size:clamp(12px,3.4vw,17px);border-radius:5px}' +
+      '.pkseat.you{width:clamp(78px,23vw,104px)}' +
+      '.pkseat.you .pkwho{max-width:74px}' +
+      /* what somebody has pushed out this street, between them and the pot */
+      '.pkchip{position:absolute;transform:translate(-50%,-50%);z-index:1;' +
+      'font-size:9px;font-weight:800;font-variant-numeric:tabular-nums;color:#1d1206;' +
+      'background:#e8c07a;border:2px solid #b8873c;border-radius:999px;padding:1px 5px;box-shadow:0 2px 6px #0008}' +
+      /* a card only performs its deal once; after that it is simply there */
+      '.pcard.still .pcinner{animation:none}' +
+      '.pcard.still .pcfront{animation:none;opacity:1}' +
+      '.pcard.still .pcback{animation:none;opacity:0}' +
+      '.pcard.still.hole .pcfront{opacity:0}' +
+      '.pcard.still.hole .pcback{opacity:1}' +
       '.pkacts{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}' +
       '.pkacts .cbtn{min-width:118px}' +
       '.pkraise{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;align-items:center}' +
@@ -800,16 +827,22 @@
       '& .brokebar h4{color:{text}}' +
       '& .brokebar p,& .pitrow p{color:{muted}}' +
       '& .pitblurb,& .pitpot,& .pitscore .sv,& .pitrow .price{color:{heading}}' +
-      /* the poker table, in whatever skin is on */
-      '& .pkseat,& .pkshowrow{background:{raised};border-color:{line}}' +
-      '& .pkseat.you,& .pkseat.turn,& .pkshowrow.won{border-color:{lineHot}}' +
-      '& .pkseat.turn{box-shadow:0 0 0 2px {lineHotA33}}' +
+      /* the poker table, in whatever skin is on. The wood's felt is green
+         because a wooden rail round green baize is what a table looks like;
+         every other skin repaints it in its own deep tone rather than keeping
+         a green that would belong to nothing else on the screen. */
+      '& .pkfelt{background:radial-gradient(120% 120% at 50% 32%,{raisedHi} 0%,{sunk} 45%,{bgSunk} 100%);' +
+      'border-color:{line};box-shadow:inset 0 0 26px {shadowHard},0 10px 26px {shadow},0 0 0 2px {bgEdge}}' +
+      '& .pkplate,& .pkshowrow{background:{raised};border-color:{line}}' +
+      '& .pkseat.you .pkplate,& .pkshowrow.won{border-color:{lineHot}}' +
+      '& .pkseat.turn .pkplate{border-color:{lineHot};box-shadow:0 0 0 2px {lineHotA33},0 3px 9px {shadow}}' +
       '& .pkname,& .pkshowname{color:{text}}' +
       '& .pkdealer{background:{lineHot};color:{solidInk}}' +
-      '& .pkblind,& .pkstack,& .pkpot{color:{heading}}' +
+      '& .pkblind,& .pkstack{color:{heading}}' +
+      '& .pkpot{color:{text}}' +
       '& .pkhead,& .pklogline{color:{muted}}' +
-      '& .pkup,& .pkbet,& .pkshowhand{color:{textDim}}' +
-      '& .pkslot{border-color:{line}}' +
+      '& .pkup,& .pktag,& .pkmade,& .pkshowhand{color:{textDim}}' +
+      '& .pkchip{background:{lineHot};border-color:{lineMid};color:{solidInk}}' +
       '& .pitmove{background:linear-gradient(155deg,{hover},{bgCore});border-color:{line};color:{heading}}' +
       '& .pitmove:hover:not(:disabled){border-color:{textDim}}' +
       '& .pitclock{color:{textDim}}' +

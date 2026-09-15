@@ -2247,6 +2247,13 @@ function pokerView(d: Duel, uid: string | null) {
     raiseTo: mySeat ? Math.min(ps.call + ps.minRaise, mySeat.inStreet + mySeat.chips) : 0,
     maxTo: mySeat ? mySeat.inStreet + mySeat.chips : 0,
     canCheck: !!mySeat && owe === 0,
+    // What this player is currently holding, named. It tells them nothing they
+    // could not work out from the cards they were already sent — their own two
+    // and the board — so it gives away nothing, and it saves reading a flush
+    // wrong at the one moment that costs money.
+    yourHand: mySeat && !mySeat.out && mySeat.cards.length
+      ? POKER_NAMES[pokerScore(mySeat.cards.concat(ps.board))[0]]
+      : null,
     seats: people.map((p, i) => ({
       name: p.name,
       you: !!uid && p.id === uid,

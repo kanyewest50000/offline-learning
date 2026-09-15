@@ -102,13 +102,17 @@
     s.appendChild(sv("path",{d:"M12 8.2V12l2.7 1.7",fill:"none",stroke:"currentColor","stroke-width":"1.7","stroke-linecap":"round","stroke-linejoin":"round"}));
     return s;
   }
-  /* two cards held at an angle — the one shape that reads as poker at 26px and
-     is not already the ace the casino button wears */
+  /* Two cards held at an angle, and they do NOT overlap. A fan looks right at
+     120px and turns to mud at 26, which is the only size this is ever drawn:
+     two translucent cards crossing each other put four strokes through the
+     same few pixels and the shape closes up into a blob. So the back card is
+     kicked out to the left instead of sitting under the front one — still a
+     hand being held, still legible when it is nine pixels wide. A pip was
+     tried too and is a smudge at this size, so there isn't one. */
   function icoPoker(){
     var s=sv("svg",{viewBox:"0 0 24 24",width:"26",height:"26","aria-hidden":"true"});
-    s.appendChild(sv("rect",{x:"4.2",y:"5.6",width:"9",height:"12.6",rx:"1.8",fill:"currentColor","fill-opacity":".14",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(-13 8.7 11.9)"}));
-    s.appendChild(sv("rect",{x:"10.8",y:"5.6",width:"9",height:"12.6",rx:"1.8",fill:"currentColor","fill-opacity":".22",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(11 15.3 11.9)"}));
-    s.appendChild(sv("path",{d:"M15.3 9.4c-.9.9-2.2 2-2.2 3.1a1.5 1.5 0 0 0 2.2 1.2 1.5 1.5 0 0 0 2.2-1.2c0-1.1-1.3-2.2-2.2-3.1z",fill:"currentColor"}));
+    s.appendChild(sv("rect",{x:"1.8",y:"5",width:"8.8",height:"13.6",rx:"2",fill:"currentColor","fill-opacity":".15",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(-24 12 20)"}));
+    s.appendChild(sv("rect",{x:"12.6",y:"4.4",width:"9.2",height:"14.2",rx:"2",fill:"currentColor","fill-opacity":".15",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(7 12 20)"}));
     return s;
   }
   function gameIcon(id){
@@ -1836,7 +1840,7 @@
      (pitTick), both owned by PIT and both torn down by clearTimer(), which every
      navigation already calls. */
   var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null,reveal:[],
-    busy:false,pending:null,roundsSeen:null,last:null,chips:null};
+    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null};
   /* the clash: the beat between a round resolving and the next one starting */
   var CL_IN_MS=520, CL_HIT_MS=600, CL_SAY_MS=1000, CL_HOLD_MS=2050;
   /* How a cut is dealt. There is nothing to play in this game — both cards are
@@ -1873,6 +1877,9 @@
     PIT.reveal.forEach(function(t){clearTimeout(t);});
     PIT.reveal=[];
     PIT.chips=null;
+    /* leaving the table forgets which cards have already been dealt in, so
+       coming back deals the hand in fresh rather than showing it half-landed */
+    PIT.pkSeen=null;PIT.pkHand=null;
     /* if a clash was mid-flight its callback will never land, so the render
        gate has to be lifted here or every later paint would be swallowed */
     PIT.busy=false;PIT.pending=null;
@@ -1921,9 +1928,28 @@
     n=Math.round(Number(n)||0);
     return String(n).replace(/\B(?=(\d{3})+(?!\d))/g,",");
   }
+  /* A card that only performs its deal once.
+     The table is rebuilt whenever it changes, which means every card is a new
+     element on every action — and a new element replays the flip. So the whole
+     board re-dealt itself each time somebody so much as checked. This keeps a
+     note of what was in each slot and marks anything already seen as still, so
+     only a card that genuinely just arrived turns over. The note is cleared
+     when the hand number changes, which is exactly when the cards are new
+     again. The key names the slot, so a hole card going from face down to
+     face up at a showdown counts as new and flips, which is right.
+     (Everything in this file lives inside one template literal, so there are
+     no backticks here and there is no dollar-brace either.) */
+  function pkCard(key,c){
+    var seen=PIT.pkSeen&&PIT.pkSeen[key]===c;
+    var e=cardEl(c);
+    if(seen)e.className+=" still";
+    if(PIT.pkSeen)PIT.pkSeen[key]=c;
+    return e;
+  }
   function pokerTable(body,d,note){
     var p=d.poker;
     if(!p){body.appendChild(el("p","pitsub","dealing…"));return;}
+    if(PIT.pkHand!==p.hand){PIT.pkHand=p.hand;PIT.pkSeen={};}
 
     /* the blinds, and how long they stay these blinds */
     var head=el("div","pkhead");
@@ -1933,44 +1959,92 @@
     head.appendChild(el("span","pkhand","hand "+p.hand));
     body.appendChild(head);
 
-    /* the board, with the cards still to come left as empty slots so the row
-       does not jump width as they arrive */
+    /* ---- the table ----
+       An oval of felt with the seats set around its rim, which is what a poker
+       table looks like everywhere else and so needs no explaining. The seats
+       are placed by angle rather than laid out in a row: the player looking at
+       it is always at the bottom and everyone else is dealt round from there,
+       so your own cards are in the same place every hand however many people
+       are sitting and whichever chair you happen to be in. */
+    var n=p.seats.length;
+    var mine=p.yourSeat>=0?p.yourSeat:0;
+    var stage=el("div","pkstage");
+    var felt=el("div","pkfelt");
+    stage.appendChild(felt);
+
+    var mid=el("div","pkmid");
+    mid.appendChild(el("div","pkpot",chips(p.pot)));
     var board=el("div","pkboard");
-    for(var i=0;i<5;i++){
-      if(i<p.board.length)board.appendChild(cardEl(p.board[i]));
+    for(var bi=0;bi<5;bi++){
+      if(bi<p.board.length)board.appendChild(pkCard("b"+bi,p.board[bi]));
       else board.appendChild(el("div","pcard pkslot"));
     }
-    body.appendChild(board);
-    body.appendChild(el("div","pkpot",chips(p.pot)+" in the pot"));
+    mid.appendChild(board);
+    mid.appendChild(el("div","pkpotlab","pot"));
+    stage.appendChild(mid);
 
-    var seats=el("div","pkseats");
-    p.seats.forEach(function(s,i){
+    /* The ring the seats sit on. It is deliberately INSIDE the felt rather
+       than outside it: a seat is about a fifth of the width, so one centred on
+       the rim at the far left or right hangs half of itself off the screen on
+       a phone. Sitting them just inside the edge keeps every plate on the
+       table and still leaves the middle clear for the board. */
+    var RX=37, RY=31;
+    p.seats.forEach(function(_,k){
+      var i=(mine+k)%n;                 /* you first, then round the table */
+      var s=p.seats[i];
+      var a=(90+k*360/n)*Math.PI/180;   /* 90deg is the bottom of the screen */
+      var cx=50+RX*Math.cos(a), cy=50+RY*Math.sin(a);
       var cls="pkseat";
       if(s.you)cls+=" you";
       if(s.out)cls+=" out";
       else if(s.folded)cls+=" folded";
       if(i===p.toAct&&!p.showing)cls+=" turn";
       var box=el("div",cls);
-      var top=el("div","pkname");
-      top.appendChild(el("span","pkwho",s.name+(s.you?" (you)":"")));
-      if(i===p.button)top.appendChild(el("span","pkdealer","D"));
-      box.appendChild(top);
+      box.style.left=cx.toFixed(2)+"%";
+      box.style.top=cy.toFixed(2)+"%";
+
       var hole=el("div","pkhole");
       if(!s.out){
-        if(s.cards&&s.cards.length)s.cards.forEach(function(c){hole.appendChild(cardEl(c));});
-        else for(var k=0;k<(s.held||0);k++)hole.appendChild(cardEl("??"));
+        if(s.cards&&s.cards.length){
+          s.cards.forEach(function(c,ci){hole.appendChild(pkCard("s"+i+"c"+ci,c));});
+        }else{
+          for(var h=0;h<(s.held||0);h++)hole.appendChild(pkCard("s"+i+"c"+h,"??"));
+        }
       }
-      box.appendChild(hole);
-      box.appendChild(el("div","pkstack",s.out?"out":chips(s.chips)));
-      var tag="";
-      if(s.out)tag="";
-      else if(s.allIn)tag="all in";
-      else if(s.folded)tag="folded";
-      else if(s.inStreet>0)tag=chips(s.inStreet);
-      box.appendChild(el("div","pkbet",tag));
-      seats.appendChild(box);
+      var plate=el("div","pkplate");
+      var nm=el("div","pkname");
+      nm.appendChild(el("span","pkwho",s.name));
+      if(i===p.button)nm.appendChild(el("span","pkdealer","D"));
+      plate.appendChild(nm);
+      plate.appendChild(el("div","pkstack",s.out?"out":chips(s.chips)));
+      if(!s.out&&s.allIn)plate.appendChild(el("div","pktag","all in"));
+      else if(!s.out&&s.folded)plate.appendChild(el("div","pktag","folded"));
+      /* your own hand, named, directly under your own cards */
+      if(s.you&&p.yourHand&&!s.out&&!s.folded)plate.appendChild(el("div","pkmade",p.yourHand));
+      /* Cards face into the table. Round the top of the oval the plate goes
+         first and the cards hang below it; round the bottom it is the other
+         way up. Either way the pair of cards is on the felt rather than
+         sticking out over the rim into the room. */
+      if(Math.sin(a)<-0.2){box.appendChild(plate);box.appendChild(hole);}
+      else{box.appendChild(hole);box.appendChild(plate);}
+      stage.appendChild(box);
+
+      /* what they have pushed out this street, sitting between them and the
+         pot the way chips actually do */
+      if(!s.out&&s.inStreet>0){
+        /* The two axes are squeezed by different things, so they are not the
+           same fraction. Across, the chip has to thread the gap between the
+           board and the seat beside it, which is barely wider than the chip.
+           Up and down there is far more room, so it sits well clear of the
+           seat above rather than tucking under that player's cards. */
+        var bx=50+RX*0.72*Math.cos(a), by=50+RY*0.42*Math.sin(a);
+        var chip=el("div","pkchip",chips(s.inStreet));
+        chip.style.left=bx.toFixed(2)+"%";
+        chip.style.top=by.toFixed(2)+"%";
+        stage.appendChild(chip);
+      }
     });
-    body.appendChild(seats);
+    body.appendChild(stage);
 
     /* what just happened, while it is still up */
     if(p.showing){
@@ -1981,7 +2055,7 @@
           var r=el("div","pkshowrow"+(x.won>0?" won":""));
           r.appendChild(el("span","pkshowname",x.name));
           var cc=el("span","pkshowcards");
-          x.cards.forEach(function(c){cc.appendChild(cardEl(c));});
+          x.cards.forEach(function(c,ci){cc.appendChild(pkCard("sd"+x.name+ci,c));});
           r.appendChild(cc);
           r.appendChild(el("span","pkshowhand",x.hand+(x.won>0?" — takes "+chips(x.won):"")));
           sd.appendChild(r);
@@ -2219,16 +2293,23 @@
       ?function(){clearTimer();window.__casinoOpen();}
       :function(){pitStop();viewPit(d.game);};
 
-    var head=el("div","pitvs");
-    var names=(d.players&&d.players.length)?d.players.slice():[{name:d.you||"you",you:true},{name:d.theirName||"\u2026"}];
-    var seats=d.seats||2;
-    while(names.length<seats)names.push({name:"\u2026"});
-    names.forEach(function(p,i){
-      if(i)head.appendChild(el("span","pvs","vs"));
-      var n=el("span","pn"+(p.bot?" tung":""),p.you?(d.you||"you"):(p.name||"\u2026"));
-      head.appendChild(n);
-    });
-    v.appendChild(head);
+    /* A live poker table already has everybody's name on it, in their chair,
+       with their stack under it \u2014 so a row of names above it is the same
+       information twice and costs the table a chunk of the screen it needs.
+       Every other game keeps it: two names either side of a "vs" IS the
+       matchup there. */
+    if(!(d.game==="poker"&&d.state==="live")){
+      var head=el("div","pitvs");
+      var names=(d.players&&d.players.length)?d.players.slice():[{name:d.you||"you",you:true},{name:d.theirName||"\u2026"}];
+      var seats=d.seats||2;
+      while(names.length<seats)names.push({name:"\u2026"});
+      names.forEach(function(p,i){
+        if(i)head.appendChild(el("span","pvs","vs"));
+        var n=el("span","pn"+(p.bot?" tung":""),p.you?(d.you||"you"):(p.name||"\u2026"));
+        head.appendChild(n);
+      });
+      v.appendChild(head);
+    }
     v.appendChild(el("div","pitpot",money(d.pot)+" sahurs on the table"+(d.tung?" \u2014 tung's table":"")));
 
     var clock=el("div","pitclock","");v.appendChild(clock);
