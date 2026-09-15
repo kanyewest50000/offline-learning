@@ -233,11 +233,18 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
     must(onTable === stackTotal(dv),
       `chips leaked: ${onTable} on the table, ${stackTotal(dv)} were dealt (hand ${pk.hand})`);
     must(pk.seats.every((s: { chips: number }) => s.chips >= 0), "a stack went negative");
-    // nobody may see anybody else's hole cards while the hand is live
+    // Nobody may see anybody else's hole cards while the hand is still being
+    // played. There are exactly two ways a hand becomes visible — it was shown
+    // down, or every chip is in and the board is being run out — and in both
+    // of them there is no decision left for the knowledge to be worth
+    // anything. Anything else is a leak.
     for (const s of pk.seats) {
-      if (!s.you && !pk.show) {
+      if (!s.you && !pk.show && !pk.reveal) {
         must(s.cards.length === 0, "a live hand leaked " + s.name + "'s hole cards");
       }
+    }
+    if (pk.reveal && !pk.show) {
+      must(pk.toAct < 0, "hands were turned face up while " + pk.seats[pk.toAct]?.name + " could still act");
     }
 
     // what the table has actually shown us, so the run can prove it exercised
@@ -252,8 +259,11 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
     // A finished hand stays up for a moment so it can be read. Nobody is to act
     // while it does; the next deal comes off the table's own clock, which the
     // next read of it triggers.
-    if (pk.showing) {
-      must(pk.toAct < 0, "nobody may be asked to act while a hand is being shown");
+    // Two states where the table is moving on its own clock and nobody is
+    // being asked for anything: a finished hand still on show, and a board
+    // being run out over all-ins.
+    if (pk.showing || pk.runout) {
+      must(pk.toAct < 0, "nobody may be asked to act while the table is dealing itself out");
       await nap(40);
       continue;
     }
@@ -369,6 +379,62 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
   must(p.toAct === 1 - p.button,
     `after the flop the button acts LAST heads-up: button ${p.button}, to act ${p.toAct}`);
   console.log("  order: heads-up button acts first preflop and last after it, blinds posted correctly");
+}
+
+// ---------------------------------------------------------------------------
+// An all-in is not a result, it is a hand that still has to be watched. When
+// the last chip goes in with board to come, the rest of it must be dealt a
+// street at a time with the hands face up — not resolved inside the request
+// that called the bet, which cuts straight from the call to the win screen and
+// throws away the only part of an all-in anybody cares about.
+{
+  const a = await member("pkr", 50), b = await member("pkr", 50);
+  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN, seats: 2 });
+  const id = made.duel.id;
+  await post("/duel/join", { token: b.token, id });
+  await post("/duel/confirm", { token: a.token, id });
+  await post("/duel/confirm", { token: b.token, id });
+  const players = [a, b];
+  const look = async (who = a) => (await call("/duel/state?token=" + who.token + "&id=" + id)).duel.poker;
+
+  // get it all in before the flop
+  let p = await look();
+  const first = p.toAct;
+  await post("/duel/poker", { token: players[first].token, id, action: "allin", amount: 0 });
+  p = await look();
+  must(p.toAct === 1 - first, "the other player must be asked to call the all-in");
+  await post("/duel/poker", { token: players[p.toAct].token, id, action: "call", amount: 0 });
+
+  // the moment the call lands the hand must NOT be over
+  p = await look();
+  must(!p.show, "an all-in called before the flop must not resolve on the spot");
+  must(p.street < 3, "the board must still have cards to come, got street " + p.street);
+  must(p.runout, "the table must be running the board out");
+  must(p.toAct < 0, "nobody may be asked to act during a runout");
+  must(p.reveal, "the hands must be face up once every chip is in");
+  for (const s of p.seats) {
+    must(s.cards.length === 2, s.name + "'s hand must be face up during a runout, got " + s.cards.length);
+  }
+
+  // and the streets have to arrive one at a time rather than all at once
+  const streets = new Set<number>([p.street]);
+  let sawRunout = 0, done = null;
+  for (let i = 0; i < 150; i++) {
+    await nap(200);
+    const q = await look();
+    streets.add(q.street);
+    if (q.runout) sawRunout++;
+    if (q.show) { done = q; break; }
+  }
+  must(done, "the runout never finished");
+  must(sawRunout > 0, "the runout was never visible — it resolved in one go");
+  must(streets.size >= 2, "the board arrived all at once: only saw street " + [...streets].join(","));
+  must(done!.board.length === 5, "a runout must deal the whole board, got " + done!.board.length);
+  must(done!.show.length === 2, "both hands must be shown down, got " + done!.show.length);
+  console.log(
+    "  all-in: dealt out over " + streets.size + " streets with both hands face up, " +
+      "then shown down — not resolved in the call",
+  );
 }
 
 console.log("tournaments:");

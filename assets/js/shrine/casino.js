@@ -1852,7 +1852,7 @@
      (pitTick), both owned by PIT and both torn down by clearTimer(), which every
      navigation already calls. */
   var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null,reveal:[],
-    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null};
+    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null,pkAuto:false,pkAutoBusy:false,pkUp:null,pkUpAt:0};
   /* the clash: the beat between a round resolving and the next one starting */
   var CL_IN_MS=520, CL_HIT_MS=600, CL_SAY_MS=1000, CL_HOLD_MS=2050;
   /* How a cut is dealt. There is nothing to play in this game — both cards are
@@ -1891,7 +1891,7 @@
     PIT.chips=null;
     /* leaving the table forgets which cards have already been dealt in, so
        coming back deals the hand in fresh rather than showing it half-landed */
-    PIT.pkSeen=null;PIT.pkHand=null;
+    PIT.pkSeen=null;PIT.pkHand=null;PIT.pkAuto=false;PIT.pkAutoBusy=false;PIT.pkUp=null;PIT.pkUpAt=0;
     /* if a clash was mid-flight its callback will never land, so the render
        gate has to be lifted here or every later paint would be swallowed */
     PIT.busy=false;PIT.pending=null;
@@ -1961,13 +1961,22 @@
   function pokerTable(body,d,note){
     var p=d.poker;
     if(!p){body.appendChild(el("p","pitsub","dealing…"));return;}
-    if(PIT.pkHand!==p.hand){PIT.pkHand=p.hand;PIT.pkSeen={};}
+    if(PIT.pkHand!==p.hand){PIT.pkHand=p.hand;PIT.pkSeen={};PIT.pkAuto=false;}
 
     /* the blinds, and how long they stay these blinds */
     var head=el("div","pkhead");
     head.appendChild(el("span","pkblind",chips(p.blinds[0])+" / "+chips(p.blinds[1])));
     head.appendChild(el("span","pklvl","level "+p.level+" of "+p.levels));
-    if(p.nextLevel>0)head.appendChild(el("span","pkup","up in "+pitClockText(Math.max(0,p.nextLevel-p.now))));
+    /* Kept as a live element rather than a rendered string. The table is only
+       rebuilt when something about it changes, so a countdown drawn once sat
+       frozen until somebody acted — it now runs off the same 200ms tick the
+       big clock uses, corrected for how far this client's clock is from the
+       server's. */
+    if(p.nextLevel>0){
+      var up=el("span","pkup","up in "+pitClockText(pitLeft(p.nextLevel)));
+      head.appendChild(up);
+      PIT.pkUp=up;PIT.pkUpAt=p.nextLevel;
+    }else{PIT.pkUp=null;PIT.pkUpAt=0;}
     head.appendChild(el("span","pkhand","hand "+p.hand));
     body.appendChild(head);
 
@@ -2000,7 +2009,7 @@
        the rim at the far left or right hangs half of itself off the screen on
        a phone. Sitting them just inside the edge keeps every plate on the
        table and still leaves the middle clear for the board. */
-    var RX=37, RY=31;
+    var RX=38, RY=30;
     p.seats.forEach(function(_,k){
       var i=(mine+k)%n;                 /* you first, then round the table */
       var s=p.seats[i];
@@ -2049,7 +2058,7 @@
            board and the seat beside it, which is barely wider than the chip.
            Up and down there is far more room, so it sits well clear of the
            seat above rather than tucking under that player's cards. */
-        var bx=50+RX*0.72*Math.cos(a), by=50+RY*0.42*Math.sin(a);
+        var bx=50+RX*0.65*Math.cos(a), by=50+RY*0.55*Math.sin(a);
         var chip=el("div","pkchip",chips(s.inStreet));
         chip.style.left=bx.toFixed(2)+"%";
         chip.style.top=by.toFixed(2)+"%";
@@ -2079,6 +2088,15 @@
       body.appendChild(el("p","pitsay","you are out."));
       body.appendChild(el("p","pitsub","the table plays on without you. the pot is settled when somebody has every chip."));
     }else if(p.yourTurn){
+      /* a check/fold left standing from while you were waiting. It is spent
+         the moment it is used, so it can never fold a hand three streets
+         later that you meant to play. */
+      if(PIT.pkAuto&&!PIT.pkAutoBusy){
+        PIT.pkAuto=false;PIT.pkAutoBusy=true;
+        pitSend("/duel/poker",{id:d.id,action:p.canCheck?"check":"fold",amount:0},function(){
+          PIT.pkAutoBusy=false;
+        }).then(function(){PIT.pkAutoBusy=false;});
+      }
       var acts=el("div","pkacts");
       var fire=function(action,amount){
         Array.prototype.forEach.call(acts.querySelectorAll("button"),function(x){x.disabled=true;});
@@ -2106,10 +2124,23 @@
         var rrow=el("div","pkraise");
         var amt=el("input","pkamt");
         amt.type="number";amt.min=String(p.raiseTo);amt.max=String(p.maxTo);amt.step="1";amt.value=String(p.raiseTo);
+        /* A raise under the minimum is not a mistake worth a telling-off — it
+           is somebody reaching for the smallest raise there is. So the box
+           corrects itself to the nearest legal amount instead of refusing:
+           up to the minimum, down to the whole stack, and never a fraction of
+           a chip. */
+        var clampAmt=function(){
+          var n=Math.floor(Number(amt.value));
+          if(!isFinite(n))n=p.raiseTo;
+          if(n<p.raiseTo)n=p.raiseTo;
+          if(n>p.maxTo)n=p.maxTo;
+          amt.value=String(n);
+          return n;
+        };
+        amt.onchange=clampAmt;amt.onblur=clampAmt;
         var go=el("button","cbtn","raise to");
         go.onclick=function(){
-          var n=Math.floor(Number(amt.value));
-          if(!(n>=p.raiseTo)){bad(note,"raise to at least "+chips(p.raiseTo)+".");return;}
+          var n=clampAmt();
           Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=true;});
           pitSend("/duel/poker",{id:d.id,action:"raise",amount:n},function(e){
             Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=false;});
@@ -2132,7 +2163,25 @@
         :"it is on you. say nothing for long enough and it checks for you."));
     }else{
       var w=p.seats[p.toAct];
-      body.appendChild(el("p","pitsub","waiting on "+(w?w.name:"the table")+"."));
+      body.appendChild(el("p","pitsub",p.runout
+        ?"all in. running the board out."
+        :("waiting on "+(w?w.name:"the table")+".")));
+      /* The decision you can make before it is your turn. Only offered while
+         you are actually waiting on somebody — once it IS your turn the real
+         buttons are right there and this would be a second way to press them. */
+      var ms=p.yourSeat>=0?p.seats[p.yourSeat]:null;
+      if(ms&&!ms.out&&!ms.folded&&!ms.allIn&&!p.showing&&!p.runout&&p.toAct>=0){
+        var pre=el("button","cbtn pkpre"+(PIT.pkAuto?" on":""),PIT.pkAuto?"check / fold ✓":"check / fold");
+        pre.onclick=function(){
+          PIT.pkAuto=!PIT.pkAuto;
+          /* repainted in place: re-rendering the table would rebuild it under
+             the finger that just tapped this */
+          pre.className="cbtn pkpre"+(PIT.pkAuto?" on":"");
+          pre.textContent=PIT.pkAuto?"check / fold ✓":"check / fold";
+        };
+        body.appendChild(pre);
+        body.appendChild(el("p","pitsub","checks the moment it reaches you if checking is free, and folds if somebody has bet into you."));
+      }
     }
 
     if(p.log&&p.log.length){
@@ -2733,6 +2782,9 @@
         if(c.you&&ROUND.live&&ROUND.live.id===d.id){c.el.textContent=money(ROUND.mine);return;}
         c.el.textContent=money(chipsOf(seats[i]||{}));
       });
+    }
+    if(PIT.pkUp&&PIT.pkUp.isConnected&&PIT.pkUpAt){
+      PIT.pkUp.textContent="up in "+pitClockText(pitLeft(PIT.pkUpAt));
     }
     if(!PIT.left||!PIT.left.isConnected)return;
     if(d.state==="done"||!d.deadline){PIT.left.textContent="";PIT.left.className="pitclock";return;}

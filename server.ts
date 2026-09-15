@@ -1668,6 +1668,7 @@ async function sweepDuel(entry: Deno.KvEntryMaybe<Duel>): Promise<Deno.KvEntryMa
       // either the finished hand has been up long enough and the next one is
       // dealt, or the player to act has run their clock down
       if (ps.next > 0) pokerDealNext(ps, people.map((p) => p.name));
+      else if (ps.runout > 0) pokerRunout(ps, people.map((p) => p.name));
       else pokerAutoAct(ps, people.map((p) => p.name));
       if (pokerOver(ps)) {
         const left = pokerAlive(ps);
@@ -1751,6 +1752,8 @@ const POKER_ACT_MS = Number(Deno.env.get("POKER_ACT_MS") || 15 * 1000);
 // cleared before any client could ask what happened — every showdown in the
 // tournament would resolve to a stack that changed size for no visible reason.
 const POKER_SHOW_MS = Number(Deno.env.get("POKER_SHOW_MS") || 6 * 1000);
+// How long each street of an all-in runout sits before the next one lands.
+const POKER_RUNOUT_MS = Number(Deno.env.get("POKER_RUNOUT_MS") || 1400);
 const POKER_LEVEL_MS = Number(Deno.env.get("POKER_LEVEL_MS") || 3 * 60 * 1000);
 // Small and big, one row per level. Level 7 is 250/500 and starts at eighteen
 // minutes; the rows past it exist so a stubborn heads-up cannot outlast the
@@ -1791,6 +1794,8 @@ type PokerState = {
   show: PokerShow[] | null;   // set for the hand just finished, cleared on the next deal
   note: string;               // one line describing how the last hand ended
   next: number;               // when the next hand deals; 0 unless a hand is being shown
+  runout: number;             // when the next street of an all-in runout lands; 0 otherwise
+  reveal: boolean;            // every live hand is face up — set once a runout starts
 };
 
 const PK_ORDER = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
@@ -1945,6 +1950,8 @@ function pokerNewHand(ps: PokerState, names: string[]): void {
   ps.board = [];
   ps.deck = pokerDeck();
   ps.show = null;
+  ps.reveal = false;
+  ps.runout = 0;
   for (const s of ps.seats) {
     s.inStreet = 0; s.inHand = 0; s.cards = []; s.acted = false;
     s.folded = s.out; s.allIn = false;
@@ -2094,7 +2101,9 @@ function pokerOver(ps: PokerState): boolean { return pokerAlive(ps).length <= 1;
 // What the duel's own deadline should be: either the hand on the table clearing
 // itself away, or the player whose turn it is running out of time.
 function pokerDeadline(ps: PokerState): number {
-  return ps.next > 0 ? ps.next : Date.now() + POKER_ACT_MS;
+  if (ps.next > 0) return ps.next;
+  if (ps.runout > 0) return ps.runout;
+  return Date.now() + POKER_ACT_MS;
 }
 
 // Whose turn it is, searching from whoever went last. A player still owing
@@ -2112,11 +2121,11 @@ function pokerNextActor(ps: PokerState, from: number): number {
 }
 
 // Carry the hand as far as it can go without asking anybody anything: close
-// streets, run the board out over all-ins, pay the pot, and deal the next hand.
-// Returns with toAct set to a player, or with the tournament over.
+// streets, pay the pot, and stop. Returns with toAct set to a player, with a
+// board left to run out, or with the hand finished.
 function pokerStep(ps: PokerState, names: string[]): void {
   for (let guard = 0; guard < 64; guard++) {
-    if (ps.next > 0) return;   // a finished hand is on the table; it deals on its own clock
+    if (ps.next > 0 || ps.runout > 0) return;   // the table is mid-beat; it moves on its own clock
     if (!pokerStreetClosed(ps)) {
       const nxt = pokerNextActor(ps, ps.from);
       if (nxt >= 0) { ps.toAct = nxt; return; }
@@ -2126,6 +2135,17 @@ function pokerStep(ps: PokerState, names: string[]): void {
       pokerFinishHand(ps, names);
       return;
     }
+    // Everybody left is all in and there is still board to come. The hand is
+    // decided but it has not been SEEN yet, and watching it is most of what
+    // the hand was for — so the cards go face up and the rest of the board is
+    // dealt a street at a time on a clock, rather than the whole thing
+    // resolving inside the request that called the last bet.
+    if (pokerActive(ps).length <= 1) {
+      ps.reveal = true;
+      ps.runout = Date.now() + POKER_RUNOUT_MS;
+      ps.note = "all in — running it out";
+      return;
+    }
     pokerCollect(ps);
     ps.street += 1;
     pokerBoard(ps);
@@ -2133,6 +2153,17 @@ function pokerStep(ps: PokerState, names: string[]): void {
     // street, heads-up included — which is the reverse of before it
     ps.from = (ps.button + 1) % ps.seats.length;
   }
+}
+
+// One more street of an all-in runout, then back to pokerStep to decide
+// whether that was the last of them.
+function pokerRunout(ps: PokerState, names: string[]): void {
+  ps.runout = 0;
+  pokerCollect(ps);
+  ps.street += 1;
+  pokerBoard(ps);
+  ps.from = (ps.button + 1) % ps.seats.length;
+  pokerStep(ps, names);
 }
 
 // One action from one seat. Returns an error for the player, or null.
@@ -2206,6 +2237,7 @@ function pokerStart(people: DuelSide[]): PokerState {
       folded: false, allIn: false, out: false, acted: false,
     })),
     toAct: -1, from: 0, call: 0, minRaise: 0, log: [], show: null, note: "", next: 0,
+    runout: 0, reveal: false,
   };
   pokerNewHand(ps, people.map((p) => p.name));
   pokerStep(ps, people.map((p) => p.name));
@@ -2262,10 +2294,16 @@ function pokerView(d: Duel, uid: string | null) {
       folded: ps.seats[i].folded,
       allIn: ps.seats[i].allIn,
       out: ps.seats[i].out,
-      // face up only at a showdown; otherwise the client is told how many
-      // cards are there and nothing about them
+      // Face up at a showdown, and face up once a runout has started — at
+      // that point every chip is already in and there is nothing left to
+      // decide, so a hand kept hidden would only be hidden from the people
+      // watching it win. Otherwise the client is told how many cards are
+      // there and nothing whatever about them.
       cards: (ps.show || []).find((x) => x.name === p.name)?.cards ??
-        (i === me && !ps.seats[i].out ? ps.seats[i].cards : []),
+        ((ps.reveal && !ps.seats[i].folded && !ps.seats[i].out) ||
+            (i === me && !ps.seats[i].out)
+          ? ps.seats[i].cards
+          : []),
       held: ps.seats[i].cards.length,
     })),
     show: ps.show,
@@ -2275,6 +2313,10 @@ function pokerView(d: Duel, uid: string | null) {
     // the result rather than blink straight into the next deal
     showing: ps.next > 0,
     next: ps.next,
+    // the board is being dealt out over all-ins; hands are face up and nobody
+    // is being asked for anything
+    runout: ps.runout > 0,
+    reveal: !!ps.reveal,
     deadline: d.deadline,
     now: Date.now(),
   };

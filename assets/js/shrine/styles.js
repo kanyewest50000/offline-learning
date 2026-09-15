@@ -474,8 +474,8 @@
       /* the table itself: an oval of felt inside a wooden rail, with the seats
          set around its rim by angle rather than laid out in a row. The player
          looking at it is always at the bottom. */
-      '.pkstage{position:relative;width:100%;max-width:470px;aspect-ratio:1/1.06;margin:0 auto}' +
-      '.pkfelt{position:absolute;left:5%;right:5%;top:15%;bottom:15%;border-radius:50%;' +
+      '.pkstage{position:relative;width:100%;max-width:470px;aspect-ratio:1/.95;margin:0 auto}' +
+      '.pkfelt{position:absolute;left:3%;right:3%;top:18%;bottom:18%;border-radius:50%;' +
       'background:radial-gradient(120% 120% at 50% 32%,#2f5d3f 0%,#23472f 45%,#183121 100%);' +
       'border:7px solid #3a2410;box-shadow:inset 0 0 26px #0009,0 10px 26px #0007,0 0 0 2px #241505}' +
       '.pkmid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;z-index:1}' +
@@ -518,6 +518,8 @@
       '.pcard.still.hole .pcfront{opacity:0}' +
       '.pcard.still.hole .pcback{opacity:1}' +
       '.pkacts{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}' +
+'.pkpre{min-width:180px;opacity:.72}' +
+'.pkpre.on{opacity:1;background:#c8823c;color:#1d1206;box-shadow:0 0 0 2px #f2c06355}' +
       '.pkacts .cbtn{min-width:118px}' +
       '.pkraise{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;align-items:center}' +
       '.pkamt{width:112px;text-align:center;font-variant-numeric:tabular-nums}' +
