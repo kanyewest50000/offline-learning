@@ -3072,6 +3072,42 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, deleted: true });
   }
 
+  // ---------- admin: read back a member's login key ----------
+  //
+  // The key IS the account — casUser() asks nothing else — so this hands over
+  // the ability to be that person, and it is worth being plain about that
+  // rather than dressing it up as a lookup. It exists because the key is the
+  // one thing a member cannot be sent again: it is shown once on the pending
+  // screen, and somebody who loses it has no account left, only a username
+  // nobody can free. This is the way back in.
+  //
+  // So it is deliberately not part of /admin/users. That list is polled, and a
+  // poll that carries every key in the shrine puts all of them in the panel's
+  // memory, and in whatever a browser does with a response, every few seconds
+  // — for a field that is read perhaps twice a year. Here it travels only when
+  // an admin asks for one person, by POST, so the id stays out of the URL for
+  // the same reason the admin key does: a query string lands in the address
+  // bar, in history and in every access log on the way.
+  //
+  // An account can hold more than one key — /apply mints one per application
+  // and nothing sweeps the old ones — so this answers with all of them, newest
+  // first is not knowable, so they come back in scan order and the panel says
+  // how many there are rather than pretending there is one.
+  if (req.method === "POST" && path === "/admin/token") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    if (!app.value) return json({ error: "not found" }, 404);
+    const tokens: string[] = [];
+    for await (const e of kv.list<string>({ prefix: ["tok"] })) {
+      if (e.value === id && typeof e.key[1] === "string") tokens.push(e.key[1] as string);
+    }
+    return json({ ok: true, username: app.value.username, tokens });
+  }
+
   // ---------- admin: attach a private note to a user ----------
   if (req.method === "POST" && path === "/admin/note") {
     // deno-lint-ignore no-explicit-any
@@ -4423,6 +4459,16 @@ function renderUsers(){
     else{vbtn.className="ok";vbtn.textContent="approve for veil";vbtn.onclick=function(){setVeilUser(u.id,true);};}
     vrow.appendChild(vlab);vrow.appendChild(vbtn);
     el.appendChild(vrow);
+    /* the way back in for somebody who lost their key. it is the account, so
+       it is never on screen until it is asked for, and the button says what it
+       is handing over rather than calling it a lookup. */
+    var krow=document.createElement("div");krow.className="row";
+    var klab=document.createElement("small");klab.className="vlab";klab.textContent="login key: hidden";
+    var kbtn=document.createElement("button");kbtn.className="load";kbtn.textContent="show login key";
+    kbtn.title="reveals the key that IS this account — anyone holding it can log in as them";
+    kbtn.onclick=function(){showToken(u.id,u.username,klab,kbtn,krow);};
+    krow.appendChild(klab);krow.appendChild(kbtn);
+    el.appendChild(krow);
     var nrow=document.createElement("div");nrow.className="row";
     var note=document.createElement("input");note.className="uname";note.placeholder="private note (admin only)";note.value=u.note||"";note.maxLength=500;
     var nsave=document.createElement("button");nsave.className="load";nsave.textContent="save note";
@@ -4444,6 +4490,37 @@ function renderUsers(){
 function rename(id,name){
   if(!name)return;
   fetch("/admin/rename",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,username:name})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+}
+/* Fetch and show one member's login key. POST, so the id never reaches a URL —
+   the same reason the admin key rides a header on every read. The key is put in
+   a readonly input rather than written into the page so it can be selected and
+   copied without being re-rendered away by the next refresh, and hiding it
+   again empties the field rather than leaving it in the DOM. */
+function showToken(id,name,lab,btn,row){
+  if(btn.dataset.shown==="1"){
+    var old=row.querySelector(".tokbox");if(old)old.remove();
+    var oc=row.querySelector(".tokcopy");if(oc)oc.remove();
+    btn.dataset.shown="";btn.textContent="show login key";lab.textContent="login key: hidden";lab.className="vlab";
+    return;
+  }
+  if(!confirm("Show "+name+"'s login key?\\n\\nThe key IS the account — anyone holding it can log in as them. Only do this to give it back to them."))return;
+  btn.disabled=true;
+  fetch("/admin/token",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      btn.disabled=false;
+      if(d.error){alert(d.error);return;}
+      if(!d.tokens||!d.tokens.length){lab.textContent="login key: none on file — they have never applied";lab.className="vlab rev";return;}
+      var box=document.createElement("input");box.className="uname tokbox";box.readOnly=true;box.value=d.tokens.join("  ");
+      box.onclick=function(){this.select();};
+      var copy=document.createElement("button");copy.className="load tokcopy";copy.textContent="copy";
+      copy.onclick=function(){box.select();try{document.execCommand("copy");copy.textContent="copied";setTimeout(function(){copy.textContent="copy";},1200);}catch(e){}};
+      row.appendChild(box);row.appendChild(copy);
+      lab.textContent=d.tokens.length>1?("login key: "+d.tokens.length+" on file"):"login key:";
+      lab.className="vlab";
+      btn.dataset.shown="1";btn.textContent="hide";
+    })
+    .catch(function(){btn.disabled=false;alert("could not reach the server");});
 }
 function setBan(id,banned){
   fetch("/admin/ban",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,banned:banned})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
