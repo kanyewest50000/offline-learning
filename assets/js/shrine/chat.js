@@ -203,17 +203,18 @@
     '<button id="fs" title="fullscreen">⛶</button></div>' +
     '<iframe id="gf" allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write" allowfullscreen></iframe>' +
     '</div><script>' +
-    /* iframe src is the same-origin Pages stub (GAMES URLs are remapped
-       to games/g/ above). A real src is required: srcdoc made
-       location.href about:srcdoc and Unity loaders hung at 0%.
-       Leftover gn-math/html URLs are rewritten to games/g/<file> on
-       this origin — never Deno, never a CDN HTML host. */
+    /* iframe src is the Pages stub (GAMES URLs are remapped to games/g/
+       above). A real src is required: srcdoc made location.href
+       about:srcdoc and Unity loaders hung at 0%.
+       Leftover gn-math/html URLs are rewritten to games/g/<file> under
+       Shrine.BASE — never Deno, never a CDN HTML host (jsDelivr serves
+       .html as text/plain, so a game would arrive as source text). */
     'var GURL="${g.u}";' +
     'var gf=document.getElementById("gf");' +
     '(function(){' +
     'var mark="gn-math/html/";var idx=GURL.indexOf(mark);' +
     'if(idx>=0){var rest=GURL.slice(idx+mark.length);var s=rest.indexOf("/");' +
-    'if(s>=0)GURL=' + JSON.stringify(new URL("games/g/", location.href).href) + '+rest.slice(s+1);}' +
+    'if(s>=0)GURL=' + JSON.stringify(new URL("games/g/", Shrine.BASE || location.href).href) + '+rest.slice(s+1);}' +
     'gf.src=GURL;' +
     '})();' +
     'document.getElementById("x").onclick=function(){window.close();};' +   /* X = close this game tab */

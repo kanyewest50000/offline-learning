@@ -23,7 +23,8 @@ assets/js/home.js       homepage runtime: imagery, calculator, odometer, and
                         staff portrait, the "popup" keyword)
 
 assets/js/shrine/       everything behind the decoy. loaded in this order:
-  config.js               backend URL, artwork, ace mark, cloaked labels
+  config.js               backend URL, the base the repo's own files are found
+                          under, artwork, ace mark, cloaked labels
   games-catalog.js        the curated catalog (the GAMES array)
   originals.js            Tung's own games, from games/tung/
   chat.js                 chat client source
@@ -35,7 +36,8 @@ assets/js/shrine/       everything behind the decoy. loaded in this order:
 
 server.ts               Deno backend: auth, approvals, chat history, balances,
                         every casino outcome. Runs on Deno Deploy, state in KV.
-embed/                  standalone chat embed for other hosts
+embed/                  standalone embeds for other hosts: the chat on its own,
+                        and the whole shrine from one script tag
 games/                  vendored game files served from this origin
 scripts/                tests and maintenance tools
 ```
@@ -59,6 +61,41 @@ nothing. The same rule runs through the chat — a reply quotes a message by id
 and the server fills in what that message actually said, and whether a reaction
 is yours is a fact the server holds — so neither the words above a reply nor the
 number on a reaction chip can be set by whoever sent the request.
+
+## the shrine somewhere else
+
+Because `window.js` builds the whole shrine as one string, the shrine does not
+actually need this site. `embed/shrine.js` is that fact made usable: one script
+tag, pasted into Replit, w3schools, a CodePen, anything that runs JavaScript.
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/kanyewest50000/offline-learning@main/embed/shrine.js"></script>
+```
+
+Two hosts are in play there and they are not interchangeable. The **code** — the
+eight modules, about 90KB gzipped — can come from a CDN, and jsDelivr serves
+`.js` with the right content-type. The **files** — the artwork, the originals,
+the 830 vendored games — cannot: jsDelivr hands `.html` out of `/gh/` as
+`text/plain`, so a game fetched from it arrives as its own source code instead
+of rendering. Those stay on Pages.
+
+`Shrine.BASE` is what keeps the two straight. Every repo path any module builds
+is resolved against it rather than against the page, so the one value decides
+where the shrine looks for its own things: the artwork in `config.js`, the three
+originals, the 777 catalog entries remapped onto `games/g/`, and the game-frame
+URL baked into the emitted chat client. On this site it is the page's own folder
+and nothing has changed. Pasted elsewhere, `embed/shrine.js` sets
+`window.SHRINE_BASE` before the modules load and points all of it back here —
+without which a catalog would quietly resolve 777 games onto a stranger's
+domain. `?base=` does the same for a one-off test. `scripts/test-shrine-base.ts`
+holds that down from both ends: the default must not move, and nothing in the
+finished document may name the host it was pasted into.
+
+The login key is per-origin, because localStorage is. Somebody using an embed
+logs in on that host once with the key they already have; the backend answers
+`access-control-allow-origin: *`, so it does not care where they are. Games open
+with `window.open`, so a sandboxed frame without `allow-popups` gets the chat,
+the casino and the originals but no catalog tabs.
 
 ## the pit
 

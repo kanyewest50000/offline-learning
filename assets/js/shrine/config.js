@@ -23,17 +23,47 @@
     if (_apiQ) SHRINE_API = String(_apiQ).replace(/\/$/, "");
   } catch (e) {}
 
+  /* ---------- where this project's own files live ----------
+     The artwork, Tung's originals and the vendored games under games/g/ are all
+     repo files, and every module that needs one builds its URL by resolving a
+     repo-relative path against this base.
+
+     Served from our own pages that base is simply the page, which is what it
+     always was — location.href, written out at each of the four call sites. An
+     embed is what makes it worth naming: paste the shrine into someone else's
+     page and location.href is their host, where none of these files exist, so
+     all of it — 777 catalog entries included — would resolve to 404s on a
+     stranger's domain. embed/shrine.js sets window.SHRINE_BASE before this file
+     loads; ?base= does the same for a one-off test. Absent both, the page.
+
+     Either way it ends up a directory URL ending in "/", so that resolving
+     against it means one thing. The default is the page's folder rather than
+     location.href itself: the two resolve alike, but a folder is a base you can
+     read, print and compare, where ".../index.html?x=1#y" merely behaves like
+     one. An override is a folder already and only has the slash made sure of —
+     without it, ".../offline-learning" resolves as a sibling and every path
+     lands a level too high, on URLs that still look plausible. */
+  var SHRINE_BASE = new URL(".", location.href).href;
+  try {
+    var _baseQ = new URLSearchParams(location.search).get("base");
+    var _base = _baseQ || (typeof window.SHRINE_BASE === "string" ? window.SHRINE_BASE : "");
+    if (_base) {
+      SHRINE_BASE = new URL(String(_base), location.href).href;
+      if (SHRINE_BASE.charAt(SHRINE_BASE.length - 1) !== "/") SHRINE_BASE += "/";
+    }
+  } catch (e) { /* malformed override: the page's own folder stands */ }
+
   /* Tung artwork now ships with the repo instead of hotlinking someone else's CDN.
      Resolved to absolute URLs here because the shrine/casino windows are written
      into about:blank, which has no base URL for relative paths to resolve against. */
-  var TUNG_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;
-  var TUNGGOD_IMG = new URL("assets/tungtunggod.png", location.href).href;
+  var TUNG_IMG = new URL("assets/tungtungtungsahur.png", SHRINE_BASE).href;
+  var TUNGGOD_IMG = new URL("assets/tungtunggod.png", SHRINE_BASE).href;
   /* The bank shows one of two pictures, rolled fresh each time the page is
      opened. BANK_IMG is the common one and BANK_RARE_IMG is the rare one;
      BANK_RARE_CHANCE is how often the rare one comes up, as a fraction.
      Swap either path, or change the odds, and nothing else needs touching. */
-  var BANK_IMG = new URL("assets/tungtungtungsahur.png", location.href).href;
-  var BANK_RARE_IMG = new URL("assets/lendersahur.jpg", location.href).href;
+  var BANK_IMG = new URL("assets/tungtungtungsahur.png", SHRINE_BASE).href;
+  var BANK_RARE_IMG = new URL("assets/lendersahur.jpg", SHRINE_BASE).href;
   var BANK_RARE_CHANCE = 0.15;
 
   /* html-escape for anything interpolated into the shrine document */
@@ -115,6 +145,7 @@
   var THEME_DEFAULT = "wood";
 
   Shrine.API = SHRINE_API;
+  Shrine.BASE = SHRINE_BASE;
   Shrine.THEMES = THEMES;
   Shrine.THEME_DEFAULT = THEME_DEFAULT;
   Shrine.TUNG_IMG = TUNG_IMG;
