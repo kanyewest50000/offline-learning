@@ -102,17 +102,29 @@
     s.appendChild(sv("path",{d:"M12 8.2V12l2.7 1.7",fill:"none",stroke:"currentColor","stroke-width":"1.7","stroke-linecap":"round","stroke-linejoin":"round"}));
     return s;
   }
-  /* Two cards held at an angle, and they do NOT overlap. A fan looks right at
-     120px and turns to mud at 26, which is the only size this is ever drawn:
-     two translucent cards crossing each other put four strokes through the
-     same few pixels and the shape closes up into a blob. So the back card is
-     kicked out to the left instead of sitting under the front one — still a
-     hand being held, still legible when it is nine pixels wide. A pip was
-     tried too and is a smudge at this size, so there isn't one. */
+  /* Two cards held at an angle, one overlapping the other.
+     Every icon here is drawn in currentColor at a low fill-opacity, which is
+     what made this one a mess: translucent means the back card's whole outline
+     shows straight through the front one, so the overlap reads as a smear of
+     crossing strokes rather than as a card in front of a card. Opacity cannot
+     fix that and neither can a solid fill — there is no colour to fill it
+     with, since the thing behind an icon is whatever the skin is painted.
+     So the front card's silhouette, grown by its own stroke width, is cut out
+     of the back card. What is left is the sliver that would actually be
+     visible, and the two read as a pair of cards at any size. */
+  var pkIcoN=0;
   function icoPoker(){
+    var id="pkico"+(++pkIcoN);   /* both the lobby tile and the table header draw one */
     var s=sv("svg",{viewBox:"0 0 24 24",width:"26",height:"26","aria-hidden":"true"});
-    s.appendChild(sv("rect",{x:"1.8",y:"5",width:"8.8",height:"13.6",rx:"2",fill:"currentColor","fill-opacity":".15",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(-24 12 20)"}));
-    s.appendChild(sv("rect",{x:"12.6",y:"4.4",width:"9.2",height:"14.2",rx:"2",fill:"currentColor","fill-opacity":".15",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(7 12 20)"}));
+    var defs=sv("defs",{});
+    var m=sv("mask",{id:id,maskUnits:"userSpaceOnUse",x:"0",y:"0",width:"24",height:"24"});
+    m.appendChild(sv("rect",{x:"0",y:"0",width:"24",height:"24",fill:"#fff"}));
+    m.appendChild(sv("rect",{x:"9.7",y:"4.5",width:"11.2",height:"14.8",rx:"2.9",fill:"#000",transform:"rotate(11 15.3 11.9)"}));
+    defs.appendChild(m);
+    s.appendChild(defs);
+    s.appendChild(sv("rect",{x:"4.2",y:"5.6",width:"9",height:"12.6",rx:"1.8",fill:"currentColor","fill-opacity":".14",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(-13 8.7 11.9)",mask:"url(#"+id+")"}));
+    s.appendChild(sv("rect",{x:"10.8",y:"5.6",width:"9",height:"12.6",rx:"1.8",fill:"currentColor","fill-opacity":".22",stroke:"currentColor","stroke-width":"1.5",transform:"rotate(11 15.3 11.9)"}));
+    s.appendChild(sv("path",{d:"M15.3 9.4c-.9.9-2.2 2-2.2 3.1a1.5 1.5 0 0 0 2.2 1.2 1.5 1.5 0 0 0 2.2-1.2c0-1.1-1.3-2.2-2.2-3.1z",fill:"currentColor"}));
     return s;
   }
   function gameIcon(id){

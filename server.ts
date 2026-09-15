@@ -1744,7 +1744,7 @@ function cutDealFor(people: DuelSide[]): { cards: CutCards; winnerId: string } {
 // rule that hides a move in Tung, Wood, Fire: pokerView() gives you your own
 // two and nobody else's until a showdown puts them face up.
 const POKER_STACK = Number(Deno.env.get("POKER_STACK") || 1000);
-const POKER_ACT_MS = Number(Deno.env.get("POKER_ACT_MS") || 45 * 1000);
+const POKER_ACT_MS = Number(Deno.env.get("POKER_ACT_MS") || 15 * 1000);
 // How long the finished hand stays on the table before the next one is dealt.
 // Not a flourish: the hand pays out, busts whoever it emptied and is replaced
 // in one pass, so without somewhere to stop, the cards that won would be
