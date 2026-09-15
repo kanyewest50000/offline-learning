@@ -1,7 +1,27 @@
 # Embeds
 
-Two of them. `shrine.js` is the whole shrine from one script tag; `chat.html` is
-the chat on its own, for when that is all you want on someone else's page.
+Two of them, and which you want is decided by what you are willing to put on
+somebody else's page.
+
+| | `shrine.js` | `chat.html` |
+| --- | --- | --- |
+| what is on the page | the whole shrine: chat, casino, the pit, 830 games, the originals, the shop and the faucet | chat, and nothing else |
+| how it goes in | one `<script>` tag | an `<iframe>` |
+| takes over the page | yes, unless `data-mode="iframe"` | no, it is a frame |
+
+`shrine.js` is the one to reach for. `chat.html` is not an older version of it
+and is not going away: it is the narrow surface, for a page where you want
+people talking but do not want a casino sitting on it. That is a decision about
+the host, not about the code, and no attribute on `shrine.js` makes it — the
+chooser is in there once the shrine opens.
+
+The price of having both is that `chat.html` is its own implementation rather
+than a slice of `assets/js/shrine/chat.js` — roughly 590 lines that reimplement
+the same chat. So a rule that lives in the chat lives in two places, and the
+tests in `scripts/` are what keep them honest: `test-moderation`, `test-chat-ban`,
+`test-login-key-only`, `test-tung-emoji`, `test-chat-timestamps` and
+`test-god-combo-limit` each read `chat.html` and assert the embed carries the
+same rule as the shrine. Change how chat behaves and expect to change it twice.
 
 ## The whole shrine, one script tag
 
@@ -46,11 +66,11 @@ Local dry-run against a backend on your own machine:
 <!-- then load the host page with ?api=http://127.0.0.1:8000 -->
 ```
 
-## Embedded Shrine chat
+## The chat on its own
 
 Chat-only slice of the Shrine of Tung. No games launcher, no casino, no shrine faucet, no chooser.
 
-## Direct embed (this repo)
+### Direct embed (this repo)
 
 Iframe this page:
 
@@ -66,7 +86,7 @@ People log in with **username + login key** (the same `rid(24)` token stored as 
 
 `?api=` overrides the backend (local testing): `embed/chat.html?api=http://127.0.0.1:8000`
 
-## Obfuscated embed (secondary repo)
+### Obfuscated embed (secondary repo)
 
 You cannot hide that the chat *code* comes from this project, but you can hide the GitHub Pages URL you hand to people.
 
