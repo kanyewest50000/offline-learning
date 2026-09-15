@@ -1269,6 +1269,9 @@ type Duel = {
   reason: string;        // why it ended: cancelled | expired | unconfirmed | forfeit | play | clock | bust | draw
   rounds: { host: string; guest: string; won: string | null }[];
   cards?: CutCards;
+  // the whole poker tournament, carried on the duel record so that a hand and
+  // the escrow that pays for it move in the same atomic commit
+  poker?: PokerState;
 };
 
 function extraOf(d: Duel): DuelSide[] {
@@ -1276,7 +1279,8 @@ function extraOf(d: Duel): DuelSide[] {
 }
 function duelSeats(d: Duel): number {
   const n = Number(d.seats);
-  return n === 3 || n === 4 ? n : 2;
+  const max = SEAT_MAX[d.game] ?? 2;
+  return n >= 3 && n <= max ? n : 2;
 }
 function seatedPlayers(d: Duel): DuelSide[] {
   return d.guest ? [d.host, d.guest, ...extraOf(d)] : [d.host];
@@ -1334,11 +1338,18 @@ const DUEL_GAMES: Record<string, { name: string; moves: string[]; target: number
   // no moves either: for three minutes the floor IS the game, and the stacks
   // are the scoreboard. See the wood block further down.
   comp: { name: "Competitive Gambling", moves: [], target: 1 },
+  // no moves in the duel sense either: poker has its own turn order, its own
+  // clock and its own endpoint, and it runs for as long as it takes
+  poker: { name: "Poker", moves: [], target: 1 },
 };
 // The games that can wait for a third and a fourth chair. Tung, Wood, Fire is
 // a hand against ONE opponent — its rounds, its score and its forfeit rule are
 // all written for two — so it stays two however many a client asks for.
-const MULTI_SEAT = new Set(["cut", "comp"]);
+const MULTI_SEAT = new Set(["cut", "comp", "poker"]);
+// How wide each of them goes. The Cut and Competitive Gambling were built for
+// four; poker takes a fifth because a five-handed table is the one everybody
+// means by a home game.
+const SEAT_MAX: Record<string, number> = { cut: 4, comp: 4, poker: 5 };
 // Tung cuts a card. He does not throw a hand of Tung, Wood, Fire and he does
 // not spend three minutes on the floor, so The Cut is the one table he sits at.
 const CAN_CALL_TUNG = new Set(["cut"]);
@@ -1451,6 +1462,8 @@ function duelView(d: Duel, uid: string | null) {
       }))
       : null,
     settled: d.settled,
+    // the whole tournament, already redacted for this player
+    poker: d.game === "poker" ? pokerView(d, uid) : null,
   };
 }
 
@@ -1645,6 +1658,28 @@ async function sweepDuel(entry: Deno.KvEntryMaybe<Duel>): Promise<Deno.KvEntryMa
       // the buzzer. nothing to play out — the stacks have been the score all
       // along, and the clock stopping is simply when they are read.
       out = compResult(d, "clock");
+    } else if (d.game === "poker") {
+      // Not an ending: a tournament does not expire, one player runs out of
+      // time to act. They check or fold, the hand carries on, and the clock is
+      // wound again for whoever is next. Only a table that has come down to one
+      // player with chips is finished.
+      const ps: PokerState = JSON.parse(JSON.stringify(d.poker)) as PokerState;
+      const people = seatedPlayers(d);
+      // either the finished hand has been up long enough and the next one is
+      // dealt, or the player to act has run their clock down
+      if (ps.next > 0) pokerDealNext(ps, people.map((p) => p.name));
+      else pokerAutoAct(ps, people.map((p) => p.name));
+      if (pokerOver(ps)) {
+        const left = pokerAlive(ps);
+        const winner = left.length === 1 ? people[left[0]] : null;
+        out = finishDuel({ ...d, poker: ps }, winner ? winner.id : null, "play");
+        out.next.poker = ps;
+      } else {
+        const next: Duel = { ...d, poker: ps, deadline: pokerDeadline(ps) };
+        if (await commitDuel(cur, next, [])) return await kv.get<Duel>(["duel", d.id]);
+        cur = await kv.get<Duel>(["duel", d.id]);
+        continue;
+      }
     } else {
       // live: whoever failed to move forfeits. both asleep and it is a wash.
       const hostMoved = d.host.move !== null;
@@ -1680,6 +1715,548 @@ function cutDealFor(people: DuelSide[]): { cards: CutCards; winnerId: string } {
       winnerId: people[ranks.indexOf(hi)].id,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// POKER — the pit's tournament.
+//
+// Every other table in the pit resolves in one stroke: a hand thrown, a card
+// cut, a clock run down. This one does not. Everybody buys in for the same
+// stake, is handed the same stack of chips, and plays until one of them has
+// the lot — so the table has to survive dozens of hands, players busting out
+// of it, and a blind that climbs until it forces the issue.
+//
+// The chips are not sahurs and never become sahurs, exactly like the wood in
+// Competitive Gambling. They are dealt by the tournament, moved around inside
+// it, and swept when it ends; the only thing that crosses back out is the pot,
+// which is the buy-ins, escrowed by /duel/create and /duel/join before a card
+// was dealt and released by the same commitDuel() every other table pays
+// through. So a player who finds a way to print chips has printed something
+// that buys nothing and expires with the table.
+//
+// It ends because the blinds make it end. They step up every few minutes and
+// do not stop at 250/500 — by the time they are 1000/2000 a starting stack is
+// half a big blind and the hands play themselves. That is what stops a
+// tournament nobody is winning from sitting in the pit forever holding two
+// people's sahurs.
+//
+// Hole cards are the one thing here that must never be shipped early, the same
+// rule that hides a move in Tung, Wood, Fire: pokerView() gives you your own
+// two and nobody else's until a showdown puts them face up.
+const POKER_STACK = Number(Deno.env.get("POKER_STACK") || 1000);
+const POKER_ACT_MS = Number(Deno.env.get("POKER_ACT_MS") || 45 * 1000);
+// How long the finished hand stays on the table before the next one is dealt.
+// Not a flourish: the hand pays out, busts whoever it emptied and is replaced
+// in one pass, so without somewhere to stop, the cards that won would be
+// cleared before any client could ask what happened — every showdown in the
+// tournament would resolve to a stack that changed size for no visible reason.
+const POKER_SHOW_MS = Number(Deno.env.get("POKER_SHOW_MS") || 6 * 1000);
+const POKER_LEVEL_MS = Number(Deno.env.get("POKER_LEVEL_MS") || 3 * 60 * 1000);
+// Small and big, one row per level. Level 7 is 250/500 and starts at eighteen
+// minutes; the rows past it exist so a stubborn heads-up cannot outlast the
+// structure. Deep enough early to play, steep enough late to finish.
+const POKER_LEVELS: [number, number][] = [
+  [10, 20], [15, 30], [25, 50], [50, 100], [100, 200],
+  [150, 300], [250, 500], [400, 800], [600, 1200], [1000, 2000],
+];
+
+type PokerSeat = {
+  chips: number;      // the stack behind, which is what a player can still lose
+  inStreet: number;   // put in on THIS street — what a call is measured against
+  inHand: number;     // put in across the whole hand — what side pots are cut from
+  cards: string[];
+  folded: boolean;
+  allIn: boolean;
+  out: boolean;       // busted; keeps its seat so names and order never shift
+  acted: boolean;     // since the last raise, which is what closes a street
+};
+type PokerShow = { name: string; cards: string[]; hand: string; won: number };
+type PokerState = {
+  startedAt: number;  // the blind clock runs from here, not from each hand
+  button: number;
+  hand: number;
+  street: number;     // 0 pre, 1 flop, 2 turn, 3 river
+  deck: string[];
+  board: string[];
+  seats: PokerSeat[];
+  toAct: number;      // seat index, or -1 between hands
+  call: number;       // the amount to match this street
+  minRaise: number;   // smallest legal raise on top of it
+  log: string[];
+  show: PokerShow[] | null;   // set for the hand just finished, cleared on the next deal
+  note: string;               // one line describing how the last hand ended
+  next: number;               // when the next hand deals; 0 unless a hand is being shown
+};
+
+const PK_ORDER = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
+function pkVal(c: string): number { return PK_ORDER.indexOf(rankOf(c)) + 2; }
+function pkSuit(c: string): string { return c.slice(-1); }
+
+// A real deck, shuffled and dealt from — not drawCard(), which draws with
+// replacement. That is fine for blackjack's infinite shoe and would be a
+// disaster here, where two players holding the same ace decides pots.
+function pokerDeck(): string[] {
+  const d: string[] = [];
+  for (const r of RANKS) for (const s of SUITS) d.push(r + s);
+  for (let i = d.length - 1; i > 0; i--) {
+    const j = rndInt(i + 1);
+    const t = d[i]; d[i] = d[j]; d[j] = t;
+  }
+  return d;
+}
+
+const POKER_NAMES = [
+  "high card", "a pair", "two pair", "three of a kind", "a straight",
+  "a flush", "a full house", "four of a kind", "a straight flush",
+];
+
+// The best five of seven, as a list compared left to right: category first,
+// then whatever breaks a tie inside it. Two equal lists are a genuine chop.
+function pokerScore(cards: string[]): number[] {
+  const bySuit: Record<string, number[]> = {};
+  const count: Record<number, number> = {};
+  const vals: number[] = [];
+  for (const c of cards) {
+    const v = pkVal(c), s = pkSuit(c);
+    vals.push(v);
+    (bySuit[s] = bySuit[s] || []).push(v);
+    count[v] = (count[v] || 0) + 1;
+  }
+  const uniq = Array.from(new Set(vals)).sort((a, b) => b - a);
+  // the top of the best run of five, or 0. The ace is added back as a 1 so the
+  // wheel (5-4-3-2-A) is found without it also inventing Q-K-A-2-3.
+  const runTop = (list: number[]): number => {
+    const u = Array.from(new Set(list)).sort((a, b) => b - a);
+    const w = u.indexOf(14) >= 0 ? u.concat([1]) : u;
+    let run = 1;
+    for (let i = 1; i < w.length; i++) {
+      if (w[i] === w[i - 1] - 1) { run++; if (run >= 5) return w[i] + 4; }
+      else run = 1;
+    }
+    return 0;
+  };
+  const flush = Object.keys(bySuit).find((s) => bySuit[s].length >= 5);
+  if (flush) {
+    const sf = runTop(bySuit[flush]);
+    if (sf) return [8, sf];
+  }
+  // ranks by how many of them there are, then by rank: quads first, then the
+  // trips of a full house, and so on down
+  const groups = uniq.slice().sort((a, b) => (count[b] - count[a]) || (b - a));
+  const top = groups[0], n = count[top];
+  if (n === 4) return [7, top, uniq.filter((v) => v !== top)[0]];
+  if (n === 3) {
+    // a second three of a kind counts as the pair, which is why this looks for
+    // two of them rather than exactly two
+    const pair = groups.slice(1).find((v) => count[v] >= 2);
+    if (pair !== undefined) return [6, top, pair];
+  }
+  if (flush) return [5, ...bySuit[flush].slice().sort((a, b) => b - a).slice(0, 5)];
+  const st = runTop(uniq);
+  if (st) return [4, st];
+  if (n === 3) return [3, top, ...uniq.filter((v) => v !== top).slice(0, 2)];
+  if (n === 2) {
+    const pairs = groups.filter((v) => count[v] === 2).sort((a, b) => b - a);
+    if (pairs.length >= 2) {
+      return [2, pairs[0], pairs[1], uniq.filter((v) => v !== pairs[0] && v !== pairs[1])[0]];
+    }
+    return [1, top, ...uniq.filter((v) => v !== top).slice(0, 3)];
+  }
+  return [0, ...uniq.slice(0, 5)];
+}
+function pokerCmp(a: number[], b: number[]): number {
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a[i] ?? 0, y = b[i] ?? 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+// Chips are whole things, so a split pot is divided by the same flooring the
+// sahur pots use: shares differ by at most one and add back to exactly the pot.
+// The odd chip goes to the earliest seat, which is the one first left of the
+// button — the ordinary rule, and the one the client can explain.
+function splitChips(pot: number, ways: number): number[] {
+  if (!(ways > 0)) return [];
+  const out: number[] = [];
+  let paid = 0;
+  for (let i = 1; i <= ways; i++) {
+    const upto = Math.floor(pot * i / ways);
+    out.push(upto - paid);
+    paid = upto;
+  }
+  // the flooring leaves the remainder at the end; move it to the front
+  const left = pot - out.reduce((a, b) => a + b, 0);
+  if (left > 0) out[0] += left;
+  return out;
+}
+
+function pokerLevel(ps: PokerState): number {
+  const n = Math.floor((Date.now() - ps.startedAt) / POKER_LEVEL_MS);
+  return Math.max(0, Math.min(POKER_LEVELS.length - 1, n));
+}
+function pokerBlinds(ps: PokerState): [number, number] { return POKER_LEVELS[pokerLevel(ps)]; }
+function pokerPot(ps: PokerState): number {
+  return ps.seats.reduce((a, s) => a + s.inHand, 0);
+}
+function pokerAlive(ps: PokerState): number[] {
+  return ps.seats.map((s, i) => (s.out ? -1 : i)).filter((i) => i >= 0);
+}
+// seat indices in playing order starting the seat after `from`, skipping the
+// busted. Used for the button, the blinds and whose turn it is.
+function pokerFrom(ps: PokerState, from: number): number[] {
+  const out: number[] = [];
+  const n = ps.seats.length;
+  for (let k = 1; k <= n; k++) {
+    const i = (from + k) % n;
+    if (!ps.seats[i].out) out.push(i);
+  }
+  return out;
+}
+// Players who can still be asked for a decision: in the hand and with chips.
+function pokerActive(ps: PokerState): number[] {
+  return pokerAlive(ps).filter((i) => !ps.seats[i].folded && !ps.seats[i].allIn);
+}
+function pokerLive(ps: PokerState): number[] {
+  return pokerAlive(ps).filter((i) => !ps.seats[i].folded);
+}
+
+// Move chips from a stack onto the table. Never more than the player has —
+// a short stack calling a bigger bet is simply all in for what it holds.
+function pokerPut(s: PokerSeat, want: number): number {
+  const amt = Math.max(0, Math.min(want, s.chips));
+  s.chips -= amt;
+  s.inStreet += amt;
+  s.inHand += amt;
+  if (s.chips === 0) s.allIn = true;
+  return amt;
+}
+
+function pokerNewHand(ps: PokerState, names: string[]): void {
+  const alive = pokerAlive(ps);
+  ps.hand += 1;
+  ps.street = 0;
+  ps.board = [];
+  ps.deck = pokerDeck();
+  ps.show = null;
+  for (const s of ps.seats) {
+    s.inStreet = 0; s.inHand = 0; s.cards = []; s.acted = false;
+    s.folded = s.out; s.allIn = false;
+  }
+  // the button moves one live seat on, every hand
+  ps.button = pokerFrom(ps, ps.button)[0] ?? ps.button;
+  for (const i of alive) ps.seats[i].cards = [ps.deck.pop()!, ps.deck.pop()!];
+
+  const [sb, bb] = pokerBlinds(ps);
+  const after = pokerFrom(ps, ps.button);
+  // Heads-up is the exception every poker engine has to special-case: the
+  // button IS the small blind and acts first before the flop, then last after
+  // it. With three or more the blinds are simply the next two seats along.
+  const heads = alive.length === 2;
+  const sbSeat = heads ? ps.button : after[0];
+  const bbSeat = heads ? after[0] : after[1];
+  pokerPut(ps.seats[sbSeat], sb);
+  pokerPut(ps.seats[bbSeat], bb);
+  ps.call = bb;
+  ps.minRaise = bb;
+  // first to speak is the seat after the big blind — which heads-up wraps back
+  // round to the button
+  ps.toAct = pokerFrom(ps, bbSeat).find((i) => !ps.seats[i].folded && !ps.seats[i].allIn) ?? -1;
+  ps.note = "hand " + ps.hand + " — blinds " + sb + "/" + bb;
+  ps.log = (ps.log || []).concat([
+    "hand " + ps.hand + ": " + names[sbSeat] + " posts " + sb + ", " + names[bbSeat] + " posts " + bb,
+  ]).slice(-12);
+}
+
+// Has the betting on this street finished? Everyone still able to act has had
+// their turn since the last raise and has matched it. One player left able to
+// act closes it too — there is nobody to raise into.
+function pokerStreetClosed(ps: PokerState): boolean {
+  if (pokerLive(ps).length <= 1) return true;
+  const act = pokerActive(ps);
+  if (!act.length) return true;
+  // One player with chips against nothing but all-ins has nobody to bet into.
+  // They still have to cover what is already out — until they have, the street
+  // is open and they are the one being asked — but once they match it there is
+  // no betting left to do and the rest of the board simply runs out.
+  if (act.length === 1) return ps.seats[act[0]].inStreet === ps.call;
+  return act.every((i) => ps.seats[i].acted && ps.seats[i].inStreet === ps.call);
+}
+
+function pokerCollect(ps: PokerState): void {
+  for (const s of ps.seats) s.inStreet = 0;
+  ps.call = 0;
+  const [, bb] = pokerBlinds(ps);
+  ps.minRaise = bb;
+  for (const s of ps.seats) s.acted = false;
+}
+
+export type PokerAward = { seat: number; amount: number };
+// Cut the pot into a main pot and however many side pots the all-ins made, and
+// give each one to the best hand among the players who paid into it. This is
+// the piece that has to conserve: every chip that went in comes back out, and
+// the test counts them.
+function pokerAwards(ps: PokerState): { awards: PokerAward[]; scores: Record<number, number[]> } {
+  const seats = ps.seats;
+  const put = seats.map((s) => s.inHand);
+  const levels = Array.from(new Set(put.filter((p) => p > 0))).sort((a, b) => a - b);
+  const totals: number[] = seats.map(() => 0);
+  const live = pokerLive(ps);
+  const scores: Record<number, number[]> = {};
+  for (const i of live) scores[i] = pokerScore(seats[i].cards.concat(ps.board));
+  let prev = 0;
+  for (const lv of levels) {
+    let amount = 0;
+    for (let i = 0; i < seats.length; i++) amount += Math.max(0, Math.min(put[i], lv) - prev);
+    prev = lv;
+    if (amount <= 0) continue;
+    // only players who were still in the hand AND paid up to this level can win it
+    const elig = live.filter((i) => put[i] >= lv);
+    if (!elig.length) continue;
+    let best: number[] | null = null;
+    for (const i of elig) if (!best || pokerCmp(scores[i], best) > 0) best = scores[i];
+    // ordered from the button so the odd chip lands where the rule says
+    const order = pokerFrom(ps, ps.button);
+    const winners = order.filter((i) => elig.indexOf(i) >= 0 && pokerCmp(scores[i], best!) === 0);
+    const shares = splitChips(amount, winners.length);
+    winners.forEach((i, k) => { totals[i] += shares[k]; });
+  }
+  const awards: PokerAward[] = [];
+  totals.forEach((amount, seat) => { if (amount > 0) awards.push({ seat, amount }); });
+  return { awards, scores };
+}
+
+// Deal what this street shows. A card goes face down before each one, which
+// changes no odds a player can compute but is how the game is dealt.
+function pokerBoard(ps: PokerState): void {
+  ps.deck.pop();
+  const n = ps.street === 1 ? 3 : 1;
+  for (let k = 0; k < n; k++) ps.board.push(ps.deck.pop()!);
+}
+
+// Pay the hand out, bust whoever it emptied, and leave behind the record of
+// what happened that the client paints.
+function pokerFinishHand(ps: PokerState, names: string[]): void {
+  const pot = pokerPot(ps);
+  const live = pokerLive(ps);
+  if (live.length <= 1) {
+    // everyone else folded. The pot is taken without a showdown, and a hand
+    // that was never called is never shown — that is the player's to keep.
+    const w = live[0];
+    if (w !== undefined) ps.seats[w].chips += pot;
+    ps.show = null;
+    ps.note = (w !== undefined ? names[w] : "nobody") + " takes " + pot +
+      (ps.hand > 0 ? "" : "") + " — no showdown";
+    ps.log = ps.log.concat([ps.note]).slice(-12);
+  } else {
+    const { awards, scores } = pokerAwards(ps);
+    const won: number[] = ps.seats.map(() => 0);
+    for (const a of awards) { ps.seats[a.seat].chips += a.amount; won[a.seat] = a.amount; }
+    ps.show = live.map((i) => ({
+      name: names[i],
+      cards: ps.seats[i].cards.slice(),
+      hand: POKER_NAMES[scores[i][0]] || "a hand",
+      won: won[i],
+    }));
+    const best = ps.show.filter((x) => x.won > 0).map((x) => x.name);
+    ps.note = (best.join(" and ") || "nobody") + " " +
+      (best.length > 1 ? "split" : "takes") + " " + pot;
+    ps.log = ps.log.concat([ps.note]).slice(-12);
+  }
+  for (const s of ps.seats) { s.inStreet = 0; s.inHand = 0; }
+  // busting is read off the stack, after the pot has been paid, so an all-in
+  // that got there first is not buried by the hand it just won
+  for (const s of ps.seats) if (!s.out && s.chips <= 0) { s.out = true; s.folded = true; }
+  ps.toAct = -1;
+  // the hand stays up until this passes, so what just happened can be read
+  ps.next = Date.now() + POKER_SHOW_MS;
+}
+
+// Clear the finished hand away and deal the next one. Kept apart from
+// pokerStep() so that nothing deals a hand as a side effect of somebody
+// acting — the table pauses on a result and moves on from a clock instead.
+function pokerDealNext(ps: PokerState, names: string[]): void {
+  ps.next = 0;
+  pokerNewHand(ps, names);
+  pokerStep(ps, names);
+}
+
+function pokerOver(ps: PokerState): boolean { return pokerAlive(ps).length <= 1; }
+// What the duel's own deadline should be: either the hand on the table clearing
+// itself away, or the player whose turn it is running out of time.
+function pokerDeadline(ps: PokerState): number {
+  return ps.next > 0 ? ps.next : Date.now() + POKER_ACT_MS;
+}
+
+// Whose turn it is, searching from whoever went last. A player still owing
+// chips is asked again even if they have already spoken this street, which is
+// what makes a raise come back round.
+function pokerNextActor(ps: PokerState): number {
+  const start = ps.toAct >= 0 ? ps.toAct : ps.button;
+  for (const i of pokerFrom(ps, start)) {
+    const s = ps.seats[i];
+    if (s.folded || s.allIn || s.out) continue;
+    if (!s.acted || s.inStreet !== ps.call) return i;
+  }
+  return -1;
+}
+
+// Carry the hand as far as it can go without asking anybody anything: close
+// streets, run the board out over all-ins, pay the pot, and deal the next hand.
+// Returns with toAct set to a player, or with the tournament over.
+function pokerStep(ps: PokerState, names: string[]): void {
+  for (let guard = 0; guard < 64; guard++) {
+    if (ps.next > 0) return;   // a finished hand is on the table; it deals on its own clock
+    if (!pokerStreetClosed(ps)) {
+      const nxt = pokerNextActor(ps);
+      if (nxt >= 0) { ps.toAct = nxt; return; }
+    }
+    if (pokerLive(ps).length <= 1 || ps.street >= 3) {
+      pokerFinishHand(ps, names);
+      return;
+    }
+    pokerCollect(ps);
+    ps.street += 1;
+    pokerBoard(ps);
+    ps.toAct = ps.button;   // so the next search begins left of the button
+  }
+}
+
+// One action from one seat. Returns an error for the player, or null.
+function pokerApply(ps: PokerState, i: number, action: string, amount: number, names: string[]): string | null {
+  const s = ps.seats[i];
+  if (ps.toAct !== i) return "not your turn";
+  if (s.out || s.folded || s.allIn) return "you are not in this hand";
+  const owe = ps.call - s.inStreet;
+  const say = (t: string) => { ps.log = ps.log.concat([names[i] + " " + t]).slice(-12); };
+  if (action === "fold") {
+    s.folded = true; s.acted = true; say("folds");
+  } else if (action === "check") {
+    if (owe > 0) return "there is " + owe + " to call";
+    s.acted = true; say("checks");
+  } else if (action === "call") {
+    if (owe <= 0) return "there is nothing to call";
+    const paid = pokerPut(s, owe);
+    s.acted = true; say(s.allIn ? "calls " + paid + " and is all in" : "calls " + paid);
+  } else if (action === "bet" || action === "raise" || action === "allin") {
+    const maxTo = s.inStreet + s.chips;
+    let target = action === "allin" ? maxTo : Math.floor(Number(amount));
+    if (!Number.isFinite(target)) return "that is not an amount";
+    if (target > maxTo) target = maxTo;
+    if (target < maxTo) {
+      // a raise that is not all in has to be a real one
+      const least = ps.call + ps.minRaise;
+      if (target < least) return "raise to at least " + least;
+    }
+    if (target <= s.inStreet) return "that is not a raise";
+    pokerPut(s, target - s.inStreet);
+    if (s.inStreet > ps.call) {
+      const inc = s.inStreet - ps.call;
+      const full = inc >= ps.minRaise;
+      ps.call = s.inStreet;
+      // A short all-in — one that cannot cover a full raise — does not reopen
+      // the betting to players who have already spoken. They still have to
+      // match it, which pokerNextActor asks of them, but they cannot re-raise
+      // off the back of it.
+      if (full) {
+        ps.minRaise = inc;
+        for (let k = 0; k < ps.seats.length; k++) if (k !== i) ps.seats[k].acted = false;
+      }
+    }
+    s.acted = true;
+    say(s.allIn ? "is all in for " + s.inStreet : "raises to " + s.inStreet);
+  } else {
+    return "no such move";
+  }
+  pokerStep(ps, names);
+  return null;
+}
+
+// The clock. A player who says nothing checks when it is free and folds when it
+// is not — never a call, which would spend their chips for them.
+function pokerAutoAct(ps: PokerState, names: string[]): void {
+  const i = ps.toAct;
+  if (i < 0 || !ps.seats[i]) return;
+  const free = ps.seats[i].inStreet === ps.call;
+  pokerApply(ps, i, free ? "check" : "fold", 0, names);
+}
+
+function pokerStart(people: DuelSide[]): PokerState {
+  const now = Date.now();
+  const ps: PokerState = {
+    startedAt: now, button: people.length - 1, hand: 0, street: 0,
+    deck: [], board: [],
+    seats: people.map(() => ({
+      chips: POKER_STACK, inStreet: 0, inHand: 0, cards: [],
+      folded: false, allIn: false, out: false, acted: false,
+    })),
+    toAct: -1, call: 0, minRaise: 0, log: [], show: null, note: "", next: 0,
+  };
+  pokerNewHand(ps, people.map((p) => p.name));
+  pokerStep(ps, people.map((p) => p.name));
+  return ps;
+}
+
+// What one player is allowed to see. Their own two cards, everybody's stack and
+// everything already face up — and nobody else's hole cards until the hand is
+// shown down, which is the same rule that hides a move in Tung, Wood, Fire.
+function pokerView(d: Duel, uid: string | null) {
+  const ps = d.poker;
+  if (!ps) return null;
+  const people = seatedPlayers(d);
+  const me = people.findIndex((p) => p.id === uid);
+  const [sb, bb] = pokerBlinds(ps);
+  const lvl = pokerLevel(ps);
+  const mySeat = me >= 0 ? ps.seats[me] : null;
+  const owe = mySeat ? Math.max(0, ps.call - mySeat.inStreet) : 0;
+  return {
+    hand: ps.hand,
+    street: ps.street,
+    board: ps.board,
+    pot: pokerPot(ps),
+    call: ps.call,
+    minRaise: ps.minRaise,
+    button: ps.button,
+    blinds: [sb, bb],
+    level: lvl + 1,
+    levels: POKER_LEVELS.length,
+    // when the blinds go up next, so the client can run the clock down
+    nextLevel: lvl + 1 < POKER_LEVELS.length ? ps.startedAt + (lvl + 1) * POKER_LEVEL_MS : 0,
+    stack: POKER_STACK,
+    toAct: ps.toAct,
+    yourSeat: me,
+    yourTurn: me >= 0 && ps.toAct === me,
+    yourCards: mySeat && !mySeat.out ? mySeat.cards : [],
+    toCall: owe,
+    // what a raise has to reach, and the most this player could put out
+    raiseTo: mySeat ? Math.min(ps.call + ps.minRaise, mySeat.inStreet + mySeat.chips) : 0,
+    maxTo: mySeat ? mySeat.inStreet + mySeat.chips : 0,
+    canCheck: !!mySeat && owe === 0,
+    seats: people.map((p, i) => ({
+      name: p.name,
+      you: !!uid && p.id === uid,
+      chips: ps.seats[i].chips,
+      inStreet: ps.seats[i].inStreet,
+      folded: ps.seats[i].folded,
+      allIn: ps.seats[i].allIn,
+      out: ps.seats[i].out,
+      // face up only at a showdown; otherwise the client is told how many
+      // cards are there and nothing about them
+      cards: (ps.show || []).find((x) => x.name === p.name)?.cards ??
+        (i === me && !ps.seats[i].out ? ps.seats[i].cards : []),
+      held: ps.seats[i].cards.length,
+    })),
+    show: ps.show,
+    note: ps.note,
+    log: ps.log,
+    // set while the finished hand is still on the table, so the client can show
+    // the result rather than blink straight into the next deal
+    showing: ps.next > 0,
+    next: ps.next,
+    deadline: d.deadline,
+    now: Date.now(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2408,7 +2985,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const now = Date.now();
     const id = rid(10);
     const want = Number(b.seats);
-    const seats = MULTI_SEAT.has(game) && (want === 3 || want === 4) ? want : 2;
+    const max = SEAT_MAX[game] ?? 2;
+    const seats = MULTI_SEAT.has(game) && want >= 3 && want <= max ? want : 2;
     const duel: Duel = {
       id, game, bet, seats, host: duelSide(u), guest: null, extra: [], state: "open", ts: now,
       deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, paid: [], reason: "", rounds: [],
@@ -2573,6 +3151,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         done.next.cards = cut.cards;
         credits = done.credits;
         Object.assign(next, done.next);
+      } else if (allIn && d.game === "poker") {
+        // chips and the first hand are dealt in the same commit as the last
+        // yes, so the blind clock starts when the table does rather than when
+        // somebody first gets round to loading it
+        next.state = "live";
+        next.poker = pokerStart(people);
+        next.deadline = Date.now() + POKER_ACT_MS;
       } else if (allIn && d.game === "comp") {
         // three minutes on the clock and a stack of wood chips each, dealt in the
         // same commit as the last yes so nobody starts a tick early
@@ -2582,6 +3167,54 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       } else if (allIn) {
         next.state = "live";
         next.deadline = Date.now() + DUEL_MOVE_MS;
+      }
+      if (await commitDuel(entry, next, credits)) {
+        return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
+      }
+    }
+    return json({ error: "busy" }, 503);
+  }
+
+  // ---------- poker: fold, check, call, raise ----------
+  //
+  // Its own endpoint rather than another move on /duel/move, because a poker
+  // decision carries an amount and lands on a turn order that the duel's
+  // one-move-each shape has no room for. Everything else about it is the same:
+  // the record is re-read, the action is applied to a copy, and the copy is
+  // committed against the entry it was read from, so two clicks racing cannot
+  // both be taken.
+  if (req.method === "POST" && path === "/duel/poker") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const action = clip(b.action, 8);
+    const amount = Number(b.amount);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const entry = await loadDuel(clip(b.id, 32));
+      const d = entry.value;
+      if (!d) return json({ error: "gone" }, 404);
+      if (d.settled) return json({ error: "over", duel: duelView(d, u.id) }, 409);
+      if (d.game !== "poker" || !d.poker) return json({ error: "not a poker table" }, 400);
+      if (d.state !== "live") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
+      const people = seatedPlayers(d);
+      const seat = people.findIndex((p) => p.id === u.id);
+      if (seat < 0) return json({ error: "not your table" }, 403);
+      // a copy, so a refused action leaves nothing behind and a lost race can
+      // simply be tried again from the record as it now stands
+      const ps: PokerState = JSON.parse(JSON.stringify(d.poker)) as PokerState;
+      const err = pokerApply(ps, seat, action, amount, people.map((p) => p.name));
+      if (err) return json({ error: err, duel: duelView(d, u.id) }, 400);
+      let next: Duel = { ...d, poker: ps, deadline: pokerDeadline(ps) };
+      let credits: { id: string; amount: number }[] = [];
+      if (pokerOver(ps)) {
+        // one player holds every chip. The buy-ins come out of escrow to them,
+        // and the chips themselves stop existing with the table.
+        const left = pokerAlive(ps);
+        const winner = left.length === 1 ? people[left[0]] : null;
+        const done = finishDuel(next, winner ? winner.id : null, "play");
+        credits = done.credits;
+        next = { ...done.next, poker: ps };
       }
       if (await commitDuel(entry, next, credits)) {
         return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
