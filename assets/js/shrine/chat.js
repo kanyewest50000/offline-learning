@@ -185,10 +185,60 @@
     'if(r&&r.themes){THEME_STATE=r.themes;reconcileTheme();}' +
     'buildThemes();' +
     '}).catch(function(){buildThemes();});}' +
-    'function openPlay(g){' +
-    'var w=window.open("about:blank","_blank");' +
-    'if(!w){alert(' + JSON.stringify(LBL_POPUP) + ');return;}' +
-    'var ct=cloakTitle(),cf=cloakFav();' +
+    /* ---- launching a game ----
+       It used to be an iframe pointed at the game's URL. Some networks refuse
+       to frame anything, and a refused frame is a black rectangle with no
+       error to catch — so the game is FETCHED instead and written into the tab
+       as the whole document. Same bytes, same origin rules, but it arrives as
+       an ordinary page load rather than as a frame, which is the thing being
+       blocked.
+
+       Writing the whole document rather than injecting into a container is
+       deliberate: half these games call document.write themselves while they
+       load, and Unity and Godot loaders read location and document.baseURI.
+       Given the whole document they behave exactly as they would if you had
+       navigated to them, which nothing short of the whole document achieves.
+
+       The cost is the tab's own header bar, which cannot survive the game
+       writing over the document, so the cloak is re-applied afterwards
+       instead. And if the fetch is what fails — a cross-origin embed without
+       CORS, say — the old iframe is still there to fall back to. */
+    'function gameDir(u){var q=u.split("#")[0].split("?")[0];var i=q.lastIndexOf("/");return i>=0?q.slice(0,i+1):q;}' +
+    /* the gn-math stubs carry an absolute <base> of their own and must keep
+       it; everything else is a folder of relative assets and needs one, or it
+       would look for them wherever the shrine happens to be served from */
+    'function withBase(html,u){' +
+    'if(/<base[\\s>]/i.test(html))return html;' +
+    'var tag="<base href=\\""+gameDir(u)+"\\">";' +
+    'if(/<head[^>]*>/i.test(html))return html.replace(/<head[^>]*>/i,function(m){return m+tag;});' +
+    'if(/<html[^>]*>/i.test(html))return html.replace(/<html[^>]*>/i,function(m){return m+"<head>"+tag+"</head>";});' +
+    'return tag+html;}' +
+    /* Leftover gn-math/html URLs are rewritten to games/g/<file> under
+       Shrine.BASE — never Deno, never a CDN HTML host (jsDelivr serves .html
+       as text/plain, so a game would arrive as its own source text). */
+    'function gameUrl(u){var mark="gn-math/html/";var idx=u.indexOf(mark);' +
+    'if(idx>=0){var rest=u.slice(idx+mark.length);var s=rest.indexOf("/");' +
+    'if(s>=0)return ' + JSON.stringify(new URL("games/g/", Shrine.BASE || location.href).href) + '+rest.slice(s+1);}' +
+    'return u;}' +
+    'function playShell(ct,cf,msg){' +
+    'return `<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1"><title>${ct}</title>' +
+    '<link rel="icon" href="${cf}">' +
+    '<style>html,body{margin:0;height:100%;background:#000;color:#c8823c;' +
+    'font-family:system-ui,Segoe UI,Roboto,sans-serif}' +
+    '#boot{display:flex;align-items:center;justify-content:center;height:100vh;padding:24px;text-align:center;font-size:14px}' +
+    '</style></head><body><div id="boot">${msg}</div></body></html>`;}' +
+    /* the game replaces the document, title and icon included, so the disguise
+       is put back over the top of whatever it set */
+    'function reCloak(w,ct,cf){var go=function(){try{' +
+    'w.document.title=ct;' +
+    'var l=w.document.querySelector("link[rel~=\'icon\']");' +
+    'if(!l){l=w.document.createElement("link");l.rel="icon";(w.document.head||w.document.documentElement).appendChild(l);}' +
+    'l.href=cf;}catch(e){}};' +
+    'setTimeout(go,60);setTimeout(go,800);setTimeout(go,2500);try{w.addEventListener("load",go);}catch(e){}}' +
+    /* the way it used to be done, kept for when the fetch is the thing that
+       cannot get through */
+    'function playFrame(w,g,url,ct,cf){' +
     'var doc=`<!DOCTYPE html><html><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1"><title>${ct}</title>' +
     '<link rel="icon" href="${cf}">' +
@@ -203,32 +253,34 @@
     '<button id="fs" title="fullscreen">⛶</button></div>' +
     '<iframe id="gf" allow="autoplay; fullscreen; gamepad; clipboard-read; clipboard-write" allowfullscreen></iframe>' +
     '</div><script>' +
-    /* iframe src is the Pages stub (GAMES URLs are remapped to games/g/
-       above). A real src is required: srcdoc made location.href
-       about:srcdoc and Unity loaders hung at 0%.
-       Leftover gn-math/html URLs are rewritten to games/g/<file> under
-       Shrine.BASE — never Deno, never a CDN HTML host (jsDelivr serves
-       .html as text/plain, so a game would arrive as source text). */
-    'var GURL="${g.u}";' +
-    'var gf=document.getElementById("gf");' +
-    '(function(){' +
-    'var mark="gn-math/html/";var idx=GURL.indexOf(mark);' +
-    'if(idx>=0){var rest=GURL.slice(idx+mark.length);var s=rest.indexOf("/");' +
-    'if(s>=0)GURL=' + JSON.stringify(new URL("games/g/", Shrine.BASE || location.href).href) + '+rest.slice(s+1);}' +
-    'gf.src=GURL;' +
-    '})();' +
-    'document.getElementById("x").onclick=function(){window.close();};' +   /* X = close this game tab */
+    'document.getElementById("gf").src="${url}";' +
+    'document.getElementById("x").onclick=function(){window.close();};' +
     'document.getElementById("fs").onclick=function(){var f=document.getElementById("gf");' +
     'if(document.fullscreenElement){(document.exitFullscreen||function(){}).call(document);}' +
-    'else{(f.requestFullscreen||f.webkitRequestFullscreen||function(){}).call(f);}};' +   /* toggle iframe fullscreen; header hides while fullscreen */
-    /* the nested-iframe easter-egg snippet, kept hidden, added to every game tab */
-    'var __egg=document.createElement("iframe");__egg.style.display="none";document.body.appendChild(__egg);__egg.contentDocument.write("<iframe>");' +
+    'else{(f.requestFullscreen||f.webkitRequestFullscreen||function(){}).call(f);}};' +
+    'try{var __egg=document.createElement("iframe");__egg.style.display="none";document.body.appendChild(__egg);__egg.contentDocument.write("<iframe>");}catch(e){}' +
     '<\\/script></body></html>`;' +
-    'w.document.open();w.document.write(doc);w.document.close();' +
+    'w.document.open();w.document.write(doc);w.document.close();}' +
+    'function openPlay(g){' +
+    'var w=window.open("about:blank","_blank");' +
+    'if(!w){alert(' + JSON.stringify(LBL_POPUP) + ');return;}' +
+    'var ct=cloakTitle(),cf=cloakFav();' +
+    'w.document.open();w.document.write(playShell(ct,cf,"loading\\u2026"));w.document.close();' +
+    'var url=gameUrl(g.u);' +
+    'fetch(url,{credentials:"omit"}).then(function(r){' +
+    'if(!r.ok)throw new Error(String(r.status));return r.text();' +
+    '}).then(function(html){' +
+    'if(w.closed)return;' +
+    'w.document.open();w.document.write(withBase(html,url));w.document.close();' +
+    'reCloak(w,ct,cf);' +
+    '}).catch(function(){if(!w.closed)playFrame(w,g,url,ct,cf);});' +
     '}' +
     'function buildCatalog(){playgrid.innerHTML="";GAMES.forEach(function(g){var b=document.createElement("button");b.type="button";b.className="gtile";b.textContent=g.n;b.setAttribute("data-name",g.n.toLowerCase());b.addEventListener("click",function(){openPlay(g);});playgrid.appendChild(b);});}' +
     'function hideOrigPlay(){if(!origplay)return;origplay.style.display="none";orighub.style.display="flex";origframe.src="about:blank";origTitle.textContent=' + JSON.stringify(LBL_ORIGINALS) + ';}' +
-    'function openOriginal(g){orighub.style.display="none";origplay.style.display="flex";origTitle.textContent=g.n;origframe.src=g.u;}' +
+    /* Tung's own three went through the same in-page iframe, and an iframe is
+       an iframe wherever it is pointed — so they open in a fetched tab like
+       everything else in the catalog now. The hub still lists them. */
+    'function openOriginal(g){openPlay(g);}' +
     'function buildOriginals(){orighub.innerHTML="";var lead=document.createElement("p");lead.className="origlead";lead.textContent="he made these himself. they are not kind.";orighub.appendChild(lead);var grid=document.createElement("div");grid.className="origgrid";ORIGINALS.forEach(function(g){var b=document.createElement("button");b.type="button";b.className="origtile";var t=document.createElement("strong");t.textContent=g.n;var s=document.createElement("span");s.textContent=g.s;b.appendChild(t);b.appendChild(s);b.addEventListener("click",function(){openOriginal(g);});grid.appendChild(b);});orighub.appendChild(grid);}' +
     'function filterCatalog(){var q=gsearch.value.toLowerCase();Array.prototype.forEach.call(playgrid.children,function(b){b.style.display=b.getAttribute("data-name").indexOf(q)>=0?"":"none";});}' +
     /* ---- :sahur: inline png, :tung: bat, tung x3 + sahur embeds the god ---- */

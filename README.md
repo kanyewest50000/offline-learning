@@ -38,7 +38,8 @@ server.ts               Deno backend: auth, approvals, chat history, balances,
                         every casino outcome. Runs on Deno Deploy, state in KV.
 embed/                  standalone embeds for other hosts: the chat on its own,
                         and the whole shrine from one script tag
-games/                  vendored game files served from this origin
+games/                  vendored game files served from this origin, fetched
+                        into their own tab rather than framed
 scripts/                tests and maintenance tools
 ```
 
@@ -62,6 +63,32 @@ and the server fills in what that message actually said, and whether a reaction
 is yours is a fact the server holds — so neither the words above a reply nor the
 number on a reaction chip can be set by whoever sent the request.
 
+## opening a game
+
+A catalog title used to be an `<iframe>` pointed at the game. Networks that
+refuse to frame things refuse the whole catalog that way, and a refused frame
+is a black rectangle with nothing to catch — so the game is fetched and written
+into its tab as the whole document instead. The same bytes over the same
+origin rules, arriving as an ordinary page load rather than as a frame.
+
+The whole document, not a container: half of these call `document.write` while
+they load, and the Unity and Godot loaders read `location` and
+`document.baseURI`. Handed the whole document they behave exactly as they would
+if you had navigated to them, which is the only thing that works across all of
+them. An `about:blank` popup reports its opener's URL, so `location` is a real
+one — the reason this is not a `srcdoc` frame, which reads `about:srcdoc` and
+hangs those loaders at 0%.
+
+Relative assets still have to resolve. The 777 gn-math stubs carry an absolute
+`<base href>` of their own, pointing at wherever their wasm lives, and keep it.
+The rest are folders of relative files and are given their own folder as a base
+on the way in — without which a game would look for `index.js` next to the
+shrine. `scripts/test-game-fetch.ts` runs both helpers for real.
+
+If the fetch is the thing that cannot get through — a cross-origin embed whose
+host sends no CORS header, say — the frame is still there to fall back to,
+rather than a blank tab.
+
 ## the shrine somewhere else
 
 Because `window.js` builds the whole shrine as one string, the shrine does not
@@ -82,8 +109,8 @@ of rendering. Those stay on Pages.
 `Shrine.BASE` is what keeps the two straight. Every repo path any module builds
 is resolved against it rather than against the page, so the one value decides
 where the shrine looks for its own things: the artwork in `config.js`, the three
-originals, the 777 catalog entries remapped onto `games/g/`, and the game-frame
-URL baked into the emitted chat client. On this site it is the page's own folder
+originals, the 777 catalog entries remapped onto `games/g/`, and the game URL
+baked into the emitted chat client. On this site it is the page's own folder
 and nothing has changed. Pasted elsewhere, `embed/shrine.js` sets
 `window.SHRINE_BASE` before the modules load and points all of it back here —
 without which a catalog would quietly resolve 777 games onto a stranger's
