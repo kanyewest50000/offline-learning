@@ -498,8 +498,10 @@
       '.pkdealer{flex:0 0 auto;width:14px;height:14px;border-radius:50%;background:#c8823c;color:#1d1206;font-size:9px;font-weight:800;line-height:14px}' +
       '.pkstack{font-size:13px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums;line-height:1.3}' +
       '.pktag{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#c8823c}' +
-      '.pkmade{font-size:10px;font-weight:700;color:#c8823c;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-      '.pkhole{display:flex;justify-content:center;gap:3px;min-height:1px}' +
+      '.pkmade{position:absolute;left:50%;bottom:-7px;transform:translateX(-50%);z-index:3;' +
+      'background:#a33a2e;color:#fff;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;' +
+      'padding:1px 7px;border-radius:999px;white-space:nowrap;box-shadow:0 2px 6px #0009}' +
+      '.pkhole{position:relative;display:flex;justify-content:center;gap:3px;min-height:1px}' +
       '.pkhole .pcard{width:clamp(22px,6.4vw,30px);height:clamp(31px,9vw,42px)}' +
       '.pkhole .pcface{font-size:clamp(9px,2.6vw,13px);border-radius:4px;box-shadow:0 2px 6px #0008}' +
       /* your own two are dealt bigger, the way they are on every table */
@@ -517,12 +519,44 @@
       '.pcard.still .pcback{animation:none;opacity:0}' +
       '.pcard.still.hole .pcfront{opacity:0}' +
       '.pcard.still.hole .pcback{opacity:1}' +
-      '.pkacts{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}' +
-'.pkpre{min-width:180px;opacity:.72}' +
-'.pkpre.on{opacity:1;background:#c8823c;color:#1d1206;box-shadow:0 0 0 2px #f2c06355}' +
-      '.pkacts .cbtn{min-width:118px}' +
-      '.pkraise{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;align-items:center}' +
-      '.pkamt{width:112px;text-align:center;font-variant-numeric:tabular-nums}' +
+      /* One row of decisions across the bottom, the way every table does it:
+         what it costs to stay, what it costs to push, the free one, the way
+         out — each carrying the key that presses it. The one that does not
+         apply is dimmed rather than removed, so the row never reshuffles
+         under a finger already on its way down. */
+      '.pkbar{display:flex;gap:7px;width:100%;max-width:470px;margin:0 auto}' +
+      '.pkact{position:relative;flex:1 1 0;min-width:0;min-height:52px;display:flex;align-items:center;justify-content:center;' +
+      'background:#1a1008;border:2px solid #3a2410;border-radius:10px;cursor:pointer;padding:10px 4px}' +
+      '.pkactlab{font-size:13px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#f5efe0;white-space:nowrap}' +
+      '.pkactkey{position:absolute;top:2px;right:6px;font-size:9px;font-weight:700;color:#8a6a3a;text-transform:uppercase}' +
+      '.pkact.call,.pkact.check,.pkact.raise{border-color:#2f7d4f}' +
+      '.pkact.call .pkactlab,.pkact.check .pkactlab,.pkact.raise .pkactlab{color:#5fd08a}' +
+      '.pkact.fold{border-color:#a33a2e}' +
+      '.pkact.fold .pkactlab{color:#e0736a}' +
+      '.pkact.bet{background:#2f9d5f;border-color:#2f9d5f}' +
+      '.pkact.bet .pkactlab{color:#0b2413}' +
+      '.pkact.off{opacity:.3;cursor:default}' +
+      '.pkact:not(.off):hover{filter:brightness(1.2)}' +
+      /* the raise panel, which takes the bar's place rather than sitting under
+         it: while you are picking a number, the number is the only decision */
+      '.pkbet{display:flex;flex-direction:column;gap:7px;width:100%;max-width:470px;margin:0 auto}' +
+      '.pkbetval{display:flex;align-items:center;gap:8px;background:#1a1008;border:1px solid #3a2410;border-radius:10px;padding:7px 11px}' +
+      '.pkbetlab{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a;flex:0 0 auto}' +
+      '.pkbetnum{flex:1;min-width:0;background:transparent;border:0;color:#f2c063;font-size:23px;font-weight:800;' +
+      'text-align:right;font-variant-numeric:tabular-nums;padding:0;-moz-appearance:textfield}' +
+      '.pkbetnum::-webkit-outer-spin-button,.pkbetnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}' +
+      '.pkbetbb{flex:0 0 auto;font-size:11px;font-weight:700;color:#c8823c;min-width:46px;text-align:right}' +
+      '.pkpre-row{display:flex;gap:5px}' +
+      '.pkchipbtn{flex:1 1 0;min-width:0;padding:8px 2px;background:#241505;border:1px solid #3a2410;border-radius:8px;' +
+      'color:#f5efe0;font-size:10px;font-weight:800;letter-spacing:.03em;cursor:pointer;white-space:nowrap}' +
+      '.pkchipbtn:hover{background:#3a2410}' +
+      '.pkslidrow{display:flex;align-items:center;gap:8px}' +
+      '.pkstep{flex:0 0 auto;width:40px;height:34px;background:#241505;border:1px solid #3a2410;border-radius:8px;' +
+      'color:#f2c063;font-size:17px;font-weight:800;cursor:pointer;line-height:1}' +
+      '.pkslide{flex:1;min-width:0;accent-color:#c8823c;height:26px}' +
+      '.pkbetgo{display:flex;gap:7px}' +
+      '.pkpre{min-width:180px;opacity:.72}' +
+      '.pkpre.on{opacity:1;background:#c8823c;color:#1d1206;box-shadow:0 0 0 2px #f2c06355}' +
       '.pkshow{display:flex;flex-direction:column;gap:6px;width:100%;max-width:420px}' +
       '.pkshowrow{display:flex;align-items:center;gap:8px;background:#241505;border:1px solid #3a2410;border-radius:10px;padding:6px 10px}' +
       '.pkshowrow.won{border-color:#c8823c}' +
@@ -843,7 +877,13 @@
       '& .pkblind,& .pkstack{color:{heading}}' +
       '& .pkpot{color:{text}}' +
       '& .pkhead,& .pklogline{color:{muted}}' +
-      '& .pkup,& .pktag,& .pkmade,& .pkshowhand{color:{textDim}}' +
+      '& .pkup,& .pktag,& .pkshowhand{color:{textDim}}' +
+      '& .pkact,& .pkbetval{background:{sunk};border-color:{line}}' +
+      '& .pkactlab{color:{text}}' + '& .pkactkey{color:{muted}}' +
+      '& .pkchipbtn,& .pkstep{background:{raised};border-color:{line};color:{heading}}' +
+      '& .pkchipbtn:hover{background:{hover}}' +
+      '& .pkbetnum,& .pkbetbb{color:{heading}}' + '& .pkbetlab{color:{muted}}' +
+      '& .pkslide{accent-color:{lineHot}}' +
       '& .pkchip{background:{lineHot};border-color:{lineMid};color:{solidInk}}' +
       '& .pitmove{background:linear-gradient(155deg,{hover},{bgCore});border-color:{line};color:{heading}}' +
       '& .pitmove:hover:not(:disabled){border-color:{textDim}}' +

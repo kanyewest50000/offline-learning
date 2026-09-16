@@ -1852,7 +1852,7 @@
      (pitTick), both owned by PIT and both torn down by clearTimer(), which every
      navigation already calls. */
   var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null,reveal:[],
-    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null,pkAuto:false,pkAutoBusy:false,pkUp:null,pkUpAt:0};
+    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null,pkAuto:false,pkAutoBusy:false,pkUp:null,pkUpAt:0,pkRaise:false,pkAmt:0,pkKeys:null,pkKeyBound:null};
   /* the clash: the beat between a round resolving and the next one starting */
   var CL_IN_MS=520, CL_HIT_MS=600, CL_SAY_MS=1000, CL_HOLD_MS=2050;
   /* How a cut is dealt. There is nothing to play in this game — both cards are
@@ -1892,6 +1892,8 @@
     /* leaving the table forgets which cards have already been dealt in, so
        coming back deals the hand in fresh rather than showing it half-landed */
     PIT.pkSeen=null;PIT.pkHand=null;PIT.pkAuto=false;PIT.pkAutoBusy=false;PIT.pkUp=null;PIT.pkUpAt=0;
+    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;
+    if(PIT.pkKeyBound){document.removeEventListener("keydown",PIT.pkKeyBound);PIT.pkKeyBound=null;}
     /* if a clash was mid-flight its callback will never land, so the render
        gate has to be lifted here or every later paint would be swallowed */
     PIT.busy=false;PIT.pending=null;
@@ -1961,7 +1963,10 @@
   function pokerTable(body,d,note){
     var p=d.poker;
     if(!p){body.appendChild(el("p","pitsub","dealing…"));return;}
-    if(PIT.pkHand!==p.hand){PIT.pkHand=p.hand;PIT.pkSeen={};PIT.pkAuto=false;}
+    if(PIT.pkHand!==p.hand){PIT.pkHand=p.hand;PIT.pkSeen={};PIT.pkAuto=false;PIT.pkAmt=0;}
+    /* the raise panel belongs to one decision; it cannot outlive your turn */
+    if(!p.yourTurn){PIT.pkRaise=false;}
+    PIT.pkKeys=null;
 
     /* the blinds, and how long they stay these blinds */
     var head=el("div","pkhead");
@@ -2041,7 +2046,7 @@
       if(!s.out&&s.allIn)plate.appendChild(el("div","pktag","all in"));
       else if(!s.out&&s.folded)plate.appendChild(el("div","pktag","folded"));
       /* your own hand, named, directly under your own cards */
-      if(s.you&&p.yourHand&&!s.out&&!s.folded)plate.appendChild(el("div","pkmade",p.yourHand));
+      if(s.you&&p.yourHand&&!s.out&&!s.folded)hole.appendChild(el("div","pkmade",p.yourHand));
       /* Cards face into the table. Round the top of the oval the plate goes
          first and the cards hang below it; round the bottom it is the other
          way up. Either way the pair of cards is on the felt rather than
@@ -2097,70 +2102,139 @@
           PIT.pkAutoBusy=false;
         }).then(function(){PIT.pkAutoBusy=false;});
       }
-      var acts=el("div","pkacts");
-      var fire=function(action,amount){
-        Array.prototype.forEach.call(acts.querySelectorAll("button"),function(x){x.disabled=true;});
+      var bb=p.blinds[1]||1;
+      var send=function(scope,action,amount){
+        Array.prototype.forEach.call(scope.querySelectorAll("button"),function(x){x.disabled=true;});
         pitSend("/duel/poker",{id:d.id,action:action,amount:amount||0},function(e){
-          Array.prototype.forEach.call(acts.querySelectorAll("button"),function(x){x.disabled=false;});
+          Array.prototype.forEach.call(scope.querySelectorAll("button"),function(x){x.disabled=false;});
           bad(note,e==="not your turn"?"somebody got there first.":(e||"that did not land."));
         });
       };
-      var fold=el("button","cbtn","fold");
-      fold.onclick=function(){fire("fold");};
-      acts.appendChild(fold);
-      if(p.canCheck){
-        var ck=el("button","cbtn go","check");
-        ck.onclick=function(){fire("check");};
-        acts.appendChild(ck);
+      var canRaise=p.maxTo>p.call;
+      /* one row of decisions along the bottom, the order they are read in:
+         what it costs to stay, what it costs to push, the free one, the way
+         out. Each carries the key that presses it. */
+      var act=function(label,key,kind,on,live){
+        var b=el("button","pkact "+kind+(live?"":" off"));
+        b.appendChild(el("span","pkactlab",label));
+        b.appendChild(el("span","pkactkey",key));
+        if(live)b.onclick=on; else b.disabled=true;
+        return b;
+      };
+      if(!PIT.pkRaise){
+        var bar=el("div","pkbar");
+        bar.appendChild(act(p.canCheck?"CALL":("CALL "+chips(Math.min(p.toCall,p.maxTo))),"C","call",
+          function(){send(bar,"call");},!p.canCheck));
+        bar.appendChild(act("RAISE","R","raise",function(){
+          PIT.pkRaise=true;PIT.pkAmt=Math.max(p.raiseTo,Math.min(PIT.pkAmt||p.raiseTo,p.maxTo));
+          PIT.shape="";pitRender(PIT.last);
+        },canRaise));
+        bar.appendChild(act("CHECK","K","check",function(){send(bar,"check");},p.canCheck));
+        bar.appendChild(act("FOLD","F","fold",function(){send(bar,"fold");},true));
+        body.appendChild(bar);
+        body.appendChild(el("p","pitsub",p.toCall>0
+          ?("there is "+chips(p.toCall)+" to you. say nothing for long enough and it folds for you.")
+          :"it is on you. say nothing for long enough and it checks for you."));
+        PIT.pkKeys=function(ev){
+          if(ev.target&&/^(INPUT|TEXTAREA)$/.test(ev.target.tagName))return;
+          var k=String(ev.key||"").toLowerCase();
+          if(k==="c"&&!p.canCheck)send(bar,"call");
+          else if(k==="k"&&p.canCheck)send(bar,"check");
+          else if(k==="f")send(bar,"fold");
+          else if(k==="r"&&canRaise){PIT.pkRaise=true;PIT.pkAmt=p.raiseTo;PIT.shape="";pitRender(PIT.last);}
+          else return;
+          ev.preventDefault();
+        };
       }else{
-        var cl=el("button","cbtn go","call "+chips(Math.min(p.toCall,p.maxTo)));
-        cl.onclick=function(){fire("call");};
-        acts.appendChild(cl);
-      }
-      body.appendChild(acts);
-      /* a raise is only offered when there is something left to raise with —
-         a stack that can do no more than call is all in or nothing */
-      if(p.maxTo>p.call){
-        var rrow=el("div","pkraise");
-        var amt=el("input","pkamt");
-        amt.type="number";amt.min=String(p.raiseTo);amt.max=String(p.maxTo);amt.step="1";amt.value=String(p.raiseTo);
-        /* A raise under the minimum is not a mistake worth a telling-off — it
-           is somebody reaching for the smallest raise there is. So the box
-           corrects itself to the nearest legal amount instead of refusing:
-           up to the minimum, down to the whole stack, and never a fraction of
-           a chip. */
-        var clampAmt=function(){
-          var n=Math.floor(Number(amt.value));
+        /* the raise panel, which takes the bar's place rather than sitting
+           under it: while you are choosing a number the only things that make
+           sense are the number, the shortcuts to it, and the way back. */
+        var panel=el("div","pkbet");
+        var clamp=function(n){
+          n=Math.floor(Number(n));
           if(!isFinite(n))n=p.raiseTo;
-          if(n<p.raiseTo)n=p.raiseTo;
-          if(n>p.maxTo)n=p.maxTo;
-          amt.value=String(n);
-          return n;
+          return Math.max(p.raiseTo,Math.min(n,p.maxTo));
         };
-        amt.onchange=clampAmt;amt.onblur=clampAmt;
-        var go=el("button","cbtn","raise to");
-        go.onclick=function(){
-          var n=clampAmt();
-          Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=true;});
-          pitSend("/duel/poker",{id:d.id,action:"raise",amount:n},function(e){
-            Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=false;});
-            bad(note,e||"that did not land.");
-          });
+        PIT.pkAmt=clamp(PIT.pkAmt||p.raiseTo);
+        var val=el("div","pkbetval");
+        val.appendChild(el("span","pkbetlab","your bet"));
+        var num=el("input","pkbetnum");num.type="number";num.min=String(p.raiseTo);num.max=String(p.maxTo);num.step="1";
+        num.value=String(PIT.pkAmt);
+        var bbs=el("span","pkbetbb","");
+        val.appendChild(num);val.appendChild(bbs);
+        var slide=el("input","pkslide");
+        slide.type="range";slide.min=String(p.raiseTo);slide.max=String(p.maxTo);slide.step="1";
+        /* the label on the confirm button is part of the amount: dragging to
+           the top of your stack is an all-in and has to say so before it is
+           pressed, not after */
+        var betLab=null;
+        var paint=function(){
+          num.value=String(PIT.pkAmt);
+          slide.value=String(PIT.pkAmt);
+          bbs.textContent=(Math.round(PIT.pkAmt/bb*10)/10)+"BB";
+          if(betLab)betLab.textContent=PIT.pkAmt>=p.maxTo?"ALL IN":"BET";
         };
-        var shove=el("button","cbtn","all in "+chips(p.maxTo));
-        shove.onclick=function(){
-          Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=true;});
-          pitSend("/duel/poker",{id:d.id,action:"allin",amount:0},function(e){
-            Array.prototype.forEach.call(rrow.querySelectorAll("button"),function(x){x.disabled=false;});
-            bad(note,e||"that did not land.");
-          });
+        var setAmt=function(n){PIT.pkAmt=clamp(n);paint();};
+        /* typing is left alone while it is happening — rewriting the box
+           under the cursor makes it impossible to type a number that starts
+           below the minimum — but everything else keeps up */
+        num.oninput=function(){
+          var n=Math.floor(Number(num.value));
+          if(!isFinite(n))return;
+          PIT.pkAmt=Math.max(p.raiseTo,Math.min(n,p.maxTo));
+          slide.value=String(PIT.pkAmt);
+          bbs.textContent=(Math.round(PIT.pkAmt/bb*10)/10)+"BB";
+          if(betLab)betLab.textContent=PIT.pkAmt>=p.maxTo?"ALL IN":"BET";
         };
-        rrow.appendChild(go);rrow.appendChild(amt);rrow.appendChild(shove);
-        body.appendChild(rrow);
+        num.onchange=function(){setAmt(num.value);};
+        num.onblur=function(){setAmt(num.value);};
+        slide.oninput=function(){setAmt(slide.value);};
+        /* A pot-sized raise is the pot AFTER the call, put in on top of it —
+           which is what every other table means by "pot", and is why the call
+           is added twice rather than once. */
+        var potRaise=function(frac){return clamp(p.call+Math.round(frac*(p.pot+p.toCall)));};
+        var presets=el("div","pkpre-row");
+        [["MIN",function(){return p.raiseTo;}],
+         ["\u00bd POT",function(){return potRaise(0.5);}],
+         ["\u00be POT",function(){return potRaise(0.75);}],
+         ["POT",function(){return potRaise(1);}],
+         ["ALL IN",function(){return p.maxTo;}]].forEach(function(row){
+          var b=el("button","pkchipbtn",row[0]);
+          b.onclick=function(){setAmt(row[1]());};
+          presets.appendChild(b);
+        });
+        var srow=el("div","pkslidrow");
+        var minus=el("button","pkstep","\u2212");
+        minus.onclick=function(){setAmt(PIT.pkAmt-bb);};
+        var plus=el("button","pkstep","+");
+        plus.onclick=function(){setAmt(PIT.pkAmt+bb);};
+        srow.appendChild(minus);srow.appendChild(slide);srow.appendChild(plus);
+        var go=el("div","pkbetgo");
+        var back=el("button","pkact fold");
+        back.appendChild(el("span","pkactlab","BACK"));
+        back.appendChild(el("span","pkactkey","esc"));
+        back.onclick=function(){PIT.pkRaise=false;PIT.shape="";pitRender(PIT.last);};
+        var bet=el("button","pkact bet");
+        betLab=el("span","pkactlab","BET");
+        bet.appendChild(betLab);
+        bet.onclick=function(){
+          var n=clamp(PIT.pkAmt);
+          PIT.pkRaise=false;
+          send(panel,n>=p.maxTo?"allin":"raise",n);
+        };
+        go.appendChild(back);go.appendChild(bet);
+        panel.appendChild(val);panel.appendChild(presets);panel.appendChild(srow);panel.appendChild(go);
+        body.appendChild(panel);
+        paint();
+        PIT.pkKeys=function(ev){
+          if(ev.target&&/^(INPUT|TEXTAREA)$/.test(ev.target.tagName))return;
+          var k=String(ev.key||"");
+          if(k==="Escape"){PIT.pkRaise=false;PIT.shape="";pitRender(PIT.last);}
+          else if(k==="Enter")bet.onclick();
+          else return;
+          ev.preventDefault();
+        };
       }
-      body.appendChild(el("p","pitsub",p.toCall>0
-        ?("there is "+chips(p.toCall)+" to you. say nothing for long enough and it folds for you.")
-        :"it is on you. say nothing for long enough and it checks for you."));
     }else{
       var w=p.seats[p.toAct];
       body.appendChild(el("p","pitsub",p.runout
@@ -2183,6 +2257,12 @@
         body.appendChild(el("p","pitsub","checks the moment it reaches you if checking is free, and folds if somebody has bet into you."));
       }
     }
+
+    /* Shortcuts, rebound on every paint because what the keys DO changes with
+       the table — and unbound the moment the table is not asking for anything,
+       so a stray keypress on the lobby cannot fold a hand. */
+    if(PIT.pkKeyBound){document.removeEventListener("keydown",PIT.pkKeyBound);PIT.pkKeyBound=null;}
+    if(PIT.pkKeys){PIT.pkKeyBound=PIT.pkKeys;document.addEventListener("keydown",PIT.pkKeyBound);}
 
     if(p.log&&p.log.length){
       var lg=el("div","pklog");
