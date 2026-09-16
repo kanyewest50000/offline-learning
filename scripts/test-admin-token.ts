@@ -89,8 +89,45 @@ must(!/\/admin\/token\?/.test(panelSrc), "the panel must never put a member id i
 // it is not on screen until somebody asks for it
 must(/confirm\("Show "\+name\+"'s login key\?/.test(panelSrc), "revealing a key must be confirmed first");
 
+// ---------------------------------------------------------------------------
+// The private note is written and read on the user pane, but it rides along to
+// the balances pane so that searching THERE finds the row. Somebody who has
+// written "owes me a fiver" on three members should be able to pull those three
+// up where the money is — without the note being drawn in front of anyone who
+// only came to look at balances.
+{
+  const nn = "noted" + Math.random().toString(36).slice(2, 8);
+  let applied2 = await post("/apply", { username: nn, application: "note search" });
+  for (let wait = 0; applied2.b.error === "slow down" && wait < 15; wait++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    applied2 = await post("/apply", { username: nn, application: "note search" });
+  }
+  const pending2 = await call("/admin/pending", { headers: { "x-admin-key": ADMIN } });
+  // deno-lint-ignore no-explicit-any
+  const row2 = (pending2.b.pending || []).find((p: any) => p.username === nn);
+  must(!!row2, "the second application never landed");
+  await post("/admin/decide", { key: ADMIN, id: row2.id, action: "approve" });
+  await post("/admin/setbal", { key: ADMIN, id: row2.id, balance: 3 });
+  await post("/admin/note", { key: ADMIN, id: row2.id, note: "asdf" });
+
+  const bals = await call("/admin/balances", { headers: { "x-admin-key": ADMIN } });
+  // deno-lint-ignore no-explicit-any
+  const brow = (bals.b.balances || []).find((x: any) => x.username === nn);
+  must(!!brow, "the member never reached the balances pane");
+  must(brow.note === "asdf", "the note must travel with the balance row: " + JSON.stringify(brow));
+
+  // and the pane must search it without drawing it
+  const src2 = await Deno.readTextFile(`${ROOT}/server.ts`);
+  const rb = src2.slice(src2.indexOf("function renderBalances()"), src2.indexOf("function renderShop()"));
+  must(rb.length > 0, "could not find renderBalances");
+  must(/matches\(q, \[[\s\S]*u\.note/.test(rb), "the balances search must include the note");
+  must(!/textContent\s*=\s*[^;]*u\.note/.test(rb) && !/appendChild[^;]*u\.note/.test(rb),
+    "the balances pane must not DRAW the note — it belongs to the user pane");
+}
+
 console.log(
   "admin token: the panel can read a member's login key back — the same one /apply issued, which " +
     "logs in as them — but only by POST, only for one member at a time, only after a confirm, and " +
-    "never as part of the polled user list",
+    "never as part of the polled user list — and a member's private note travels to the balances " +
+    "pane so a search there finds them by it, without being drawn on a pane it does not belong to",
 );

@@ -323,10 +323,49 @@ const A = await member("bkA");
   must((await bank(G.token)).owed === 11, "with one debt on the books");
 }
 
+// ---------------------------------------------------------------------------
+// A one-off also suspends the settle-up rule. Raising somebody's ceiling "just
+// this once" is aimed squarely at a member already in the red, and is no use to
+// them if the bank still tells them to clear the last one first — so the one-off
+// buys the second loan as well as the room for it.
+{
+  const K = await member("bankK");
+  const first = await post("/bank/borrow", { token: K.token, amount: 10 });
+  must(first.body?.ok === true, "the first loan must go through: " + JSON.stringify(first.body));
+  must((await post("/bank/borrow", { token: K.token, amount: 1 })).body?.error === "settle the last one first.",
+    "in debt with no one-off, a second loan is refused");
+  must((await bank(K.token)).canBorrow === 0, "and the bank offers nothing more");
+
+  await post("/admin/loanboost", { key: ADMIN, id: K.id, extra: 10 });
+  const d = await bank(K.token);
+  const num = (v: unknown) => Number(v);
+  const room = num(d.canBorrow), limit = num(d.limit), principal = num(d.principal);
+  must(room > 0, "a one-off must open the bank to somebody already in debt");
+  must(Math.abs(room - (limit - principal)) < 1e-9,
+    "and offer exactly the room left under the stretched ceiling: " + JSON.stringify(d));
+
+  // the ceiling is on everything outstanding at once, not on each loan apart
+  must(/room left/.test(String((await post("/bank/borrow", { token: K.token, amount: room + 1 })).body?.error)),
+    "more than the room left must be refused even while under the ceiling");
+
+  const owedBefore = num(d.owed);
+  const second = await post("/bank/borrow", { token: K.token, amount: room });
+  must(second.body?.ok === true, "the second loan must go through: " + JSON.stringify(second.body));
+  const after = await bank(K.token);
+  must(Math.abs(num(after.principal) - (principal + room)) < 1e-9,
+    "the principal must STACK, not replace: " + principal + " -> " + num(after.principal));
+  must(num(after.owed) > owedBefore,
+    "and so must the debt — a second loan must never wipe the first: " + owedBefore + " -> " + num(after.owed));
+  must(num(after.boost) === 0, "the one-off is spent by taking it");
+  must((await post("/bank/borrow", { token: K.token, amount: 1 })).body?.error === "settle the last one first.",
+    "and once it is spent the settle-up rule is back");
+}
+
 console.log(
   "the bank: lends up to a cap (" + DEFAULT_CAP + " by default, per-member override, nought to shut it, " +
     "plus a one-off raise that is spent by the next loan and leaves the cap where it was), " +
     "charges ten percent once at signing, takes repayment in part or in full, and garnishes " +
     "half of every faucet claim until square — never more than is owed, never paying the " +
-    "player without paying the debt, and never writing two loans for one borrower",
+    "player without paying the debt, and writing one debt per borrower that a one-off may " +
+    "add to while they are still in it, up to the stretched ceiling and never past it",
 );

@@ -661,6 +661,10 @@
          so nobody mistakes a favour for a new ceiling. */
       var boost=Number(d.boost)||0;
       var limit=Number(d.limit);if(!(limit>=0))limit=cap+boost;
+      /* what he would actually hand over right now. In debt this is normally
+         nothing, and is only ever more than nothing because a one-off is
+         sitting on the account. */
+      var canBorrow=Number(d.canBorrow)||0;
       var pct=Math.round((Number(d.interest)||0)*100);
       var half=Math.round((Number(d.garnish)||0.5)*100);
       /* the counter: what you owe, and what he will lend */
@@ -698,6 +702,31 @@
         }
         pay.onclick=function(){repay({amount:Number(amt.value)},pay);};
         all.onclick=function(){repay({},all);};
+        /* The bank wants the last one settled before it lends again, and a
+           one-off is what suspends that. It is aimed at precisely the person
+           who is already in the red, so when there is room left under the
+           stretched ceiling the borrow control belongs here too, rather than
+           behind a debt they have just been told to clear first. */
+        if(canBorrow>0){
+          note.textContent="tung has stretched your "+money(cap)+" to "+money(limit)+
+            " for one more loan, so you may take "+money(canBorrow)+" more without settling up first. "+
+            "he still takes "+half+"% of every shrine claim until the lot is square.";
+          var more=betField(money(canBorrow));more.className="tin";
+          var take2=el("button","cbtn go","borrow anyway");
+          ctlwrap.appendChild(ctl("borrow",more));
+          var bw3=el("div","casrow");bw3.appendChild(take2);
+          ctlwrap.appendChild(ctl(" ",bw3));
+          take2.onclick=function(){
+            take2.disabled=true;r.className="casres";r.textContent="";
+            jpost("/bank/borrow",{amount:Number(more.value)}).then(function(d2){if(refused(d2)){refusedGate();return;}
+              take2.disabled=false;
+              if(!d2||d2.error){bad(r,(d2&&d2.error)||"he said no.");load();return;}
+              setBal(d2.balance);celebrate(d2.borrowed,1,"you owe "+money(d2.owed));
+              ok(r,"borrowed "+money(d2.borrowed)+". you owe him "+money(d2.owed)+" in total.");
+              load();
+            }).catch(function(){take2.disabled=false;bad(r,"network error");});
+          };
+        }
       }else if(limit>0){
         sub.textContent="he lends up to "+money(limit)+" sahurs. he wants "+pct+"% on top.";
         note.textContent=boost>0

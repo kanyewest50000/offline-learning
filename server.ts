@@ -4031,8 +4031,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // the next loan.
       cap: room.cap, boost: room.boost, limit: room.limit,
       interest: LOAN_INTEREST, garnish: LOAN_GARNISH, faucet: FAUCET_AMOUNT,
-      // the sum the bank would hand over right now, if you asked for the lot
-      canBorrow: loan.owed > 0 ? 0 : room.limit,
+      // The sum the bank would hand over right now, if you asked for the lot.
+      // In debt that is normally nothing — but a one-off suspends the settle-up
+      // rule, and then it is whatever is left under the ceiling.
+      canBorrow: loan.owed > 0
+        ? (room.boost > 0 ? Math.max(0, round2(room.limit - loan.principal)) : 0)
+        : room.limit,
     });
   }
 
@@ -4054,13 +4058,38 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     }
     for (let attempt = 0; attempt < 8; attempt++) {
       const loanE = await kv.get<Loan>(["loan", u.id]);
-      if (loanE.value && Number(loanE.value.owed) > 0) {
-        return json({ error: "settle the last one first.", owed: round2(Number(loanE.value.owed)) }, 409);
+      const held = loanE.value && Number(loanE.value.owed) > 0
+        ? {
+          principal: round2(Number(loanE.value.principal) || 0),
+          owed: round2(Number(loanE.value.owed)),
+        }
+        : null;
+      // One debt at a time is the rule, and a one-off is what suspends it.
+      // Raising somebody's ceiling "just this once" is no use to the person it
+      // is usually aimed at — somebody already in the red — if the bank still
+      // tells them to settle up first, so the one-off buys the second loan as
+      // well as the room for it.
+      if (held && !(room.boost > 0)) {
+        return json({ error: "settle the last one first.", owed: held.owed }, 409);
+      }
+      // The ceiling is on everything outstanding at once rather than on each
+      // loan taken separately, or a one-off would be a licence to borrow the
+      // whole limit again on top of a debt already at it.
+      if (held) {
+        const left = round2(room.limit - held.principal);
+        if (!(left > 0)) {
+          return json({ error: "you are already at your limit of " + room.limit + " sahurs.", cap: room.limit }, 400);
+        }
+        if (want > left) {
+          return json({ error: "you have " + left + " sahurs of room left.", cap: left }, 400);
+        }
       }
       const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
       const rec = cur.value ?? { bal: 0, lastClaim: 0 };
       const base = Number.isFinite(rec.bal) ? rec.bal : 0;
       const nb = round2(base + want);
+      // interest is charged on the new money only — what was already owed has
+      // had its interest added once already and must never be charged twice
       const owed = owedFor(want);
       // A one-off extra is spent by taking a loan at all, not by the part of
       // the loan that leaned on it, so it comes off in the same commit. It is
@@ -4071,7 +4100,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // no instant where a debt exists that was never paid out, or the reverse
       const op = kv.atomic()
         .check(loanE).check(cur).check(boostE)
-        .set(["loan", u.id], { principal: want, owed, ts: Date.now() }, { expireIn: LOAN_TTL })
+        .set(["loan", u.id], {
+          principal: round2((held ? held.principal : 0) + want),
+          owed: round2((held ? held.owed : 0) + owed),
+          ts: Date.now(),
+        }, { expireIn: LOAN_TTL })
         .set(["cas", u.id], { ...rec, bal: nb }, { expireIn: CAS_TTL });
       if (boostE.value !== null) op.delete(["loanboost", u.id]);
       const res = await op.commit();
@@ -4655,13 +4688,21 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const rows: {
       id: string; username: string; balance: number; owed: number; loanMax: number; loanMaxSet: boolean;
-      loanBoost: number; loanLimit: number;
+      loanBoost: number; loanLimit: number; note: string;
     }[] = [];
-    // map app id -> username for approved users
+    // map app id -> username for approved users, and the private note with it.
+    // The note is not drawn on this pane — it belongs to the user pane and is
+    // nobody's business twice over — but it travels so that searching this one
+    // for it finds the row. Somebody who has written "owes me a fiver" on three
+    // members should be able to pull those three up where the money is.
     const names: Record<string, string> = {};
+    const notes: Record<string, string> = {};
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["app"] })) {
-      if (e.value.status === "approved") names[e.value.id] = e.value.username;
+      if (e.value.status === "approved") {
+        names[e.value.id] = e.value.username;
+        notes[e.value.id] = String(e.value.note || "");
+      }
     }
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["cas"] })) {
@@ -4682,6 +4723,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         loanMaxSet: set !== null,   // false means they are simply on the house default
         loanBoost: boost,           // an unspent one-off, 0 when there is none
         loanLimit: round2(loanMax + boost),
+        note: notes[id] || "",      // searchable here, shown only on the user pane
       });
     }
     rows.sort((a, c) => c.balance - a.balance);
@@ -5262,7 +5304,11 @@ function renderBalances(){
   var shown=balancesCache.filter(function(u){
     return matches(q, [u.username, u.id, String(u.balance), (u.balance!=null?Number(u.balance).toFixed(2):"")+" sahurs",
       u.owed>0?"owes debt loan in the red":"clear no debt", "cap "+u.loanMax,
-      u.loanBoost>0?("one-off one time boost +"+u.loanBoost):"no one-off"]);
+      u.loanBoost>0?("one-off one time boost +"+u.loanBoost):"no one-off",
+      /* the private note is searchable from here but never drawn here: it is
+         written and read on the user pane, and showing it twice would put it
+         on screen in front of people who only came to look at the money */
+      u.note||""]);
   });
   if(!balancesCache.length){balances.innerHTML='<div class="empty">no balances yet (nobody has claimed sahurs).</div>';return;}
   if(!shown.length){balances.innerHTML='<div class="empty">no matching balances.</div>';return;}
