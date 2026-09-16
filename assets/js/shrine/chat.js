@@ -56,6 +56,10 @@
     'var lk=document.getElementById("lk");' +
     'var loginBtn=document.getElementById("loginBtn");' +
     'var log=document.getElementById("log");' +
+    'var dmrail=document.getElementById("dmrail");' +
+    'var dmlist=document.getElementById("dmlist");' +
+    'var convname=document.getElementById("convname");' +
+    'var convsub=document.getElementById("convsub");' +
     'var form=document.getElementById("f");' +
     'var input=document.getElementById("m");' +
     'var nameEl=document.getElementById("u");' +
@@ -302,7 +306,7 @@
     'function clearToken(){try{localStorage.removeItem(TKEY);}catch(e){}if(typeof SHRINE_BOOT_TOKEN!=="undefined")SHRINE_BOOT_TOKEN="";}' +
     'function paintKey(){if(myhash)myhash.textContent=TOKEN||"";if(exportKeyBtn)exportKeyBtn.style.display=TOKEN?"inline-block":"none";}' +
     /* login key = full access. confirm before clipboard so people know what they are copying. */
-    'var tipTo=null,pendingCopyBtn=null;' +
+    'var tipTo=null,profId=null,pendingCopyBtn=null;' +
     'var profEl=document.getElementById("profOverlay");' +
     'var tipEl=document.getElementById("tipOverlay");' +
     'var keyEl=document.getElementById("keyOverlay");' +
@@ -341,7 +345,7 @@
     'var std0=document.getElementById("profStd");if(std0)std0.style.display="";' +
     'var ex0=document.getElementById("profExtra");if(ex0){ex0.style.display="none";ex0.innerHTML="";}' +
     'var sub0=document.getElementById("profSub");if(sub0)sub0.textContent="a pilgrim of the shrine.";' +
-    'tipTo=name;' +
+    'tipTo=name;profId=null;' +
     'document.getElementById("profName").textContent=name;' +
     'document.getElementById("profJoined").textContent="…";' +
     'document.getElementById("profBal").textContent="…";' +
@@ -351,10 +355,19 @@
     'api("/tip/profile?token="+encodeURIComponent(TOKEN)+"&user="+encodeURIComponent(name)).then(function(r){' +
     'if(!r||r.error){var e=r&&r.error;document.getElementById("profErr").textContent=e==="not_found"?"that name is not known to the shrine.":e==="unauthorized"?"the shrine does not recognize you.":"the shrine is silent. try again.";document.getElementById("profJoined").textContent="—";document.getElementById("profBal").textContent="—";return;}' +
     'var joined=r.createdAt!=null?r.createdAt:(r.registeredAt!=null?r.registeredAt:r.ts);' +
+    'profId=r.id||null;' +
     'document.getElementById("profName").textContent=r.username||name;' +
     'document.getElementById("profJoined").textContent=fmtDate(joined);' +
     'document.getElementById("profBal").textContent=money2(r.balance)+" sahurs";' +
     '}).catch(function(){document.getElementById("profErr").textContent="the shrine is silent. try again.";});}' +
+    /* the way into a conversation from the room: the card you get by clicking
+       a name. It carries the id so the DM is opened against the account rather
+       than against a string somebody could have renamed out from under it. */
+    'function dmFromProfile(){' +
+    'if(!tipTo)return;' +
+    'var who=tipTo,id=profId||tipTo;' +
+    'if(profEl)profEl.style.display="none";' +
+    'openDM(id,who);}' +
     'function openTip(name){if(!name||!TOKEN)return;if(String(name).toLowerCase()===String(ME||"").toLowerCase())return;tipTo=name;if(profEl)profEl.style.display="none";' +
     'document.getElementById("tipWho").textContent=name;document.getElementById("tipAmt").value="1";document.getElementById("tipErr").textContent="";' +
     'if(tipEl){tipEl.style.display="flex";try{document.getElementById("tipAmt").focus();document.getElementById("tipAmt").select();}catch(e){}}}' +
@@ -451,7 +464,7 @@
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 4s. */
     'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}if(r&&r.mine)markMine(r.mine);}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,4000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
-    'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();}' +
+    'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();dmStart();}' +
     /* render tung<->applicant follow-up messages on the pending screen; show the
        reply box only once tung has actually asked something. */
     'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");var tw=document.createElement("div");tw.className="twhen";tw.textContent=(m.from==="admin"?"tung":"you")+(m.ts?" · "+fmtWhen(m.ts):"");var tx=document.createElement("div");tx.textContent=m.text;b.appendChild(tw);b.appendChild(tx);appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
@@ -469,6 +482,8 @@
     'if(exportKeyBtn)exportKeyBtn.addEventListener("click",function(){copyKey(exportKeyBtn);});' +
     'var tipSend=document.getElementById("tipSend"),tipCancel=document.getElementById("tipCancel"),tipAmt=document.getElementById("tipAmt");' +
     'var profClose=document.getElementById("profClose"),profTipBtn=document.getElementById("profTip");' +
+    'var profDmBtn=document.getElementById("profDm");' +
+    'if(profDmBtn)profDmBtn.addEventListener("click",dmFromProfile);' +
     'var keyConfirm=document.getElementById("keyConfirm"),keyCancel=document.getElementById("keyCancel");' +
     'if(profClose)profClose.addEventListener("click",function(){if(profEl)profEl.style.display="none";});' +
     'if(profTipBtn)profTipBtn.addEventListener("click",function(){openTip(tipTo);});' +
@@ -483,7 +498,116 @@
     'if(loginBtn)loginBtn.addEventListener("click",function(){var k=lk?lk.value.trim():"";if(!k){applyWarn("enter your login key.");return;}loginBtn.disabled=true;applyWarn("logging in...");apiPost("/login",{token:k}).then(function(r){loginBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;applyWarn("");refreshGate();}else{applyWarn("that key is not known to the shrine.");}}).catch(function(){loginBtn.disabled=false;applyWarn("network error, try again.");});});' +
     'if(lk)lk.addEventListener("keydown",function(ev){if(ev.key==="Enter"){ev.preventDefault();if(loginBtn)loginBtn.click();}});' +
     'respBtn.addEventListener("click",function(){var t=respText.value.trim();if(!t)return;respText.value="";apiPost("/respond",{token:TOKEN,text:t}).then(function(r){if(r&&r.thread)renderThread(r.thread);});});' +
-    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:ME,text:text,mine:true,reply:rep,ts:Date.now()});apiPost("/send",{token:TOKEN,id:id,text:text,reply:rep}).then(function(r){if(r&&r.ts&&MSGS[id]&&MSGS[id].meta)stampWhen(MSGS[id].meta,r.ts);});cancelReply();});' +
+    /* ---- conversations ----
+       DM is null in the room and {id,name} in a conversation. One pane holds
+       both, so switching is: stop what was filling it, empty it, start the
+       other. The room replays from the beginning when it is come back to,
+       which costs one read and is the only way to be sure nothing said while
+       you were away is missing. */
+    'var DM=null,dmSeq=0,dmT=null,dmListT=null,dmSending=0,dmSkip={},dmRun=0;' +
+    /* stopping the poll has to disown the request already in the air as well as
+       the timer, or its reply lands on top of whatever replaced it */
+    'function dmStop(){dmRun++;if(dmT){clearTimeout(dmT);dmT=null;}}' +
+    /* a conversation line: plain, because a DM has no reactions, no replies
+       and no gifts — pretending otherwise would be a row of buttons that do
+       nothing */
+    'function dmAdd(m){var row=document.createElement("div");row.className=m.mine?"msg me dm":"msg dm";' +
+    'var meta=document.createElement("div");meta.className="meta";' +
+    'var w=document.createElement("span");w.className="who";w.textContent=m.mine?(ME||"you"):(DM?DM.name:"");meta.appendChild(w);' +
+    'stampWhen(meta,m.ts);row.appendChild(meta);' +
+    'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
+    'log.appendChild(row);log.scrollTop=log.scrollHeight;return row;}' +
+    /* `dmSeq` is only ever moved by a response we actually rendered, so a reply
+       we throw away is simply fetched again rather than lost. The one thing
+       that can arrive twice is a line of our own, already on screen from the
+       moment it was typed; it comes back with a seq, and `dmSkip` is where the
+       send leaves word to let that one through unrendered. */
+    'function dmPoll(){' +
+    'if(!DM||!TOKEN)return;' +
+    'var conv=DM,run=dmRun;' +
+    'api("/dm/with?token="+encodeURIComponent(TOKEN)+"&with="+encodeURIComponent(conv.id)+"&since="+dmSeq).then(function(r){' +
+    'if(DM!==conv||run!==dmRun)return;' +
+    'if(r&&r.error){dmT=setTimeout(dmPoll,4000);return;}' +
+    'if(r&&r.closed){convsub.textContent="this conversation is closed.";}' +
+    'else if(r&&r.msgs){for(var i=0;i<r.msgs.length;i++){var m=r.msgs[i];' +
+    'if(m.mine&&dmSkip[m.seq]){delete dmSkip[m.seq];continue;}dmAdd(m);}' +
+    'if(r.seq>dmSeq)dmSeq=r.seq;}' +
+    'if(r&&r.msgs&&r.msgs.length)dmListRefresh();' +
+    'dmT=setTimeout(dmPoll,2500);' +
+    '}).catch(function(){if(DM===conv&&run===dmRun)dmT=setTimeout(dmPoll,4000);});}' +
+    /* going back to the room. cursor 0 so the history is replayed rather than
+       resumed from a mark that moved on without us. */
+    'function openRoom(){' +
+    'dmStop();DM=null;dmSeq=0;dmSkip={};' +
+    'convname.textContent="the shrine";convsub.textContent="everyone who is here";' +
+    'input.placeholder="say something... try :sob:";' +
+    'log.innerHTML="";MSGS={};cursor=0;seenEids={};' +
+    'dmPaint();polling=true;poll();}' +
+    'function openDM(id,name){' +
+    'if(!id||!TOKEN)return;' +
+    'if(String(name||"").toLowerCase()===String(ME||"").toLowerCase())return;' +
+    'if(polling)polling=false;' +
+    'if(pollT){clearTimeout(pollT);pollT=null;}' +
+    'dmStop();' +
+    'DM={id:String(id),name:String(name||"")};dmSeq=0;dmSkip={};' +
+    'convname.textContent=DM.name;convsub.textContent="only the two of you";' +
+    'input.placeholder="message "+DM.name+"\u2026";' +
+    'log.innerHTML="";cancelReply();' +
+    'dmPaint();dmPoll();' +
+    'try{input.focus();}catch(e){}}' +
+    /* the rail: the room, then whoever has been talked to, newest first */
+    'function dmPaint(){' +
+    'if(!dmlist)return;' +
+    'dmlist.innerHTML="";' +
+    'var room=document.createElement("button");room.type="button";' +
+    'room.className="dmrow"+(DM?"":" on");' +
+    'var rn=document.createElement("span");rn.className="dmname";rn.textContent="the shrine";room.appendChild(rn);' +
+    'var rs=document.createElement("span");rs.className="dmlast";rs.textContent="the whole room";room.appendChild(rs);' +
+    'room.addEventListener("click",function(){if(DM)openRoom();});' +
+    'dmlist.appendChild(room);' +
+    'for(var i=0;i<DMS.length;i++){(function(c){' +
+    'var b=document.createElement("button");b.type="button";' +
+    'b.className="dmrow"+(DM&&DM.id===c.id?" on":"")+(c.unread>0?" unread":"");' +
+    'var top=document.createElement("span");top.className="dmtop";' +
+    'var n=document.createElement("span");n.className="dmname";n.textContent=c.name;top.appendChild(n);' +
+    'if(c.unread>0){var u=document.createElement("span");u.className="dmbadge";u.textContent=c.unread>99?"99+":String(c.unread);top.appendChild(u);}' +
+    'b.appendChild(top);' +
+    'var l=document.createElement("span");l.className="dmlast";l.textContent=c.last||"";b.appendChild(l);' +
+    'b.addEventListener("click",function(){openDM(c.id,c.name);});' +
+    'dmlist.appendChild(b);' +
+    '})(DMS[i]);}' +
+    'if(!DMS.length){var e=document.createElement("div");e.className="dmempty";' +
+    'e.textContent="no conversations yet. click a name in the room to start one.";dmlist.appendChild(e);}}' +
+    'var DMS=[];' +
+    'function dmListRefresh(){' +
+    'if(!TOKEN||!APPROVED)return;' +
+    'api("/dm/list?token="+encodeURIComponent(TOKEN)).then(function(r){' +
+    'if(!r||r.error||!r.convs)return;' +
+    'DMS=r.convs;' +
+    'dmPaint();' +
+    '}).catch(function(){});}' +
+    'function dmStart(){if(dmListT)clearInterval(dmListT);dmListRefresh();dmListT=setInterval(dmListRefresh,6000);}' +
+    'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;' +
+    /* one composer, two destinations — whichever the pane is showing */
+    'if(DM){var conv=DM;input.value="";' +
+    /* the line goes up the moment it is typed, and the poll is held off until
+       the send answers — otherwise a poll landing in between would fetch the
+       same line back and put it on screen twice. `dmSkip` carries the seq the
+       send comes back with, so the copy the next poll brings is let through
+       without being drawn again. */
+    'var row=dmAdd({text:text,ts:Date.now(),mine:true});' +
+    'dmSending++;dmStop();' +
+    'apiPost("/dm/send",{token:TOKEN,to:conv.id,text:text}).then(function(r){' +
+    'if(r&&r.msg){dmSkip[r.msg.seq]=1;if(DM===conv)convsub.textContent="only the two of you";}' +
+    /* a refused line is taken back off the screen rather than left sitting
+       there looking sent */
+    'if(r&&r.error){if(row&&row.parentNode)row.parentNode.removeChild(row);' +
+    'if(DM===conv)convsub.textContent=r.error==="closed"?"this conversation is closed."' +
+    ':r.error==="slow down"?"slow down \u2014 too many messages.":"that did not send.";}' +
+    'dmListRefresh();' +
+    '}).catch(function(){if(row&&row.parentNode)row.parentNode.removeChild(row);' +
+    '}).then(function(){dmSending--;if(!dmSending&&DM===conv){dmStop();dmPoll();}});return;}' +
+    'var id=mkId();var rep=replyTo?{id:replyTo.id,name:replyTo.name,text:replyTo.text}:null;input.value="";add({id:id,name:ME,text:text,mine:true,reply:rep,ts:Date.now()});apiPost("/send",{token:TOKEN,id:id,text:text,reply:rep}).then(function(r){if(r&&r.ts&&MSGS[id]&&MSGS[id].meta)stampWhen(MSGS[id].meta,r.ts);});cancelReply();});' +
     'pick.addEventListener("click",function(ev){ev.stopPropagation();picker.style.display=picker.style.display==="flex"?"none":"flex";rpal.style.display="none";});' +
     'document.addEventListener("click",function(){rpal.style.display="none";picker.style.display="none";});' +
     'buildPicker();buildRpal();buildCatalog();buildOriginals();' +

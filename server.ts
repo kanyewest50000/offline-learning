@@ -1108,6 +1108,77 @@ function chatBlock(u: any): { blocked: boolean; reason?: string; until?: number 
   return { blocked: false };
 }
 
+// --- direct messages ---------------------------------------------------------
+const DM_TTL = 30 * 24 * 60 * 60 * 1000;   // a conversation ages out after a month of silence
+const DM_PAGE = 300;                        // most lines one read of a conversation returns
+type DmMsg = { seq: number; from: string; text: string; ts: number };
+type DmConv = { name: string; last: string; ts: number; seq: number; read: number };
+
+// The pair IS the key, sorted so both sides name the same conversation. That is
+// what makes access a matter of arithmetic rather than a check somebody can
+// forget to write: the only conversation ids you can build are ones you are in.
+function convOf(a: string, b: string): string {
+  return a < b ? a + "~" + b : b + "~" + a;
+}
+// Who the other end is, by username or by id. Usernames are what the client
+// has — it reads them off the room — so both are accepted.
+// deno-lint-ignore no-explicit-any
+async function dmOther(who: unknown): Promise<any | null> {
+  const s = clip(who, 32);
+  if (!s) return null;
+  // deno-lint-ignore no-explicit-any
+  const byId = await kv.get<any>(["app", s]);
+  if (byId.value && byId.value.status === "approved") return byId.value;
+  const byName = await kv.get<string>(["name", s.toLowerCase()]);
+  if (!byName.value) return null;
+  // deno-lint-ignore no-explicit-any
+  const app = await kv.get<any>(["app", byName.value]);
+  return app.value && app.value.status === "approved" ? app.value : null;
+}
+async function dmMarkRead(uid: string, other: string, upto: number): Promise<void> {
+  for (let i = 0; i < 4; i++) {
+    const e = await kv.get<DmConv>(["dmconv", uid, other]);
+    const v = e.value;
+    if (!v || (Number(v.read) || 0) >= upto) return;
+    const res = await kv.atomic().check(e)
+      .set(["dmconv", uid, other], { ...v, read: upto }, { expireIn: DM_TTL })
+      .commit();
+    if (res.ok) return;
+  }
+}
+// One line, and both sides' view of the conversation, in a single commit —
+// so a message can never exist without showing up in the list that points at
+// it, and the list can never promise a line that was never written.
+// deno-lint-ignore no-explicit-any
+async function dmAppend(from: any, to: any, text: string): Promise<DmMsg | null> {
+  const conv = convOf(from.id, to.id);
+  const preview = text.slice(0, 120);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const seqE = await kv.get<number>(["dmseq", conv]);
+    const mineE = await kv.get<DmConv>(["dmconv", from.id, to.id]);
+    const theirsE = await kv.get<DmConv>(["dmconv", to.id, from.id]);
+    const seq = (Number(seqE.value) || 0) + 1;
+    const msg: DmMsg = { seq, from: from.id, text, ts: Date.now() };
+    const res = await kv.atomic()
+      .check(seqE).check(mineE).check(theirsE)
+      .set(["dmseq", conv], seq, { expireIn: DM_TTL })
+      .set(["dmev", conv, seq], msg, { expireIn: DM_TTL })
+      // the sender has by definition read their own line
+      .set(["dmconv", from.id, to.id], {
+        name: to.username, last: preview, ts: msg.ts, seq, read: seq,
+      }, { expireIn: DM_TTL })
+      // the recipient's read mark is left exactly where it was, which is what
+      // turns into their unread count
+      .set(["dmconv", to.id, from.id], {
+        name: from.username, last: preview, ts: msg.ts, seq,
+        read: Number(theirsE.value?.read) || 0,
+      }, { expireIn: DM_TTL })
+      .commit();
+    if (res.ok) return msg;
+  }
+  return null;
+}
+
 // Rate limits: 90 req/min per IP for *anonymous* traffic, plus per-token
 // caps on /events. A school NAT is fine because approved shrine/casino
 // tabs send a token and skip the IP bucket. Scrapers with no token hit
@@ -2862,6 +2933,102 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // a fact the server holds, and the delta is derived from it — so pressing the
   // same reaction twice is a no-op, and the count can never exceed the number
   // of real members who actually pressed it.
+  // ---------------------------------------------------------------------------
+  // DIRECT MESSAGES
+  //
+  // A room and a conversation are different shapes and are kept apart rather
+  // than being one log with a filter on it. The room is one append-only stream
+  // everybody reads; a DM is a stream of its own, and the pair it belongs to is
+  // the key, so there is no per-message access check to get wrong later — if
+  // you can name the conversation you are in it, and the name is built from
+  // both ids, so you can only ever name your own.
+  //
+  // KV:
+  //   ["dmseq", conv]        -> number            the conversation's counter
+  //   ["dmev", conv, seq]    -> DmMsg             one line, listed by seq
+  //   ["dmconv", uid, other] -> DmConv            one side's view of it
+  //
+  // The chat ban covers this completely, in both directions: somebody shut out
+  // of the room can neither send a DM nor be sent one. A ban that left DMs open
+  // would not be a ban, it would be a change of venue — and one that only
+  // stopped them sending would leave everyone else able to talk AT them.
+
+  if (req.method === "GET" && path === "/dm/list") {
+    const u = await authUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bs = chatBlock(u);
+    if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    const convs: { id: string; name: string; last: string; ts: number; unread: number }[] = [];
+    for await (const e of kv.list<DmConv>({ prefix: ["dmconv", u.id] })) {
+      const v = e.value;
+      if (!v) continue;
+      convs.push({
+        id: String(e.key[2]), name: v.name, last: v.last, ts: v.ts,
+        unread: Math.max(0, (Number(v.seq) || 0) - (Number(v.read) || 0)),
+      });
+    }
+    convs.sort((a, c) => c.ts - a.ts);
+    return json({ ok: true, convs });
+  }
+
+  // One conversation. `since` is the last seq this client has, so an open
+  // window costs one small read; opening it fresh replays what is kept.
+  // Reading it is what marks it read — there is no separate call to forget.
+  if (req.method === "GET" && path === "/dm/with") {
+    const u = await authUser(url.searchParams.get("token"));
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bs = chatBlock(u);
+    if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    const other = await dmOther(url.searchParams.get("with"));
+    if (!other) return json({ error: "not_found" }, 404);
+    if (other.id === u.id) return json({ error: "yourself" }, 400);
+    // A member who has been shut out of the room is not somewhere you can
+    // write to, and the conversation reads as closed rather than as missing.
+    if (chatBlock(other).blocked) {
+      return json({ ok: true, with: { id: other.id, name: other.username }, msgs: [], seq: 0, closed: true });
+    }
+    const conv = convOf(u.id, other.id);
+    const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
+    const msgs: { seq: number; text: string; ts: number; mine: boolean }[] = [];
+    let top = since;
+    for await (
+      const e of kv.list<DmMsg>(
+        { prefix: ["dmev", conv], start: ["dmev", conv, since + 1] },
+        { limit: DM_PAGE },
+      )
+    ) {
+      const v = e.value;
+      if (!v) continue;
+      top = Math.max(top, v.seq);
+      msgs.push({ seq: v.seq, text: v.text, ts: v.ts, mine: v.from === u.id });
+    }
+    // reading is what clears the badge, and only ever forward
+    if (top > since) await dmMarkRead(u.id, other.id, top);
+    return json({ ok: true, with: { id: other.id, name: other.username }, msgs, seq: top });
+  }
+
+  if (req.method === "POST" && path === "/dm/send") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await authUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bs = chatBlock(u);
+    if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    const text = clip(b.text, 1000);
+    if (!text) return json({ error: "empty" }, 400);
+    if (!allow("dm:" + u.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
+    if (!await allowGlobal("dm:" + u.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
+    const other = await dmOther(b.to);
+    if (!other) return json({ error: "not_found" }, 404);
+    if (other.id === u.id) return json({ error: "yourself" }, 400);
+    // the other half of the ban: you cannot write to somebody who has been
+    // shut out, any more than they could write to you
+    if (chatBlock(other).blocked) return json({ error: "closed" }, 403);
+    const msg = await dmAppend(u, other, text);
+    if (!msg) return json({ error: "busy" }, 503);
+    return json({ ok: true, msg: { seq: msg.seq, text: msg.text, ts: msg.ts, mine: true } });
+  }
+
   if (req.method === "POST" && path === "/react") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -4168,6 +4335,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!app) return json({ error: "not_found" }, 404);
     const c = await getCas(app.id);
     return json({
+      // the id as well as the name: a DM is opened against the account, not
+      // against a string that could have been renamed since it was drawn
+      id: app.id,
       username: app.username,
       createdAt: Number(app.ts) || 0,
       registeredAt: Number(app.ts) || 0,

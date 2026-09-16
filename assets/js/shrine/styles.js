@@ -39,7 +39,40 @@
       '#respBox{display:none;flex-direction:column;gap:8px;margin:12px 0 0}' +
       '#respText{resize:vertical}' +
       '#gate .row{display:flex;gap:8px;justify-content:center}' +
-      '#chat{flex:1;display:none;flex-direction:column;min-height:0}' +
+      /* The room and the conversations share one message pane, with a rail
+         down the left saying which is in it. Two panes rather than a drawer
+         because the list is only worth having if it is visible — a DM you have
+         to go looking for is one you never read. */
+      '#chat{flex:1;display:none;flex-direction:row;min-height:0}' +
+      '#chatmain{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}' +
+      '#dmrail{flex:0 0 232px;display:flex;flex-direction:column;min-height:0;' +
+      'background:#1d1206;border-right:1px solid #3a2410}' +
+      '#dmrailhead{padding:13px 14px 9px;font-size:11px;font-weight:800;letter-spacing:.14em;' +
+      'text-transform:uppercase;color:#8a6a3a}' +
+      '#dmlist{flex:1;overflow-y:auto;padding:0 8px 10px;display:flex;flex-direction:column;gap:2px}' +
+      '.dmrow{display:flex;flex-direction:column;gap:2px;align-items:stretch;text-align:left;width:100%;' +
+      'padding:8px 10px;border-radius:9px;border:1px solid transparent;background:transparent;cursor:pointer}' +
+      '.dmrow:hover{background:#241505}' +
+      '.dmrow.on{background:#2b1a0a;border-color:#3a2410}' +
+      '.dmtop{display:flex;align-items:center;gap:7px}' +
+      '.dmname{flex:1;min-width:0;font-size:13px;font-weight:700;color:#f5efe0;overflow:hidden;' +
+      'text-overflow:ellipsis;white-space:nowrap}' +
+      '.dmrow.unread .dmname{color:#f2c063}' +
+      '.dmlast{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.dmbadge{flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#c8823c;' +
+      'color:#1d1206;font-size:10px;font-weight:800;line-height:18px;text-align:center}' +
+      '.dmempty{padding:10px;font-size:11px;color:#8a6a3a;line-height:1.5}' +
+      /* which conversation the pane is showing, above it */
+      '#convhead{display:flex;align-items:baseline;gap:9px;padding:12px 16px;background:#2b1a0a;' +
+      'border-bottom:1px solid #3a2410;min-height:44px}' +
+      '#convname{font-size:15px;font-weight:800;color:#f5efe0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '#convsub{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      /* a DM line has no reactions, replies or gifts, so it does not reserve
+         room for the buttons that would work them */
+      '.msg.dm .acts{display:none}' +
+      /* the rail is the first thing to go when there is no width for it; the
+         room still works without it */
+      '@media (max-width:760px){#dmrail{display:none}}' +
       '#banView{flex:1;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:8px;padding:24px;background:#160d04}' +
       '#banTitle{font-size:22px;font-weight:800}' +
       '#banUntil{color:#c8823c;font-size:14px;line-height:1.45;max-width:40ch}' +
@@ -924,6 +957,19 @@
       '& .pkactlab{color:{text}}' + '& .pkactkey{color:{muted}}' +
       '& .pkchipbtn,& .pkstep{background:{raised};border-color:{line};color:{heading}}' +
       '& .pkprebox,& .pkhelptip{background:{sunk};border-color:{line}}' +
+      '& #dmrail{background:{bgSunk};border-right-color:{lineSoft}}' +
+      '& #dmrailhead{color:{muted}}' +
+      /* a rail row is a <button>, and `& button` above is an attribute plus an
+         element, which outranks the plain `.dmrow` in the base sheet — without
+         this every unselected row wears the solid button colour under a skin */
+      '& .dmrow{background:transparent}' +
+      '& .dmrow:hover{background:{raised}}' +
+      '& .dmrow.on{background:{surface};border-color:{line}}' +
+      '& .dmname{color:{text}}' + '& .dmrow.unread .dmname{color:{heading}}' +
+      '& .dmlast,& .dmempty{color:{muted}}' +
+      '& .dmbadge{background:{lineHot};color:{solidInk}}' +
+      '& #convhead{background:{surface};border-bottom-color:{lineSoft}}' +
+      '& #convname{color:{text}}' + '& #convsub{color:{muted}}' +
       '& .pkprebox.on{border-color:{lineHot};background:{raised}}' +
       '& .pkprelab{color:{textDim}}' + '& .pkprebox.on .pkprelab{color:{heading}}' +
       '& .pkprecb{accent-color:{lineHot}}' +

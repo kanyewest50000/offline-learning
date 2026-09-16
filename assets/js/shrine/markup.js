@@ -90,11 +90,23 @@
       '<div id="respBox"><textarea id="respText" rows="2" placeholder="reply to tung..."></textarea><button id="respBtn" type="button">send reply</button></div>' +
       '<div class="row"><button id="copyHash" type="button">copy key</button><button id="recheckBtn" type="button">check access</button></div>' +
       '</div></div>' +
+      /* The room and the conversations share one message pane. A rail down the
+         left says which of them is in it — the shrine first, always, then
+         whoever you have been talking to. It is the shape every chat client
+         has for the same reason: the list has to be visible to be worth
+         having, and the messages want the rest of the width. */
       '<div id="chat">' +
+      '<div id="dmrail">' +
+      '<div id="dmrailhead">conversations</div>' +
+      '<div id="dmlist"></div>' +
+      '</div>' +
+      '<div id="chatmain">' +
+      '<div id="convhead"><span id="convname">the shrine</span><span id="convsub">everyone who is here</span></div>' +
       '<div id="log"></div>' +
       '<div id="picker"></div>' +
       '<div id="replybar"></div>' +
       '<form id="f"><input id="u" autocomplete="off" placeholder="your name"><input id="m" autocomplete="off" placeholder="say something... try :sob:"><button id="pick" type="button" title="emojis">😀</button><button>send</button></form>' +
+      '</div>' +
       '</div>' +
       '<div id="banView"><div id="banTitle">you are banned</div><div id="banUntil"></div></div>' +
       '</div>' +
@@ -151,7 +163,7 @@
       /* filled in only for tung */
       '<div id="profExtra"></div>' +
       '<p id="profErr" class="overr"></p>' +
-      '<div class="ovacts"><button id="profTip" type="button">offer sahurs</button><button id="profClose" class="ghost" type="button">close</button></div>' +
+      '<div class="ovacts"><button id="profDm" type="button">send a message</button><button id="profTip" type="button">offer sahurs</button><button id="profClose" class="ghost" type="button">close</button></div>' +
       '</div></div>' +
       '<div id="tipOverlay" class="ov" role="dialog" aria-modal="true">' +
       '<div class="ovcard">' +

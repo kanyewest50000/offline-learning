@@ -124,6 +124,46 @@ logs in on that host once with the key they already have; the backend answers
 with `window.open`, so a sandboxed frame without `allow-popups` gets the chat,
 the casino and the originals but no catalog tabs.
 
+## direct messages
+
+Beside the room is a rail of conversations, and the room is the first row in it.
+Clicking a name in the chat opens that member's profile card, which now has
+**send a message** on it next to the tip button; picking it swaps the pane over
+to a conversation with them and leaves the room where it was, because the room
+and a DM are the same pane wearing different contents — the header renames
+itself, the composer's placeholder names who it is writing to, reactions and
+replies go away (there is nobody else to react in front of), and going back to
+the room replays it from the top rather than resuming a half-scrolled log. Each
+row carries the newest line and, if it has not been opened, a count; the rail
+sorts by who spoke last. Below 760px it is the first thing to go, because the
+room still works without it.
+
+A DM is not the room with a filter on it. The room is one append-only stream
+everybody reads; a conversation is a stream of its own and the pair it belongs
+to is the key, sorted so both ends name the same one. That is the whole access
+story: the only conversation ids that exist are built out of two member ids, so
+the only ones you can name are the ones you are in, and there is no per-message
+check for somebody to forget to write later. A line and both sides' view of the
+conversation are one commit, so a message cannot exist without appearing in the
+list that points at it, and the list cannot promise a line that was never
+written. The sender has by definition read their own line; the recipient's read
+mark is left exactly where it was, and the difference between it and the
+conversation's counter is the number on the badge. Opening a conversation is
+what clears it — there is no second call to forget — and the mark only ever
+moves forward, so a stale poll cannot un-read anything. A conversation ages out
+after a month of silence.
+
+The chat ban covers all of it, in both directions. Somebody shut out of the room
+can neither send a DM nor be sent one: their own three routes answer `chatban`
+like every other chat route, and anybody writing to them is told the
+conversation is `closed` rather than that they are gone. A ban that left DMs
+open would not be a ban, it would be a change of venue, and one that only
+stopped them sending would leave everyone else free to talk at them. Lifting it
+hands the conversation back exactly as it was — a ban is not a purge, and the
+lines refused while it was on were never written. `scripts/test-dm.ts` walks
+delivery to one member and nobody else (by name or by id, with a third member
+trying both), the badge, the rail's ordering, and both halves of the ban.
+
 ## the pit
 
 Four tables in the casino where the opponent is another member rather than the
@@ -501,8 +541,9 @@ key-gated, and the name still has to belong to somebody real.
 There are two bans on the **Manage users** pane and they are not the same ban.
 **ban** shuts the whole shrine: chat, casino, the pit, the veil, everything.
 **ban from chat** shuts the room and only the room — they cannot read a line and
-cannot post one, while the casino, the pit, the catalog, the shop, tips and the
-veil keep working exactly as before. Server-side the two are separate flags on
+cannot post one, and their DMs go with it in both directions, while the casino,
+the pit, the catalog, the shop, tips and the veil keep working exactly as
+before. Server-side the two are separate flags on
 the account and separate gates: `blockState()` is the wide one every other part
 of the app asks, `chatBlock()` is the one every chat route asks, and the chat
 routes are the only ones allowed to use it. Nothing else may reach `chatBlock()`
