@@ -1815,9 +1815,12 @@ function pokerDeck(): string[] {
   return d;
 }
 
+// Named without the article. These are read as a label on the cards — "FLUSH"
+// under a hand, "flush — takes 120" on a showdown row — and "a flush" reads as
+// a sentence with its beginning cut off in both places.
 const POKER_NAMES = [
-  "high card", "a pair", "two pair", "three of a kind", "a straight",
-  "a flush", "a full house", "four of a kind", "a straight flush",
+  "high card", "pair", "two pair", "three of a kind", "straight",
+  "flush", "full house", "four of a kind", "straight flush",
 ];
 
 // The best five of seven, as a list compared left to right: category first,

@@ -474,8 +474,13 @@
       /* the table itself: an oval of felt inside a wooden rail, with the seats
          set around its rim by angle rather than laid out in a row. The player
          looking at it is always at the bottom. */
-      '.pkstage{position:relative;width:100%;max-width:470px;aspect-ratio:1/.95;margin:0 auto}' +
-      '.pkfelt{position:absolute;left:3%;right:3%;top:18%;bottom:18%;border-radius:50%;' +
+      '.pkstage{position:relative;width:100%;max-width:880px;aspect-ratio:1/.6;margin:0 auto}' +
+      /* a phone column cannot carry a two-to-one table: the board and the
+         seat under it end up in the same forty pixels, so below this the
+         oval goes rounder and the casino.js radii follow at the same width */
+      '@media (max-width:699px){.pkstage{max-width:470px;aspect-ratio:1/.86}' +
+      '.pkfelt{top:15%;bottom:15%}}' +
+      '.pkfelt{position:absolute;left:3%;right:3%;top:13%;bottom:13%;border-radius:50%;' +
       'background:radial-gradient(120% 120% at 50% 32%,#2f5d3f 0%,#23472f 45%,#183121 100%);' +
       'border:7px solid #3a2410;box-shadow:inset 0 0 26px #0009,0 10px 26px #0007,0 0 0 2px #241505}' +
       '.pkmid{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;z-index:1}' +
@@ -510,6 +515,26 @@
       '.pkseat.you{width:clamp(78px,23vw,104px)}' +
       '.pkseat.you .pkwho{max-width:74px}' +
       /* what somebody has pushed out this street, between them and the pot */
+      /* the table is nearly twice the size on a desktop, so what sits on it
+         grows too rather than rattling around in the middle of it */
+      '@media (min-width:700px){' +
+      '.pkboard{gap:7px}' +
+      '.pkboard .pcard,.pkslot{width:46px;height:64px}' +
+      '.pkboard .pcface{font-size:19px;border-radius:6px}' +
+      '.pkpot{font-size:26px}' +
+      '.pkseat{width:108px}' + '.pkseat.you{width:132px}' +
+      '.pkwho{max-width:76px}' + '.pkseat.you .pkwho{max-width:100px}' +
+      '.pkhole .pcard{width:34px;height:48px}' +
+      '.pkhole .pcface{font-size:14px;border-radius:5px}' +
+      '.pkseat.you .pkhole .pcard{width:48px;height:67px}' +
+      '.pkseat.you .pkhole .pcface{font-size:20px;border-radius:6px}' +
+      '.pkname{font-size:12px}' + '.pkstack{font-size:15px}' +
+      /* the row of decisions belongs to the table above it, so it grows with
+         it rather than sitting in a narrow strip under a wide oval */
+      '.pkbar,.pkbet{max-width:620px}' + '.pkact{min-height:58px}' +
+      '.pkactlab{font-size:14px}' +
+      '.pkchip{font-size:11px;padding:2px 8px}' +
+      '}' +
       '.pkchip{position:absolute;transform:translate(-50%,-50%);z-index:1;' +
       'font-size:9px;font-weight:800;font-variant-numeric:tabular-nums;color:#1d1206;' +
       'background:#e8c07a;border:2px solid #b8873c;border-radius:999px;padding:1px 5px;box-shadow:0 2px 6px #0008}' +
@@ -555,8 +580,25 @@
       'color:#f2c063;font-size:17px;font-weight:800;cursor:pointer;line-height:1}' +
       '.pkslide{flex:1;min-width:0;accent-color:#c8823c;height:26px}' +
       '.pkbetgo{display:flex;gap:7px}' +
-      '.pkpre{min-width:180px;opacity:.72}' +
-      '.pkpre.on{opacity:1;background:#c8823c;color:#1d1206;box-shadow:0 0 0 2px #f2c06355}' +
+      /* the pre-action: a tick box, because it sets what will happen rather
+         than doing anything now, and a mark beside it that says so */
+      '.pkprerow{display:flex;align-items:center;justify-content:center;gap:8px}' +
+      '.pkprebox{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none;' +
+      'padding:7px 13px;border-radius:9px;background:#1a1008;border:1px solid #3a2410}' +
+      '.pkprebox:hover{border-color:#7a5a1a}' +
+      '.pkprebox.on{border-color:#c8823c;background:#241505}' +
+      '.pkprecb{flex:0 0 auto;width:15px;height:15px;margin:0;accent-color:#c8823c;cursor:pointer}' +
+      '.pkprelab{font-size:12px;font-weight:700;letter-spacing:.02em;color:#c8823c;white-space:nowrap}' +
+      '.pkprebox.on .pkprelab{color:#f2c063}' +
+      '.pkhelp{position:relative;flex:0 0 auto;cursor:help;outline:none}' +
+      '.pkhelpq{display:flex;align-items:center;justify-content:center;width:17px;height:17px;' +
+      'border-radius:50%;border:1px solid #7a5a1a;color:#c8823c;font-size:11px;font-weight:800;line-height:1}' +
+      '.pkhelp:hover .pkhelpq,.pkhelp:focus .pkhelpq{background:#c8823c;color:#1d1206;border-color:#c8823c}' +
+      '.pkhelptip{display:none;position:absolute;bottom:26px;left:50%;transform:translateX(-50%);' +
+      'width:min(262px,78vw);padding:9px 11px;border-radius:9px;background:#1a1008;border:1px solid #7a5a1a;' +
+      'color:#f5efe0;font-size:11px;font-weight:500;line-height:1.5;text-align:left;z-index:9;' +
+      'box-shadow:0 8px 22px #000a}' +
+      '.pkhelp:hover .pkhelptip,.pkhelp:focus .pkhelptip{display:block}' +
       '.pkshow{display:flex;flex-direction:column;gap:6px;width:100%;max-width:420px}' +
       '.pkshowrow{display:flex;align-items:center;gap:8px;background:#241505;border:1px solid #3a2410;border-radius:10px;padding:6px 10px}' +
       '.pkshowrow.won{border-color:#c8823c}' +
@@ -881,6 +923,13 @@
       '& .pkact,& .pkbetval{background:{sunk};border-color:{line}}' +
       '& .pkactlab{color:{text}}' + '& .pkactkey{color:{muted}}' +
       '& .pkchipbtn,& .pkstep{background:{raised};border-color:{line};color:{heading}}' +
+      '& .pkprebox,& .pkhelptip{background:{sunk};border-color:{line}}' +
+      '& .pkprebox.on{border-color:{lineHot};background:{raised}}' +
+      '& .pkprelab{color:{textDim}}' + '& .pkprebox.on .pkprelab{color:{heading}}' +
+      '& .pkprecb{accent-color:{lineHot}}' +
+      '& .pkhelpq{border-color:{lineMid};color:{textDim}}' +
+      '& .pkhelp:hover .pkhelpq,& .pkhelp:focus .pkhelpq{background:{lineHot};color:{solidInk};border-color:{lineHot}}' +
+      '& .pkhelptip{color:{text};border-color:{lineMid}}' +
       '& .pkchipbtn:hover{background:{hover}}' +
       '& .pkbetnum,& .pkbetbb{color:{heading}}' + '& .pkbetlab{color:{muted}}' +
       '& .pkslide{accent-color:{lineHot}}' +

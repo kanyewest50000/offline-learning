@@ -50,14 +50,14 @@ const S = "♠", H = "♥", D = "♦", C = "♣";
 // each row is a hand and the category it must land in, worst to best
 const HANDS: [string, string[], number][] = [
   ["high card", [`A${S}`, `J${H}`, `9${D}`, `7${C}`, `5${S}`, `3${H}`, `2${D}`], 0],
-  ["a pair", [`A${S}`, `A${H}`, `9${D}`, `7${C}`, `5${S}`, `3${H}`, `2${D}`], 1],
+  ["pair", [`A${S}`, `A${H}`, `9${D}`, `7${C}`, `5${S}`, `3${H}`, `2${D}`], 1],
   ["two pair", [`A${S}`, `A${H}`, `9${D}`, `9${C}`, `5${S}`, `3${H}`, `2${D}`], 2],
   ["three of a kind", [`A${S}`, `A${H}`, `A${D}`, `9${C}`, `5${S}`, `3${H}`, `2${D}`], 3],
-  ["a straight", [`5${S}`, `6${H}`, `7${D}`, `8${C}`, `9${S}`, `K${H}`, `2${D}`], 4],
-  ["a flush", [`A${S}`, `J${S}`, `9${S}`, `7${S}`, `3${S}`, `K${H}`, `2${D}`], 5],
-  ["a full house", [`A${S}`, `A${H}`, `A${D}`, `9${C}`, `9${S}`, `3${H}`, `2${D}`], 6],
+  ["straight", [`5${S}`, `6${H}`, `7${D}`, `8${C}`, `9${S}`, `K${H}`, `2${D}`], 4],
+  ["flush", [`A${S}`, `J${S}`, `9${S}`, `7${S}`, `3${S}`, `K${H}`, `2${D}`], 5],
+  ["full house", [`A${S}`, `A${H}`, `A${D}`, `9${C}`, `9${S}`, `3${H}`, `2${D}`], 6],
   ["four of a kind", [`A${S}`, `A${H}`, `A${D}`, `A${C}`, `9${S}`, `3${H}`, `2${D}`], 7],
-  ["a straight flush", [`5${S}`, `6${S}`, `7${S}`, `8${S}`, `9${S}`, `K${H}`, `2${D}`], 8],
+  ["straight flush", [`5${S}`, `6${S}`, `7${S}`, `8${S}`, `9${S}`, `K${H}`, `2${D}`], 8],
 ];
 for (const [label, cards, cat] of HANDS) {
   const got = pokerScore(cards);

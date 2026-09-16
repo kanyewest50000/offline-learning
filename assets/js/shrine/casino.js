@@ -1982,10 +1982,22 @@
      face up at a showdown counts as new and flips, which is right.
      (Everything in this file lives inside one template literal, so there are
      no backticks here and there is no dollar-brace either.) */
-  function pkCard(key,c){
-    var seen=PIT.pkSeen&&PIT.pkSeen[key]===c;
+  function pkWasSeen(key,c){return !!(PIT.pkSeen&&PIT.pkSeen[key]===c);}
+  function pkCard(key,c,delay){
+    var seen=pkWasSeen(key,c);
     var e=cardEl(c);
     if(seen)e.className+=" still";
+    else if(delay>0){
+      /* A flop is three cards, and three cards landing on the same frame is a
+         row appearing rather than a flop being dealt. Each waits its turn.
+         The deal animation is fill-mode both, so a card holds its first frame
+         — face down and invisible — until its delay is up, which is what makes
+         the wait read as the dealer's hand and not as a stutter. */
+      var inner=e.querySelector(".pcinner");
+      if(inner)inner.style.animationDelay=delay+"ms";
+      var faces=e.querySelectorAll(".pcface");
+      for(var fi=0;fi<faces.length;fi++)faces[fi].style.animationDelay=delay+"ms";
+    }
     if(PIT.pkSeen)PIT.pkSeen[key]=c;
     return e;
   }
@@ -2030,9 +2042,15 @@
     var mid=el("div","pkmid");
     mid.appendChild(el("div","pkpot",chips(p.pot)));
     var board=el("div","pkboard");
+    /* the stagger counts the cards ARRIVING, not their place on the board, so
+       a turn or a river lands on its own beat instead of waiting out the gap
+       for three cards that were already sitting there */
+    var arriving=0;
     for(var bi=0;bi<5;bi++){
-      if(bi<p.board.length)board.appendChild(pkCard("b"+bi,p.board[bi]));
-      else board.appendChild(el("div","pcard pkslot"));
+      if(bi<p.board.length){
+        var already=pkWasSeen("b"+bi,p.board[bi]);
+        board.appendChild(pkCard("b"+bi,p.board[bi],already?0:(arriving++)*150));
+      }else board.appendChild(el("div","pcard pkslot"));
     }
     mid.appendChild(board);
     mid.appendChild(el("div","pkpotlab","pot"));
@@ -2043,7 +2061,14 @@
        the rim at the far left or right hangs half of itself off the screen on
        a phone. Sitting them just inside the edge keeps every plate on the
        table and still leaves the middle clear for the board. */
-    var RX=38, RY=30;
+    /* The oval is flat and wide where there is room for it, and rounder where
+       there is not: a phone column cannot carry a two-to-one table, because
+       the board and the seat under it end up in the same forty pixels. So the
+       shape follows the screen, and these follow the shape — the stylesheet
+       switches the stage at the same width. */
+    var wideTable=false;
+    try{wideTable=(window.innerWidth||0)>=700;}catch(e){}
+    var RX=wideTable?41:38, RY=30;
     p.seats.forEach(function(_,k){
       var i=(mine+k)%n;                 /* you first, then round the table */
       var s=p.seats[i];
@@ -2061,9 +2086,9 @@
       var hole=el("div","pkhole");
       if(!s.out){
         if(s.cards&&s.cards.length){
-          s.cards.forEach(function(c,ci){hole.appendChild(pkCard("s"+i+"c"+ci,c));});
+          s.cards.forEach(function(c,ci){hole.appendChild(pkCard("s"+i+"c"+ci,c,ci*110));});
         }else{
-          for(var h=0;h<(s.held||0);h++)hole.appendChild(pkCard("s"+i+"c"+h,"??"));
+          for(var h=0;h<(s.held||0);h++)hole.appendChild(pkCard("s"+i+"c"+h,"??",h*110));
         }
       }
       var plate=el("div","pkplate");
@@ -2274,16 +2299,39 @@
          buttons are right there and this would be a second way to press them. */
       var ms=p.yourSeat>=0?p.seats[p.yourSeat]:null;
       if(ms&&!ms.out&&!ms.folded&&!ms.allIn&&!p.showing&&!p.runout&&p.toAct>=0){
-        var pre=el("button","cbtn pkpre"+(PIT.pkAuto?" on":""),PIT.pkAuto?"check / fold ✓":"check / fold");
-        pre.onclick=function(){
-          PIT.pkAuto=!PIT.pkAuto;
+        /* A tick box, not a button: it does not DO anything when it is pressed,
+           it sets what will happen later — and a button sitting where FOLD
+           sits, reading "check / fold", is one you can hit meaning to fold now.
+           Wrapped in a label so the words toggle it too. */
+        var pre=el("label","pkprebox"+(PIT.pkAuto?" on":""));
+        var cb=document.createElement("input");
+        cb.type="checkbox";cb.className="pkprecb";cb.checked=!!PIT.pkAuto;
+        cb.onchange=function(){
+          PIT.pkAuto=!!cb.checked;
           /* repainted in place: re-rendering the table would rebuild it under
              the finger that just tapped this */
-          pre.className="cbtn pkpre"+(PIT.pkAuto?" on":"");
-          pre.textContent=PIT.pkAuto?"check / fold ✓":"check / fold";
+          pre.className="pkprebox"+(cb.checked?" on":"");
         };
-        body.appendChild(pre);
-        body.appendChild(el("p","pitsub","checks the moment it reaches you if checking is free, and folds if somebody has bet into you."));
+        pre.appendChild(cb);
+        pre.appendChild(el("span","pkprelab","check / fold"));
+        var prerow=el("div","pkprerow");
+        prerow.appendChild(pre);
+        /* The explanation lives behind a mark rather than in a line under the
+           box, because it is only ever read once: somebody who knows what a
+           pre-action is does not need a sentence about it under every hand.
+           Focusable as well as hoverable, or it would say nothing at all on a
+           phone, where there is no hover to do it with. */
+        var help=el("span","pkhelp");
+        help.tabIndex=0;
+        help.setAttribute("role","button");
+        help.setAttribute("aria-label","what check / fold does");
+        help.appendChild(el("span","pkhelpq","?"));
+        help.appendChild(el("span","pkhelptip",
+          "decide now, and it happens the moment the action reaches you: "+
+          "you check if nobody has bet, and fold if somebody has. "+
+          "it is used once and then clears, so it cannot fold a hand later that you meant to play."));
+        prerow.appendChild(help);
+        body.appendChild(prerow);
       }
     }
 
