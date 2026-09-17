@@ -31,20 +31,36 @@ function must(cond: unknown, msg: string) {
 
 // ---------------------------------------------------------------------------
 // lift the engine's pure half out of server.ts and run it for real
+// The slice runs all the way to pokerDealNext() so it carries the side-pot
+// maths, the uncalled-bet push-back and pokerFinishHand() itself, not just the
+// evaluator. Who gets paid what — and what the table then SAYS happened — is as
+// much "the rules" as which hand wins, and it is the half a player argues with.
+// Taking the real pokerFinishHand() rather than a copy of what it does is the
+// point: a copy would keep passing after the real one stopped calling a step.
+// Only the table's own dials are stubbed; none of them are read below.
 const src = await Deno.readTextFile(`${ROOT}/server.ts`);
 const from = src.indexOf("const PK_ORDER");
-const to = src.indexOf("function pokerLevel");
+const to = src.indexOf("function pokerDealNext");
 must(from > 0 && to > from, "could not find the poker evaluator in server.ts");
 const engine = `
 const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 const SUITS = ["♠","♥","♦","♣"];
+const POKER_LEVELS: [number, number][] = [[25, 50]];
+const POKER_LEVEL_MS = 180000;
+const POKER_SHOW_MS = 6000;
+type PokerSeat = { cards: string[]; chips: number; inStreet: number; inHand: number;
+  folded: boolean; allIn: boolean; out: boolean; acted: boolean };
+// deno-lint-ignore no-explicit-any
+type PokerState = any;
 function rndInt(n: number): number { return Math.floor(Math.random() * n); }
 function rankOf(c: string): string { return c.slice(0, c.length - 1); }
 ${src.slice(from, to)}
-export { pokerScore, pokerCmp, splitChips, pokerDeck, POKER_NAMES, pkVal };
+export { pokerScore, pokerCmp, splitChips, pokerDeck, POKER_NAMES, pkVal,
+  pokerFinishHand };
 `;
 const mod = await import("data:application/typescript," + encodeURIComponent(engine));
 const { pokerScore, pokerCmp, splitChips, pokerDeck, POKER_NAMES } = mod;
+const { pokerFinishHand } = mod;
 
 const S = "♠", H = "♥", D = "♦", C = "♣";
 // each row is a hand and the category it must land in, worst to best
@@ -90,6 +106,22 @@ must(pokerCmp(pokerScore([`A${S}`, `K${H}`, `Q${D}`, `J${C}`, `10${S}`, `3${H}`,
 must(pokerCmp(pokerScore([`A${S}`, `A${H}`, `K${D}`, `7${C}`, `5${S}`, `3${H}`, `2${D}`]),
   pokerScore([`A${C}`, `A${D}`, `Q${H}`, `7${S}`, `5${H}`, `3${S}`, `2${C}`])) > 0,
   "a king kicker must beat a queen kicker");
+// The hole card plays. Two hands that miss the board entirely are separated by
+// the best card either of them holds, and the ace on the board belongs to both
+// of them, so it separates nothing. This is the shape that gets argued about —
+// it looks like a chop from the seat because the top card is shared.
+{
+  const board = [`A${S}`, `9${D}`, `7${C}`, `5${H}`, `3${S}`];
+  const kj = pokerScore([`K${D}`, `J${S}`, ...board]);
+  const tj = pokerScore([`10${H}`, `J${C}`, ...board]);
+  must(kj[0] === 0 && tj[0] === 0, "neither hand should have made anything");
+  must(pokerCmp(kj, tj) > 0, "K-J must beat 10-J on an ace-high board: the king plays");
+  // and it is only ever a chop when the five on the board are the best five
+  // for both — never while both are still reading as high card
+  const play = [`A${S}`, `K${H}`, `Q${C}`, `J${D}`, `10${S}`];
+  must(pokerCmp(pokerScore([`K${D}`, `J${S}`, ...play]), pokerScore([`10${H}`, `J${C}`, ...play])) === 0,
+    "a board that plays is a chop");
+}
 // a full deck is 52 distinct cards, not a shoe drawn with replacement
 {
   const deck = pokerDeck();
@@ -103,6 +135,101 @@ for (const [pot, ways] of [[100, 3], [7, 2], [1, 4], [0, 3], [12345, 7]]) {
   must(sh.reduce((a: number, b: number) => a + b, 0) === pot, `${pot} split ${ways} ways must add back to ${pot}`);
   must(sh.every((x: number) => x >= 0), "no share may be negative");
   must(Math.max(...sh) - Math.min(...sh) <= 1, "shares must differ by at most one chip");
+}
+
+// ---------------------------------------------------------------------------
+// who the table says won it
+//
+// Chips nobody matched are not a pot and were not won. They come back to the
+// player who put them out, and the hand is announced without them. Get this
+// wrong and the money still lands in the right stack — it comes back out of the
+// side-pot maths as a pot only its owner can win — but it arrives looking like
+// a win: the loser turns up among the winners, their row is lit as a winner,
+// and a pot taken outright is announced as a split. Which is exactly what a
+// player sees when they hold the best hand and are told they chopped it.
+{
+  type Seat = {
+    cards: string[]; chips: number; inStreet: number; inHand: number;
+    folded: boolean; allIn: boolean; out: boolean; acted: boolean;
+  };
+  const seat = (cards: string[], inHand: number, o: Partial<Seat> = {}): Seat => ({
+    cards, chips: 0, inStreet: inHand, inHand,
+    folded: false, allIn: false, out: false, acted: true, ...o,
+  });
+  // hand the real pokerFinishHand() a table and read back what it says
+  type Row = { name: string; hand: string; won: number };
+  const settle = (seats: Seat[], names: string[], board: string[]) => {
+    // deno-lint-ignore no-explicit-any
+    const ps: any = {
+      seats, board, button: 0, startedAt: Date.now(), show: null, note: "", log: [],
+      toAct: -1, next: 0, street: 4, deck: [], call: 0, minRaise: 50, hand: 1,
+      reveal: false, runout: 0,
+    };
+    const staked = seats.reduce((a, s) => a + s.chips + s.inHand, 0);
+    pokerFinishHand(ps, names);
+    const show = (ps.show || []) as Row[];
+    return {
+      show,
+      note: ps.note as string,
+      winners: show.filter((x) => x.won > 0).map((x) => x.name),
+      stacks: seats.map((s) => s.chips),
+      staked, paid: seats.reduce((a, s) => a + s.chips, 0),
+      log: ps.log as string[],
+    };
+  };
+  const dry = [`A${S}`, `9${D}`, `7${C}`, `5${H}`, `3${S}`];   // nothing plays off it
+  const kj = [`K${D}`, `J${S}`], tj = [`10${H}`, `J${C}`];
+
+  // the reported hand: the best hand is all in for 100, the other had 200 out,
+  // so 100 of theirs was never called
+  {
+    const r = settle(
+      [seat(kj, 100, { allIn: true }), seat(tj, 200, { chips: 300 })],
+      ["best", "other"],
+      dry,
+    );
+    must(r.winners.length === 1 && r.winners[0] === "best",
+      "the better hand takes it alone, got: " + r.note);
+    must(!r.note.includes("split"), "an uncalled bet must not turn a win into a split: " + r.note);
+    must(r.show[1].won === 0, "the losing hand must not be shown as having won anything");
+    must(r.note === "best takes 200", 'the pot is what was matched: expected "best takes 200", got "' + r.note + '"');
+    must(r.log.some((l) => /takes back 100 uncalled/.test(l)), "the push-back must be on the record");
+    must(r.stacks[0] === 200 && r.stacks[1] === 400,
+      "stacks after: " + JSON.stringify(r.stacks) + " — the loser keeps the 100 nobody called");
+    must(r.staked === r.paid, "chips must conserve: " + r.staked + " in, " + r.paid + " out");
+  }
+  // the same board, the same money, but both hands are the board: a real chop
+  {
+    const play = [`A${S}`, `K${H}`, `Q${C}`, `J${D}`, `10${S}`];
+    const r = settle([seat(kj, 200), seat(tj, 200)], ["one", "two"], play);
+    must(r.winners.length === 2 && r.note.includes("split"), "a genuine chop must still say split: " + r.note);
+    must(r.staked === r.paid, "chips must conserve through a chop");
+  }
+  // money a folded player left behind was matched, so it is won, not returned —
+  // the test that keeps the push-back from swallowing dead money
+  {
+    const r = settle([
+      seat(kj, 300),                                  // best hand, most out
+      seat(tj, 100, { allIn: true }),                 // short all in
+      seat([`2${D}`, `3${D}`], 250, { folded: true }), // folded, chips stay
+    ], ["best", "short", "folder"], dry);
+    must(r.log.some((l) => /takes back 50 uncalled/.test(l)),
+      "only the 50 above the folder's 250 was uncalled: " + JSON.stringify(r.log));
+    must(r.note === "best takes 600",
+      'the folder\'s money is part of the pot: expected "best takes 600", got "' + r.note + '"');
+    must(r.winners.length === 1 && r.winners[0] === "best", "one winner, got: " + r.note);
+    must(r.stacks[0] === 650, "the winner takes the pot and their own 50 back, got " + r.stacks[0]);
+    must(r.staked === r.paid, "chips must conserve with dead money in the pot");
+  }
+  // an ordinary called showdown is untouched by any of this
+  {
+    const r = settle([seat(kj, 200), seat(tj, 200)], ["best", "other"], dry);
+    must(r.note === "best takes 400" && r.winners.length === 1 && r.stacks[0] === 400,
+      "a fully called pot goes whole to the best hand: " + r.note + " " + JSON.stringify(r.stacks));
+    must(!r.log.some((l) => /takes back/.test(l)),
+      "nothing to push back when both put in the same: " + JSON.stringify(r.log));
+    must(r.staked === r.paid, "chips must conserve");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -452,9 +579,12 @@ console.log(
 );
 
 console.log(
-  "poker: the rankings are right (wheel low, no wrap-round ace, kickers read), a deck is 52 " +
-    "distinct cards, split pots add back to the chip, the blinds reach 250/500 eighteen minutes " +
-    "in and keep climbing — and across 2-, 3-, 4- and 5-handed tournaments the chips on the table " +
-    "always add up to the stacks dealt, no hole card is ever visible to anyone else mid-hand, and " +
-    "the sahurs that went in are the sahurs that came out",
+  "poker: the rankings are right (wheel low, no wrap-round ace, kickers read, and the hole card " +
+    "plays — K-J beats 10-J on an ace-high board), a deck is 52 distinct cards, split pots add " +
+    "back to the chip, a bet nobody called is pushed back rather than paid out as a win (so a pot " +
+    "taken outright is never announced as a split, while a board that plays still chops and a " +
+    "folded player's chips are still won), the blinds reach 250/500 eighteen minutes in and keep " +
+    "climbing — and across 2-, 3-, 4- and 5-handed tournaments the chips on the table always add " +
+    "up to the stacks dealt, no hole card is ever visible to anyone else mid-hand, and the sahurs " +
+    "that went in are the sahurs that came out",
 );

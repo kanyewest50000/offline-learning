@@ -2277,7 +2277,28 @@
           send(panel,n>=p.maxTo?"allin":"raise",n);
         };
         go.appendChild(back);go.appendChild(bet);
-        panel.appendChild(val);panel.appendChild(presets);panel.appendChild(srow);panel.appendChild(go);
+        /* What the minimum actually is, and why it is that and not double the
+           last bet. A raise has to be at least the size of the last one, so
+           the first bet on a street does make the minimum double it — but a
+           re-raise over a small raise does not, and that reads as broken from
+           the seat unless the table says so. The numbers are the ones this
+           spot is using, not an example. */
+        var minrow=el("div","pkminrow");
+        minrow.appendChild(el("span","pkminlab","minimum raise"));
+        minrow.appendChild(el("span","pkminval",chips(p.raiseTo)));
+        var mhelp=el("span","pkhelp");
+        mhelp.tabIndex=0;
+        mhelp.setAttribute("role","button");
+        mhelp.setAttribute("aria-label","why the minimum raise is what it is");
+        mhelp.appendChild(el("span","pkhelpq","?"));
+        mhelp.appendChild(el("span","pkhelptip",
+          "a raise has to be at least as big as the last one. the last raise here "+
+          "was "+chips(p.minRaise)+", so you have to put at least that much on top of the "+
+          chips(p.call)+" already out \u2014 "+chips(p.raiseTo)+" in total. that is only double "+
+          "the bet when nobody had bet before it."));
+        minrow.appendChild(mhelp);
+        panel.appendChild(val);panel.appendChild(minrow);
+        panel.appendChild(presets);panel.appendChild(srow);panel.appendChild(go);
         body.appendChild(panel);
         paint();
         PIT.pkKeys=function(ev){

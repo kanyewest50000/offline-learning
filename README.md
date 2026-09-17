@@ -322,6 +322,28 @@ is dealt — otherwise paying the pot, busting the empty and dealing again all
 happen in one pass, and the cards that won are cleared before anyone can see
 them.
 
+Two rules are worth writing down because both of them read as bugs from the
+seat. **The hole card plays.** Two hands that miss the board are separated by
+the best card either of them is holding, and an ace on the board belongs to
+everyone, so it separates nobody: K-J beats 10-J on an ace-high board, and the
+only way that hand chops is if the five on the board are the best five for both
+— which means it is a straight or better, never still reading as high card.
+**A raise has to be at least as big as the last one**, which is not the same as
+double the bet. The first bet on a street sets its own minimum, so a bet of 100
+into an unopened pot can only be raised to 200; but a raise to 100 over a blind
+of 50 was a raise of 50, so it can be re-raised to 150. The raise panel prints
+the minimum and, behind a `?`, the arithmetic it came from, because a table that
+just refuses a number looks broken.
+
+An uncalled bet is not a pot and was not won. When a shove is called for less,
+the part nobody matched is pushed back to whoever put it out before the hands
+are compared, the way a dealer does it. Left in, it still reaches the right
+stack — the side-pot maths hands it back as a pot only its owner can win — but
+it arrives looking like winnings, which puts the loser of the hand in the list
+of winners and announces a pot taken outright as a split. Chips a player left
+behind when they folded are a different thing: those were matched, so they are
+won, and the push-back is measured against them.
+
 Nothing runs on a timer here either. A player who says nothing checks if it is
 free and folds if it is not, and the next hand deals itself, both off the same
 lazy deadline every other table uses. `scripts/test-poker.ts` plays 2-, 3-, 4-
@@ -329,7 +351,10 @@ and 5-handed tournaments out over the wire and counts the chips on every look at
 the table: what is in the stacks plus what is in the pot has to equal what was
 dealt, through every side pot an all-in cuts. It also asserts a run actually
 reached a showdown, because one that never does has proved nothing about the
-hand rankings however green it looks.
+hand rankings however green it looks. Alongside that it runs the real
+`pokerFinishHand()` out of `server.ts` — not a copy of what it does — over the
+four settlements that have to come out differently: an uncalled bet, a board
+that plays, dead money from a folded player, and an ordinary called pot.
 
 ## working on it
 

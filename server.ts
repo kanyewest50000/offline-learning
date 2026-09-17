@@ -2081,6 +2081,37 @@ function pokerCollect(ps: PokerState): void {
   for (const s of ps.seats) s.acted = false;
 }
 
+// Chips nobody matched were never part of the pot, so they go straight back to
+// whoever put them out — before anything is compared, the way a dealer pushes
+// an uncalled bet back before the cards are turned over.
+//
+// Without this they come back out of pokerAwards() instead, as a side pot only
+// their owner is eligible for. The money lands in the right stack either way,
+// but it arrives looking like something that was WON: the loser of the hand
+// shows up in the list of winners, the showdown highlights their row, and a pot
+// that was taken outright is announced as a split. That is what a player sees
+// when they hold the best hand and are told they chopped it.
+//
+// The uncalled part is whatever the biggest contributor put in above the next
+// biggest — folded players included, because the chips they left behind were
+// matched and are genuinely won. Idempotent: run it twice and the second call
+// finds nothing above the second-place contribution.
+function pokerReturnUncalled(ps: PokerState, names: string[]): void {
+  const put = ps.seats.map((s) => s.inHand);
+  let top = 0;
+  for (let i = 1; i < put.length; i++) if (put[i] > put[top]) top = i;
+  // only a live player can have money out that nobody had to match
+  if (ps.seats[top].folded || ps.seats[top].out) return;
+  let second = 0;
+  for (let i = 0; i < put.length; i++) if (i !== top && put[i] > second) second = put[i];
+  const back = put[top] - second;
+  if (back <= 0) return;
+  ps.seats[top].inHand -= back;
+  ps.seats[top].inStreet = Math.max(0, ps.seats[top].inStreet - back);
+  ps.seats[top].chips += back;
+  ps.log = ps.log.concat([names[top] + " takes back " + back + " uncalled"]).slice(-12);
+}
+
 export type PokerAward = { seat: number; amount: number };
 // Cut the pot into a main pot and however many side pots the all-ins made, and
 // give each one to the best hand among the players who paid into it. This is
@@ -2127,11 +2158,13 @@ function pokerBoard(ps: PokerState): void {
 // Pay the hand out, bust whoever it emptied, and leave behind the record of
 // what happened that the client paints.
 function pokerFinishHand(ps: PokerState, names: string[]): void {
-  const pot = pokerPot(ps);
   const live = pokerLive(ps);
   if (live.length <= 1) {
     // everyone else folded. The pot is taken without a showdown, and a hand
     // that was never called is never shown — that is the player's to keep.
+    // Nothing is pushed back here: with one player left the whole pot, their
+    // own chips included, goes to them anyway.
+    const pot = pokerPot(ps);
     const w = live[0];
     if (w !== undefined) ps.seats[w].chips += pot;
     ps.show = null;
@@ -2139,6 +2172,9 @@ function pokerFinishHand(ps: PokerState, names: string[]): void {
       (ps.hand > 0 ? "" : "") + " — no showdown";
     ps.log = ps.log.concat([ps.note]).slice(-12);
   } else {
+    // an uncalled bet is not a pot and is not won, so it leaves first
+    pokerReturnUncalled(ps, names);
+    const pot = pokerPot(ps);
     const { awards, scores } = pokerAwards(ps);
     const won: number[] = ps.seats.map(() => 0);
     for (const a of awards) { ps.seats[a.seat].chips += a.amount; won[a.seat] = a.amount; }
@@ -2215,6 +2251,11 @@ function pokerStep(ps: PokerState, names: string[]): void {
     // dealt a street at a time on a clock, rather than the whole thing
     // resolving inside the request that called the last bet.
     if (pokerActive(ps).length <= 1) {
+      // Betting is over, so anything nobody matched goes back now rather than
+      // riding along as pot. This is the shape an uncalled bet usually turns
+      // up in — a shove that got called for less — and pushing it back here
+      // means the pot on screen through the runout is the pot being played for.
+      pokerReturnUncalled(ps, names);
       ps.reveal = true;
       ps.runout = Date.now() + POKER_RUNOUT_MS;
       ps.note = "all in — running it out";

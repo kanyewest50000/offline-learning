@@ -604,6 +604,11 @@
       'text-align:right;font-variant-numeric:tabular-nums;padding:0;-moz-appearance:textfield}' +
       '.pkbetnum::-webkit-outer-spin-button,.pkbetnum::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}' +
       '.pkbetbb{flex:0 0 auto;font-size:11px;font-weight:700;color:#c8823c;min-width:46px;text-align:right}' +
+      /* the least this spot will take, under the box rather than inside it —
+         it is a fact about the table, not part of the number being chosen */
+      '.pkminrow{display:flex;align-items:center;gap:7px;padding:0 3px;font-size:11px}' +
+      '.pkminlab{font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8a6a3a}' +
+      '.pkminval{flex:1;min-width:0;font-weight:800;color:#c8823c;font-variant-numeric:tabular-nums}' +
       '.pkpre-row{display:flex;gap:5px}' +
       '.pkchipbtn{flex:1 1 0;min-width:0;padding:8px 2px;background:#241505;border:1px solid #3a2410;border-radius:8px;' +
       'color:#f5efe0;font-size:10px;font-weight:800;letter-spacing:.03em;cursor:pointer;white-space:nowrap}' +
@@ -978,6 +983,7 @@
       '& .pkhelptip{color:{text};border-color:{lineMid}}' +
       '& .pkchipbtn:hover{background:{hover}}' +
       '& .pkbetnum,& .pkbetbb{color:{heading}}' + '& .pkbetlab{color:{muted}}' +
+      '& .pkminlab{color:{muted}}' + '& .pkminval{color:{heading}}' +
       '& .pkslide{accent-color:{lineHot}}' +
       '& .pkchip{background:{lineHot};border-color:{lineMid};color:{solidInk}}' +
       '& .pitmove{background:linear-gradient(155deg,{hover},{bgCore});border-color:{line};color:{heading}}' +
