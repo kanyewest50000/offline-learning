@@ -1143,6 +1143,45 @@ async function dmOther(who: unknown): Promise<any | null> {
   const app = await kv.get<any>(["app", byName.value]);
   return app.value && app.value.status === "approved" ? app.value : null;
 }
+// ---- blocking ----------------------------------------------------------
+// A block is a fact about the PAIR, not about one person's list, so it lives
+// under the same sorted key the conversation does and costs the one read the
+// conversation was already going to make. Two flags rather than one "blockedBy"
+// because both ends can block at once, and one of them lifting theirs must not
+// quietly lift the other's.
+//
+// It shuts the conversation in both directions. A block that only stopped them
+// writing would leave you able to write at somebody who cannot answer, which is
+// not what anybody means by the word — and it would let the pair's history keep
+// growing out of one side. So: neither writes, neither reads, and the rail says
+// so rather than pretending the conversation was never there.
+type DmBlock = { lo: boolean; hi: boolean };
+// which flag is whose, decided the same way convOf() decides the key
+function dmSide(me: string, them: string): "lo" | "hi" { return me < them ? "lo" : "hi"; }
+async function dmBlockOf(a: string, b: string): Promise<DmBlock> {
+  const e = await kv.get<DmBlock>(["dmblock", convOf(a, b)]);
+  return { lo: !!e.value?.lo, hi: !!e.value?.hi };
+}
+function dmBlocked(bl: DmBlock): boolean { return bl.lo || bl.hi; }
+async function dmSetBlock(me: string, them: string, on: boolean): Promise<DmBlock> {
+  const key = ["dmblock", convOf(me, them)];
+  const side = dmSide(me, them);
+  for (let i = 0; i < 4; i++) {
+    const e = await kv.get<DmBlock>(key);
+    const cur: DmBlock = { lo: !!e.value?.lo, hi: !!e.value?.hi };
+    const next: DmBlock = { ...cur, [side]: on };
+    if (cur.lo === next.lo && cur.hi === next.hi) return cur;
+    // nobody blocking anybody is the absence of a record, not a record of two
+    // falses — otherwise every pair that ever fell out keeps a row for a month
+    const op = kv.atomic().check(e);
+    const res = await (next.lo || next.hi
+      ? op.set(key, next, { expireIn: DM_TTL })
+      : op.delete(key)).commit();
+    if (res.ok) return next;
+  }
+  return await dmBlockOf(me, them);
+}
+
 async function dmMarkRead(uid: string, other: string, upto: number): Promise<void> {
   for (let i = 0; i < 4; i++) {
     const e = await kv.get<DmConv>(["dmconv", uid, other]);
@@ -3031,16 +3070,31 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const bs = chatBlock(u);
     if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
-    const convs: { id: string; name: string; last: string; ts: number; unread: number }[] = [];
+    const convs: {
+      id: string; name: string; last: string; ts: number; unread: number;
+      closed: boolean; byYou: boolean;
+    }[] = [];
     for await (const e of kv.list<DmConv>({ prefix: ["dmconv", u.id] })) {
       const v = e.value;
       if (!v) continue;
       convs.push({
         id: String(e.key[2]), name: v.name, last: v.last, ts: v.ts,
         unread: Math.max(0, (Number(v.seq) || 0) - (Number(v.read) || 0)),
+        closed: false, byYou: false,
       });
     }
     convs.sort((a, c) => c.ts - a.ts);
+    // One read per conversation, and only for the handful the rail shows. A
+    // shut conversation stops counting unread: there is nothing waiting in it
+    // to be read. Same rule as above — the rail says "closed", and says it was
+    // yours only when it was.
+    await Promise.all(convs.map(async (c) => {
+      const b = await dmBlockOf(u.id, c.id);
+      if (!dmBlocked(b)) return;
+      c.closed = true;
+      c.byYou = !!b[dmSide(u.id, c.id)];
+      c.unread = 0;
+    }));
     return json({ ok: true, convs });
   }
 
@@ -3059,6 +3113,20 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // write to, and the conversation reads as closed rather than as missing.
     if (chatBlock(other).blocked) {
       return json({ ok: true, with: { id: other.id, name: other.username }, msgs: [], seq: 0, closed: true });
+    }
+    // Blocked reads exactly like any other closed conversation, with one
+    // addition: if it was YOU who shut it you are told so, because that is the
+    // difference between a button that says "unblock" and nothing you can do.
+    // The other end is told only that it is closed — never that it was blocked,
+    // and never by whom. In a conversation with two people in it, "blocked and
+    // not by you" names the blocker, so it is not a thing that can be said.
+    const bl = await dmBlockOf(u.id, other.id);
+    if (dmBlocked(bl)) {
+      const mine = !!bl[dmSide(u.id, other.id)];
+      return json({
+        ok: true, with: { id: other.id, name: other.username }, msgs: [], seq: 0,
+        closed: true, ...(mine ? { byYou: true } : {}),
+      });
     }
     const conv = convOf(u.id, other.id);
     const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
@@ -3080,6 +3148,23 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, with: { id: other.id, name: other.username }, msgs, seq: top });
   }
 
+  // Block or unblock one member. Yours to set and yours to lift; the other end
+  // is never told which way round it is, only that the conversation is shut.
+  if (req.method === "POST" && path === "/dm/block") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await authUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bs = chatBlock(u);
+    if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    const other = await dmOther(b.to);
+    if (!other) return json({ error: "not_found" }, 404);
+    if (other.id === u.id) return json({ error: "yourself" }, 400);
+    const on = b.blocked !== false;
+    const next = await dmSetBlock(u.id, other.id, on);
+    return json({ ok: true, blocked: dmBlocked(next), byYou: !!next[dmSide(u.id, other.id)] });
+  }
+
   if (req.method === "POST" && path === "/dm/send") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -3097,6 +3182,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // the other half of the ban: you cannot write to somebody who has been
     // shut out, any more than they could write to you
     if (chatBlock(other).blocked) return json({ error: "closed" }, 403);
+    // and a block shuts it from either side. Only the end that set it gets a
+    // word for what happened; to the other end it is closed, the same as it
+    // would be for any other reason.
+    const sbl = await dmBlockOf(u.id, other.id);
+    if (dmBlocked(sbl)) {
+      return json({ error: sbl[dmSide(u.id, other.id)] ? "you_blocked" : "closed" }, 403);
+    }
     const msg = await dmAppend(u, other, text);
     if (!msg) return json({ error: "busy" }, 503);
     return json({ ok: true, msg: { seq: msg.seq, text: msg.text, ts: msg.ts, mine: true } });

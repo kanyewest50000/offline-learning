@@ -23,6 +23,24 @@
   function jget(p){return fetch(API+p).then(function(r){return r.json().catch(function(){return{};});});}
   function jpost(p,b){b=b||{};b.token=tok();return fetch(API+p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)}).then(function(r){if(refused(r)){refusedGate();return;}return r.json().catch(function(){return{};});});}
   function el(t,c,txt){var e=document.createElement(t);if(c)e.className=c;if(txt!=null)e.textContent=txt;return e;}
+  /* ---- a hidden tab asks for nothing ----
+     Every poll below runs on an interval, and the tables move fast enough that
+     those intervals are short — a duel is read five times a second between two
+     of them. None of that is worth a single request while nobody is looking at
+     it, and a tab left open on the pit overnight was making all of them anyway.
+     The intervals keep ticking; they simply do not reach the network. Coming
+     back to the tab refreshes at once, so nothing is ever waited for. */
+  function napping(){return !!document.hidden;}
+  /* One slot, not a list: you are in the lobby, or in a duel, or at a round
+     table, and whichever started last is the one worth catching up. A list
+     would grow every time a view was re-entered and keep calling into views
+     that are long gone. */
+  var WAKE=null;
+  function onWake(fn){WAKE=fn;}
+  document.addEventListener("visibilitychange",function(){
+    if(napping()||!WAKE)return;
+    try{WAKE();}catch(e){}
+  });
 
   /* ---- how fast the tables move ----
      The four animated games run unhurried by default, because watching the
@@ -356,7 +374,7 @@
       /* while a table is still playing a wager out, the number it is going to
          land on is not ours to paint yet — see roundBet below */
       if(fresh||!ROUND.hold)ROUND.mine=v.yourChips;
-      if(!ROUND.poll)ROUND.poll=setInterval(roundPoll,1400);
+      if(!ROUND.poll){ROUND.poll=setInterval(roundPoll,1400);onWake(roundPoll);}
       if(!ROUND.tick)ROUND.tick=setInterval(paintRoundClock,250);
       paintRound();
       return;
@@ -377,6 +395,7 @@
   }
   function roundPoll(){
     if(!ROUND.live){roundStop();return;}
+    if(napping())return;
     /* the pit's own page is already polling this duel; two would only race */
     if(VIEW==="pit")return;
     jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(ROUND.live.id)).then(function(d){
@@ -1911,7 +1930,7 @@
       sub:"two to five seats, no limit hold'em. the chips are dealt by the table and are worth nothing off it \u2014 your sahurs sit in the pot the whole time and go to whoever is last standing. the blinds go up every three minutes and do not stop going up, so it finishes."}
   };
   function pitStop(){
-    if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;}
+    if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;WAKE=null;}
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
     /* a half-dealt cut must not keep turning cards over on a screen the player
        has already left */
@@ -2447,6 +2466,7 @@
     }
 
     function pitRefresh(){
+      if(napping())return;
       jget("/duel/list?token="+encodeURIComponent(tok())).then(function(d){
         if(refused(d)){refusedGate();return;}
         if(!d||d.error)return;
@@ -2458,7 +2478,7 @@
     }
     pitStop();pitRefresh();
     /* brisk, because a table of yours being joined starts a ten second clock */
-    PIT.poll=setInterval(pitRefresh,1500);
+    PIT.poll=setInterval(pitRefresh,1500);onWake(pitRefresh);
   }
 
   /* ---- one duel, from the handshake to the result ---- */
@@ -2466,13 +2486,15 @@
     pitStop();
     PIT.id=view.id;PIT.game=view.game||PIT.game;PIT.shape="";PIT.roundsSeen=null;PIT.pending=null;
     pitRender(view);
-    PIT.poll=setInterval(function(){
+    var pitOne=function(){
+      if(napping())return;
       jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(PIT.id)).then(function(d){
         if(refused(d)){refusedGate();return;}
         if(!d||d.error){if(d&&d.error==="gone"){pitStop();openPlay("pit-"+(PIT.game||"tung"));}return;}
         pitSkew(d);setBal(d.balance);talkSync(d.talk);pitRender(d.duel);
       }).catch(function(){});
-    },1200);
+    };
+    PIT.poll=setInterval(pitOne,1200);onWake(pitOne);
   }
 
   function pitSend(path,body,onErr){

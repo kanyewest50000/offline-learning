@@ -101,7 +101,11 @@
       '<div id="dmlist"></div>' +
       '</div>' +
       '<div id="chatmain">' +
-      '<div id="convhead"><span id="convname">the shrine</span><span id="convsub">everyone who is here</span></div>' +
+      /* the block control lives in the header rather than on the profile card:
+         it is a fact about this conversation, and it is where you are when you
+         decide you have had enough of it */
+      '<div id="convhead"><span id="convname">the shrine</span><span id="convsub">everyone who is here</span>' +
+      '<button id="convBlock" type="button">block</button></div>' +
       '<div id="log"></div>' +
       '<div id="picker"></div>' +
       '<div id="replybar"></div>' +

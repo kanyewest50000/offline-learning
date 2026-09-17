@@ -185,6 +185,23 @@ what clears it — there is no second call to forget — and the mark only ever
 moves forward, so a stale poll cannot un-read anything. A conversation ages out
 after a month of silence.
 
+Any member can **block** any other, from the header of the conversation
+itself. A block is a fact about the pair rather than an entry on somebody's
+list, so it lives under the same sorted key the conversation does and costs the
+one read that was already being made. It shuts the conversation both ways:
+neither writes, neither reads. A block that only stopped them writing would
+leave you writing at somebody who cannot answer, which is not what the word
+means. Two flags rather than one "blocked by", because both ends can block at
+once and one of them relenting must not quietly lift the other's.
+
+Only the end that set it is told so — that is the difference between a button
+that says unblock and nothing you can do about it. The other end is told the
+conversation is closed, in exactly the shape a chat ban closes one, and is
+never told it was a block or whose. In a conversation with two people in it,
+"blocked, and not by you" names the blocker, so it is not a thing that can be
+said. Lifting it hands the conversation back whole; the lines refused while it
+stood were never written.
+
 The chat ban covers all of it, in both directions. Somebody shut out of the room
 can neither send a DM nor be sent one: their own three routes answer `chatban`
 like every other chat route, and anybody writing to them is told the
@@ -194,7 +211,9 @@ stopped them sending would leave everyone else free to talk at them. Lifting it
 hands the conversation back exactly as it was — a ban is not a purge, and the
 lines refused while it was on were never written. `scripts/test-dm.ts` walks
 delivery to one member and nobody else (by name or by id, with a third member
-trying both), the badge, the rail's ordering, and both halves of the ban.
+trying both), the badge, the rail's ordering, both halves of the ban, and the
+block: both directions shut, the other end told nothing but "closed", the two
+sides independent, and the conversation whole again when it is lifted.
 
 ## the pit
 
@@ -630,7 +649,21 @@ nobody in the chat can work out who the moderators are.
 moderators, and every route another member can read is checked for the flag.
 
 The chat polls `/events` every 4 seconds while the tab is visible, and not at
-all while it is hidden.
+all while it is hidden. **Every** poll works that way now, which it did not used
+to: the room was the only one checking, while the conversation poll (2.5s), the
+rail (12s), the pit list (1.5s), a duel being played (1.2s) and a round table
+(1.4s) all carried on against a tab nobody was looking at. A member sitting at a
+poker table with a conversation open is about a hundred requests a minute, and
+before this roughly eighty-five of them continued after they switched tabs and
+walked away — every one a KV read somebody is paying for. A tab left open on the
+pit overnight was the single most expensive thing the shrine did.
+
+The intervals still tick; they just do not reach the network while
+`document.hidden`. Coming back refreshes at once rather than waiting out a
+tick — in the chat by kicking the polls off the `visibilitychange` handler, and
+in the casino through one `onWake` slot holding whichever view is live, a slot
+rather than a list so that re-entering a view cannot pile up handlers for views
+that are gone.
 
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a

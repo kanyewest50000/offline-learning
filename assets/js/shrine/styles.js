@@ -66,7 +66,13 @@
       '#convhead{display:flex;align-items:baseline;gap:9px;padding:12px 16px;background:#2b1a0a;' +
       'border-bottom:1px solid #3a2410;min-height:44px}' +
       '#convname{font-size:15px;font-weight:800;color:#f5efe0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-      '#convsub{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '#convsub{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}' +
+      /* quiet until it is wanted: a block button that shouts would get pressed
+         by accident, and this one is not easy to take back for the other side */
+      '#convBlock{display:none;flex:0 0 auto;padding:5px 11px;border-radius:7px;font-size:11px;font-weight:700;' +
+      'background:transparent;border:1px solid #3a2410;color:#8a6a3a;cursor:pointer}' +
+      '#convBlock:hover{border-color:#8a5a28;color:#f2c063;background:#241505}' +
+      '#convBlock.on{border-color:#8a5a28;color:#f2c063}' +
       /* a DM line has no reactions, replies or gifts, so it does not reserve
          room for the buttons that would work them */
       '.msg.dm .acts{display:none}' +
@@ -975,6 +981,9 @@
       '& .dmbadge{background:{lineHot};color:{solidInk}}' +
       '& #convhead{background:{surface};border-bottom-color:{lineSoft}}' +
       '& #convname{color:{text}}' + '& #convsub{color:{muted}}' +
+      '& #convBlock{background:transparent;border-color:{line};color:{muted}}' +
+      '& #convBlock:hover{background:{raised};border-color:{lineHot};color:{heading}}' +
+      '& #convBlock.on{border-color:{lineHot};color:{heading}}' +
       '& .pkprebox.on{border-color:{lineHot};background:{raised}}' +
       '& .pkprelab{color:{textDim}}' + '& .pkprebox.on .pkprelab{color:{heading}}' +
       '& .pkprecb{accent-color:{lineHot}}' +

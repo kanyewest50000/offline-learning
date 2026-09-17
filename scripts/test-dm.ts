@@ -276,11 +276,103 @@ must(JSON.stringify(backOpen.body.msgs).includes("vending machine"),
 must(JSON.stringify(backOpen.body.msgs).includes("i can write again"), "…with the new line on the end");
 must(!JSON.stringify(backOpen.body.msgs).includes("let me out"), "the line refused during the ban was never written");
 
+// ===========================================================================
+// blocking
+//
+// A block is one member shutting one conversation, and it shuts it BOTH ways:
+// a block that only stopped them writing would leave you writing at somebody
+// who cannot answer. The end that set it is told so, because theirs is a door
+// they can open. The other end is told only that the conversation is closed —
+// never that it was a block, and never by whom, because in a conversation with
+// two people in it "blocked, and not by you" names the blocker.
+// ===========================================================================
+const blk = (token: string, to: string, on: boolean) =>
+  post("/dm/block", { token, to, blocked: on });
+
+const P = await member("dmP");   // does the blocking
+const Q = await member("dmQ");   // gets blocked
+
+await sendOk(P.token, Q.name, "before the falling out");
+await sendOk(Q.token, P.name, "and a reply");
+
+// --- refusals ---------------------------------------------------------------
+must((await blk(P.token + "x", Q.id, true)).status === 401, "a bad token cannot block");
+must((await blk(P.token, P.id, true)).body.error === "yourself", "nobody blocks themselves");
+must((await blk(P.token, "nosuchmemberatall", true)).body.error === "not_found", "an unknown member is not_found");
+
+// --- the block --------------------------------------------------------------
+const on = await blk(P.token, Q.id, true);
+must(on.body?.ok === true && on.body.blocked === true && on.body.byYou === true,
+  "blocking failed: " + JSON.stringify(on.body));
+
+// neither of them can write
+const pWrite = await dm(P.token, Q.id, "still cross");
+must(pWrite.status === 403 && pWrite.body.error === "you_blocked",
+  "the blocker is told it was them: " + JSON.stringify(pWrite.body));
+const qWrite = await dm(Q.token, P.id, "what did i do");
+must(qWrite.status === 403 && qWrite.body.error === "closed",
+  "a block must stop the other end too, without naming itself: " + JSON.stringify(qWrite.body));
+
+// neither of them can read it
+const pSees = await convWith(P.token, Q.id);
+must(pSees.body.closed === true && pSees.body.byYou === true, "the blocker sees their own block");
+must((pSees.body.msgs as unknown[]).length === 0, "a shut conversation shows nothing");
+const qSees = await convWith(Q.token, P.id);
+must(qSees.body.closed === true, "the other end sees it closed");
+must(qSees.body.byYou === undefined, "…and is NOT told whose block it was: " + JSON.stringify(qSees.body));
+must(!JSON.stringify(qSees.body).includes("block"), "the word must not reach them at all: " + JSON.stringify(qSees.body));
+must(!JSON.stringify(qSees.body).includes("falling out"), "a shut conversation shows no history");
+
+// a blocked conversation is not a source of unread
+const pRow = (await convs(P.token)).find((c) => c.id === Q.id) as Conv & { closed?: boolean; byYou?: boolean };
+must(pRow?.closed === true && pRow?.byYou === true, "the blocker's rail says it was theirs");
+must(pRow?.unread === 0, "nothing waits in a conversation that is shut");
+const qRow = (await convs(Q.token)).find((c) => c.id === P.id) as Conv & { closed?: boolean; byYou?: boolean };
+must(qRow?.closed === true, "the other end's rail shows it closed");
+must(qRow?.byYou !== true, "…but never as theirs");
+
+// --- the two sides are independent ------------------------------------------
+// Q clearing "their" block must not lift P's, or anybody could undo being
+// blocked by blocking and unblocking in turn.
+must((await blk(Q.token, P.id, false)).body?.blocked === true,
+  "the other end must not be able to lift a block that is not theirs");
+must((await convWith(P.token, Q.id)).body.closed === true, "P's block is still standing");
+// and both ends blocking at once survives one of them relenting
+must((await blk(Q.token, P.id, true)).body?.byYou === true, "Q can set their own block");
+must((await blk(Q.token, P.id, false)).body?.blocked === true, "P's block outlives Q's");
+
+// --- lifting it -------------------------------------------------------------
+const off = await blk(P.token, Q.id, false);
+must(off.body?.ok === true && off.body.blocked === false, "unblocking failed: " + JSON.stringify(off.body));
+const back = await convWith(P.token, Q.id);
+must(!back.body.closed, "the conversation reopens");
+must(JSON.stringify(back.body.msgs).includes("before the falling out"),
+  "a block is not a purge — the conversation is where they left it");
+must(JSON.stringify(back.body.msgs).includes("and a reply"), "…both sides of it");
+must(!JSON.stringify(back.body.msgs).includes("still cross"), "lines refused during the block were never written");
+must(!!(await sendOk(Q.token, P.name, "friends again")).body?.ok, "and they can write again");
+
+// --- a chat ban still outranks it -------------------------------------------
+must((await chatBan(Q.id, true)).body?.chatBanned === true, "chat ban failed");
+must((await dm(P.token, Q.id, "hello")).body.error === "closed",
+  "a chat-banned member is closed whether or not anybody blocked them");
+must((await chatBan(Q.id, false)).body?.chatBanned === false, "lifting the chat ban failed");
+
+// --- and the client has the control ------------------------------------------
+must(shrine.includes('id="convBlock"'), "the conversation header needs a block control");
+must(shrine.includes("/dm/block"), "the client must be able to set one");
+must(/function dmSetShut\(/.test(shrine), "the client must paint the shut state");
+// the blocked end must not be handed a button that cannot work
+must(/DMSHUT\.on&&!DMSHUT\.mine.*display="none"/.test(shrine),
+  "the control must be hidden from the end that did not set it");
+
 console.log(
   "DMs: a line reaches one other member and nobody else (by name or by id, and a third " +
     "member cannot reach it either way), the unread badge counts what is waiting and only " +
     "reading clears it, the rail sorts by who spoke last, and a chat ban shuts DMs in both " +
     "directions — they cannot send, nobody can send to them, the other side reads as closed " +
     "rather than gone, the casino stays open throughout, and lifting it hands the " +
-    "conversation back intact",
+    "conversation back intact. A block shuts one conversation the same way in both " +
+    "directions, tells the end that set it and nothing but 'closed' to the other, " +
+    "keeps the two sides independent, and gives the conversation back whole when lifted",
 );

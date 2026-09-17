@@ -60,6 +60,7 @@
     'var dmlist=document.getElementById("dmlist");' +
     'var convname=document.getElementById("convname");' +
     'var convsub=document.getElementById("convsub");' +
+    'var convBlock=document.getElementById("convBlock");' +
     'var form=document.getElementById("f");' +
     'var input=document.getElementById("m");' +
     'var nameEl=document.getElementById("u");' +
@@ -508,6 +509,44 @@
     /* stopping the poll has to disown the request already in the air as well as
        the timer, or its reply lands on top of whatever replaced it */
     'function dmStop(){dmRun++;if(dmT){clearTimeout(dmT);dmT=null;}}' +
+    /* ---- blocking ----
+       DMSHUT says whether this conversation is shut and, if it is, whether it
+       was this end that shut it — which is the whole difference between a
+       button that says "unblock" and a line saying there is nothing to do. */
+    'var DMSHUT={on:false,mine:false};' +
+    'function dmPaintBlock(){' +
+    'if(!convBlock)return;' +
+    'if(!DM){convBlock.style.display="none";return;}' +
+    'convBlock.style.display="inline-block";' +
+    'if(DMSHUT.on&&!DMSHUT.mine){convBlock.style.display="none";return;}' +
+    'convBlock.textContent=DMSHUT.on?"unblock":"block";' +
+    'convBlock.className=DMSHUT.on?"on":"";}' +
+    /* the sub line under the name is where the state is explained, because the
+       button alone cannot say why the composer stopped working */
+    'function dmSetShut(on,mine){' +
+    /* a shut conversation shows nothing, so that what is on screen matches
+       what opening it again would give you */
+    'if(on&&!DMSHUT.on){log.innerHTML="";dmSeq=0;}' +
+    'DMSHUT={on:!!on,mine:!!mine};' +
+    'if(DM&&convsub){' +
+    'convsub.textContent=!on?"only the two of you":mine?"you blocked "+DM.name+". they are not told.":"this conversation is closed.";}' +
+    'if(input)input.disabled=!!on;' +
+    'dmPaintBlock();}' +
+    'function dmToggleBlock(){' +
+    'if(!DM||!TOKEN)return;' +
+    'var conv=DM,want=!DMSHUT.on;' +
+    'if(want&&!confirm("block "+conv.name+"? neither of you will be able to write to the other. you can undo this."))return;' +
+    'convBlock.disabled=true;' +
+    'apiPost("/dm/block",{token:TOKEN,to:conv.id,blocked:want}).then(function(r){' +
+    'convBlock.disabled=false;' +
+    'if(DM!==conv)return;' +
+    'if(!r||r.error){convsub.textContent="that did not go through.";return;}' +
+    'dmSetShut(r.blocked,r.byYou);' +
+    /* unblocking leaves an empty pane, so read the conversation back in */
+    'if(!r.blocked){log.innerHTML="";dmSeq=0;dmStop();dmPoll();}' +
+    'dmListRefresh();' +
+    '}).catch(function(){convBlock.disabled=false;});}' +
+    'if(convBlock)convBlock.addEventListener("click",dmToggleBlock);' +
     /* a conversation line: plain, because a DM has no reactions, no replies
        and no gifts — pretending otherwise would be a row of buttons that do
        nothing */
@@ -524,12 +563,18 @@
        send leaves word to let that one through unrendered. */
     'function dmPoll(){' +
     'if(!DM||!TOKEN)return;' +
+    /* A hidden tab is not reading anything, so it has no business asking. The
+       chain is kept alive rather than dropped — returning outright would end
+       the poll for good — and coming back to the tab kicks it immediately, so
+       nothing is waited for. */
+    'if(pageHidden()){dmT=setTimeout(dmPoll,5000);return;}' +
     'var conv=DM,run=dmRun;' +
     'api("/dm/with?token="+encodeURIComponent(TOKEN)+"&with="+encodeURIComponent(conv.id)+"&since="+dmSeq).then(function(r){' +
     'if(DM!==conv||run!==dmRun)return;' +
     'if(r&&r.error){dmT=setTimeout(dmPoll,4000);return;}' +
-    'if(r&&r.closed){convsub.textContent="this conversation is closed.";}' +
-    'else if(r&&r.msgs){for(var i=0;i<r.msgs.length;i++){var m=r.msgs[i];' +
+    'if(r&&r.closed){dmSetShut(true,!!r.byYou);}' +
+    'else if(r&&r.msgs){if(DMSHUT.on)dmSetShut(false,false);' +
+    'for(var i=0;i<r.msgs.length;i++){var m=r.msgs[i];' +
     'if(m.mine&&dmSkip[m.seq]){delete dmSkip[m.seq];continue;}dmAdd(m);}' +
     'if(r.seq>dmSeq)dmSeq=r.seq;}' +
     'if(r&&r.msgs&&r.msgs.length)dmListRefresh();' +
@@ -539,6 +584,7 @@
        resumed from a mark that moved on without us. */
     'function openRoom(){' +
     'dmStop();DM=null;dmSeq=0;dmSkip={};' +
+    'DMSHUT={on:false,mine:false};if(input)input.disabled=false;dmPaintBlock();' +
     'convname.textContent="the shrine";convsub.textContent="everyone who is here";' +
     'input.placeholder="say something... try :sob:";' +
     'log.innerHTML="";MSGS={};cursor=0;seenEids={};' +
@@ -550,7 +596,8 @@
     'if(pollT){clearTimeout(pollT);pollT=null;}' +
     'dmStop();' +
     'DM={id:String(id),name:String(name||"")};dmSeq=0;dmSkip={};' +
-    'convname.textContent=DM.name;convsub.textContent="only the two of you";' +
+    'convname.textContent=DM.name;' +
+    'dmSetShut(false,false);' +
     'input.placeholder="message "+DM.name+"\u2026";' +
     'log.innerHTML="";cancelReply();' +
     'dmPaint();dmPoll();' +
@@ -572,7 +619,8 @@
     'var n=document.createElement("span");n.className="dmname";n.textContent=c.name;top.appendChild(n);' +
     'if(c.unread>0){var u=document.createElement("span");u.className="dmbadge";u.textContent=c.unread>99?"99+":String(c.unread);top.appendChild(u);}' +
     'b.appendChild(top);' +
-    'var l=document.createElement("span");l.className="dmlast";l.textContent=c.last||"";b.appendChild(l);' +
+    'var l=document.createElement("span");l.className="dmlast";' +
+    'l.textContent=c.closed?(c.byYou?"blocked":"closed"):(c.last||"");b.appendChild(l);' +
     'b.addEventListener("click",function(){openDM(c.id,c.name);});' +
     'dmlist.appendChild(b);' +
     '})(DMS[i]);}' +
@@ -580,13 +628,13 @@
     'e.textContent="no conversations yet. click a name in the room to start one.";dmlist.appendChild(e);}}' +
     'var DMS=[];' +
     'function dmListRefresh(){' +
-    'if(!TOKEN||!APPROVED)return;' +
+    'if(!TOKEN||!APPROVED||pageHidden())return;' +
     'api("/dm/list?token="+encodeURIComponent(TOKEN)).then(function(r){' +
     'if(!r||r.error||!r.convs)return;' +
     'DMS=r.convs;' +
     'dmPaint();' +
     '}).catch(function(){});}' +
-    'function dmStart(){if(dmListT)clearInterval(dmListT);dmListRefresh();dmListT=setInterval(dmListRefresh,6000);}' +
+    'function dmStart(){if(dmListT)clearInterval(dmListT);dmListRefresh();dmListT=setInterval(dmListRefresh,12000);}' +
     'form.addEventListener("submit",function(ev){ev.preventDefault();var text=input.value.trim();if(!text)return;' +
     /* one composer, two destinations — whichever the pane is showing */
     'if(DM){var conv=DM;input.value="";' +
@@ -602,8 +650,11 @@
     /* a refused line is taken back off the screen rather than left sitting
        there looking sent */
     'if(r&&r.error){if(row&&row.parentNode)row.parentNode.removeChild(row);' +
-    'if(DM===conv)convsub.textContent=r.error==="closed"?"this conversation is closed."' +
-    ':r.error==="slow down"?"slow down \u2014 too many messages.":"that did not send.";}' +
+    'if(DM===conv){' +
+    'if(r.error==="you_blocked")dmSetShut(true,true);' +
+    'else if(r.error==="closed")dmSetShut(true,false);' +
+    'else convsub.textContent=r.error==="slow down"?"slow down \u2014 too many messages."' +
+    ':"that did not send.";}}' +
     'dmListRefresh();' +
     '}).catch(function(){if(row&&row.parentNode)row.parentNode.removeChild(row);' +
     '}).then(function(){dmSending--;if(!dmSending&&DM===conv){dmStop();dmPoll();}});return;}' +
@@ -652,7 +703,11 @@
     'document.title=cloakTitle();' +
     'paintCasinoGate();pokeAccess();' +
     'topShow("choose");' +
-    'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();if(pendingView.style.display==="block"||banEl.style.display==="flex")refreshGate();});' +
+    'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();' +
+    /* the conversations went quiet with the tab; catch them up now rather than
+       leaving the rail a few seconds stale on the way back in */
+    'if(DM){dmStop();dmPoll();}dmListRefresh();' +
+    'if(pendingView.style.display==="block"||banEl.style.display==="flex")refreshGate();});' +
     /* the three lines from before, verbatim */
     'const iframe = document.createElement("iframe");' +
     'document.body.appendChild(iframe);' +
