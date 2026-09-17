@@ -1,0 +1,59 @@
+# Tell jsDelivr to forget what it is holding, every time main moves.
+#
+# The embed loads the shrine from a branch URL (@main), and jsDelivr keeps
+# those at its edge for hours rather than checking GitHub on every request.
+# Left alone, a push reaches people somewhere between now and tomorrow — which
+# is how a friend ends up on a copy of the shrine with no poker in it.
+#
+# This is only half the fix and the smaller half. It clears the CDN; it does
+# nothing about the copy already sitting in somebody's browser, which is what
+# the ?v= tag in embed/shrine.js is for. Both are needed: the tag makes the
+# browser ask again, and this makes the answer it gets a current one.
+#
+# Failing to purge is not worth failing a build over — the version tag still
+# gets the new code to everybody, just by way of a slower origin fetch — so
+# every step here keeps going and reports rather than stopping.
+
+name: Purge CDN
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Purge the embed and the eight modules
+        run: |
+          set -u
+          REPO="${GITHUB_REPOSITORY}"
+          PATHS="embed/shrine.js"
+          for m in config games-catalog originals chat casino styles markup window; do
+            PATHS="$PATHS assets/js/shrine/$m.js"
+          done
+
+          fail=0
+          for p in $PATHS; do
+            url="https://purge.jsdelivr.net/gh/${REPO}@main/${p}"
+            code=$(curl -sS -o /tmp/purge.out -w '%{http_code}' --max-time 30 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "purged  $p"
+            else
+              echo "FAILED  $p (HTTP $code)"
+              head -c 300 /tmp/purge.out || true
+              echo
+              fail=1
+            fi
+            # jsDelivr rate-limits the purge API; this is well inside it
+            sleep 1
+          done
+
+          if [ "$fail" = "1" ]; then
+            echo
+            echo "Some files were not purged. The shrine still updates — embed/shrine.js"
+            echo "tags every module URL with the current build, so browsers ask again and"
+            echo "jsDelivr revalidates against GitHub. This only makes that first ask slower."
+          fi

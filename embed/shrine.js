@@ -38,9 +38,21 @@
      hang on Shrine, so the order here is the load order, not a list. */
   var MODS = ["config", "games-catalog", "originals", "chat", "casino", "styles", "markup", "window"];
 
-  /* Mirrors for the code, tried in order. Pin @main to a commit once a version
-     is worth keeping: jsDelivr holds a branch URL for about 12 hours, so until
-     then a push lands somewhere between now and tomorrow. */
+  /* Where the backend is. Only used here to ask what the current build is;
+     config.js resolves this again for itself, and ?api= overrides both so a
+     local dry-run does not go asking production what version it is. */
+  var API = attr("data-api") || "https://offline-learning.kanyewest50000.deno.net";
+  try {
+    var apiQ = new URLSearchParams(location.search).get("api");
+    if (apiQ) API = String(apiQ);
+  } catch (e) {}
+  API = API.replace(/\/$/, "");
+
+  /* Mirrors for the code, tried in order. jsDelivr holds a branch URL like
+     @main at its edge for hours, and the browser that fetched it holds a copy
+     for longer than that — which is how somebody who opened the shrine last
+     week is still running last week's shrine, missing whatever has been built
+     since. The version tag below is what stops that; see bust(). */
   var CDNS = [
     "https://cdn.jsdelivr.net/gh/kanyewest50000/offline-learning@main/assets/js/shrine/",
     "https://cdn.statically.io/gh/kanyewest50000/offline-learning/main/assets/js/shrine/",
@@ -98,6 +110,36 @@
     document.open(); document.write(doc); document.close();
   }
 
+  /* The tag that makes a new build a new URL.
+     Neither cache in the way can be talked out of holding a file, so the answer
+     is not to ask: a different query string is a different thing to a browser,
+     so nothing it is already holding can answer for it, and the CDN either
+     treats it the same way or has been purged on push (see the workflow in
+     .github/workflows/). Deploying is what changes the value, so between
+     deploys every cache keeps working exactly as before. */
+  var VER = "";
+  function bust(u) { return u + "?v=" + encodeURIComponent(VER); }
+
+  /* Ask the backend what is deployed, and do not wait long for the answer: the
+     shrine loading a little stale beats it not loading at all, and the hourly
+     fallback keeps even that bounded. */
+  function withVersion(next) {
+    var done = false;
+    var go = function (v) {
+      if (done) return;
+      done = true;
+      VER = v || (new Date()).toISOString().slice(0, 13).replace(/[^0-9]/g, "");
+      next();
+    };
+    var t = setTimeout(function () { go(""); }, 2500);
+    try {
+      fetch(API + "/version", { cache: "no-store" })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { clearTimeout(t); go(j && j.v ? String(j.v) : ""); })
+        .catch(function () { clearTimeout(t); go(""); });
+    } catch (e) { clearTimeout(t); go(""); }
+  }
+
   function loadFrom(ci) {
     if (ci >= CDNS.length) { fail("every mirror failed — check the network, or a filter"); return; }
     var base = CDNS[ci], left = MODS.length, dead = false;
@@ -106,7 +148,7 @@
        parallel; async=false is what still runs them in order once they land. */
     MODS.forEach(function (m) {
       var s = document.createElement("script");
-      s.src = base + m + ".js";
+      s.src = bust(base + m + ".js");
       s.async = false;
       s.onload = function () { if (!dead && --left === 0) boot(); };
       s.onerror = function () {
@@ -121,5 +163,5 @@
     });
   }
 
-  loadFrom(0);
+  withVersion(function () { loadFrom(0); });
 })();

@@ -193,4 +193,89 @@ function repoUrls(S: any): string[] {
   }
 }
 
-console.log("shrine base: ok");
+// ---- G. a push has to reach somebody who already loaded the shrine ---------
+// The embed loads from a branch URL, which jsDelivr holds at its edge for
+// hours and the browser holds for longer. Nothing about that can be asked
+// nicely, so every module URL carries the current build and a new deployment
+// is simply a new URL. Two halves have to stay true: the embed must tag the
+// URLs, and the backend must answer with something that changes — and answer
+// it uncached, or the tag itself goes stale and pins everything to whatever it
+// last said.
+{
+  const embed = await Deno.readTextFile(`${ROOT}/embed/shrine.js`);
+
+  // Run the thing rather than read it. A regex is happy with a bust() that
+  // hands back the URL it was given; only watching what the embed appends to
+  // the page says whether a deploy will actually reach anybody.
+  const srcsFrom = async function (version: string | null): Promise<string[]> {
+    const srcs: string[] = [];
+    const script = { src: "", async: true, onload: null, onerror: null };
+    const head = { appendChild: (s: { src: string }) => { srcs.push(s.src); } };
+    // deno-lint-ignore no-explicit-any
+    const doc: any = {
+      currentScript: { src: "https://cdn.example/embed/shrine.js", getAttribute: () => "" },
+      createElement: () => ({ ...script }),
+      head,
+      addEventListener: () => {},
+    };
+    // deno-lint-ignore no-explicit-any
+    const win: any = { console, SHRINE_BASE: "" };
+    win.window = win;
+    const fetchStub = () =>
+      version === null
+        ? Promise.reject(new Error("no backend"))
+        : Promise.resolve({ json: () => Promise.resolve({ v: version }) });
+    new Function(
+      "window", "document", "location", "fetch", "setTimeout", "clearTimeout",
+      "URL", "URLSearchParams", "encodeURIComponent", "Date", "console",
+      embed,
+    )(
+      win, doc, { search: "", href: "https://host.example/" }, fetchStub,
+      (fn: () => void, _ms: number) => setTimeout(fn, 100000), clearTimeout,
+      URL, URLSearchParams, encodeURIComponent, Date, console,
+    );
+    // withVersion resolves off a promise, so let the microtasks drain
+    for (let i = 0; i < 8 && !srcs.length; i++) await new Promise((r) => setTimeout(r, 5));
+    return srcs;
+  };
+
+  const tagged = await srcsFrom("build-abc123");
+  must(tagged.length === SHRINE_FILES.length,
+    `the embed must append every module, got ${tagged.length}`);
+  for (const u of tagged) {
+    must(u.includes("?v=build-abc123"),
+      `every module URL must carry the build the backend reported, got ${u}`);
+  }
+  // two builds must not be able to name the same URL, or the browser answers
+  // the second one out of what it kept from the first
+  const other = await srcsFrom("build-def456");
+  must(!other.some((u) => tagged.includes(u)),
+    "a new build must produce URLs the old build never used");
+
+  // and with no backend to ask it still loads, still tagged with something
+  // that moves on its own
+  const blind = await srcsFrom(null);
+  must(blind.length === SHRINE_FILES.length,
+    `the shrine must still load when /version cannot be reached, got ${blind.length}`);
+  const hour = new Date().toISOString().slice(0, 13).replace(/[^0-9]/g, "");
+  for (const u of blind) {
+    must(u.includes("?v=" + hour), `the fallback tag must be the current hour, got ${u}`);
+  }
+
+  must(/cache:\s*"no-store"/.test(embed),
+    "the version request must not be served out of the browser's own cache");
+
+  const server = await Deno.readTextFile(`${ROOT}/server.ts`);
+  const route = server.slice(server.indexOf('path === "/version"'));
+  must(
+    route.indexOf('"cache-control": "no-store') > 0 && route.indexOf('"cache-control": "no-store') < 400,
+    "/version must be served uncached, or the cache-buster is itself cached",
+  );
+  must(/DENO_DEPLOYMENT_ID/.test(server), "the build id must come from the deployment");
+  must(/\{ v: BUILD \}/.test(server), "/version must answer { v }, which is what the embed reads");
+}
+
+console.log(
+  "shrine base: ok — and the embed tags every module with the current build, so a deploy " +
+    "reaches a browser that already cached the old one",
+);

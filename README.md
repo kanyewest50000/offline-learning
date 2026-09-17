@@ -124,6 +124,38 @@ logs in on that host once with the key they already have; the backend answers
 with `window.open`, so a sandboxed frame without `allow-popups` gets the chat,
 the casino and the originals but no catalog tabs.
 
+### getting a push to the people running it
+
+The script tag points at `@main`, which is a branch and therefore a moving
+target — and a CDN will not go back to GitHub on every request to see whether it
+has moved. jsDelivr holds a branch URL at its edge for hours, and the browser
+that fetched it holds a copy for longer than that. Neither is a bug; both mean
+somebody who opened the shrine last week is still running last week's shrine.
+That is how a friend ends up on a copy with no poker in it.
+
+Asking politely does not work, so the URL changes instead. The embed's first act
+is `GET /version` on the backend, which answers with the current deployment's id
+and is the one route in the whole system served `no-store` — if that went stale
+it would pin everything else to whatever it last said. Every module is then
+loaded with `?v=<that build>` on the end. A new deployment is a new set of URLs,
+so nothing any cache is holding can answer for them; between deployments the
+URLs are identical and every cache keeps working exactly as it did. If the
+backend cannot be reached the tag falls back to the current hour, which bounds
+the damage without the shrine having to wait on anything — the version request
+gives up after two and a half seconds and loads regardless.
+
+`.github/workflows/purge-cdn.yml` is the other half, and the smaller one: on
+every push to main it calls jsDelivr's purge API for the embed and the eight
+modules, so the CDN edge is current too rather than revalidating lazily behind
+the new URL. It is deliberately not allowed to fail a build — the version tag
+already gets the new code to everybody; purging only makes the first request
+for it faster.
+
+`scripts/test-shrine-base.ts` runs the embed against a fake page and looks at
+what it appends: every module has to carry the build the backend reported, two
+different builds must not be able to name the same URL, and with no backend at
+all it still has to load, still tagged with something that moves.
+
 ## direct messages
 
 Beside the room is a rail of conversations, and the room is the first row in it.

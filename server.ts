@@ -616,6 +616,14 @@ const CORS: Record<string, string> = {
   "access-control-allow-headers": "content-type, x-admin-key",
 };
 
+// One string that changes whenever this code does, and does not otherwise.
+// Deno Deploy hands every deployment its own id, which is exactly that; running
+// it locally there is no deployment, so the process start stands in and a
+// restart counts as a new build. Served by /version and used by the embed to
+// name the files it loads, so the value matters only in that it is different.
+const BUILD = (Deno.env.get("DENO_DEPLOYMENT_ID") || "dev" + Date.now().toString(36))
+  .replace(/[^A-Za-z0-9._-]/g, "").slice(0, 32) || "dev";
+
 // Where an admin request carries its key.
 //
 // A query string is the worst place for a secret: it lands in the address bar,
@@ -2799,6 +2807,30 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       until: bs.until,
       chatBanned: !!app.value.chatBanned,
       mod: app.value.mod === true,
+    });
+  }
+
+  // ---------- version ----------
+  // What the embed asks before it loads anything, so a push actually reaches
+  // the people running the shrine off a script tag.
+  //
+  // The problem it solves is not ours, it is the CDN's: jsDelivr holds a branch
+  // URL like @main at the edge for hours, and a browser that already has the
+  // file holds it for longer still. Somebody who opened the shrine yesterday
+  // keeps yesterday's shrine, which is how a friend ends up with a copy that
+  // has no poker in it. This answers with a token that changes whenever the
+  // code does; embed/shrine.js hangs it off every module URL, so a new
+  // deployment is a new URL and nothing anywhere can hand back the old one.
+  //
+  // It has to be the one thing in the whole system that is never cached, or it
+  // would go stale and pin everything else to whatever it last said.
+  if (req.method === "GET" && path === "/version") {
+    return new Response(JSON.stringify({ v: BUILD }), {
+      headers: {
+        "content-type": "application/json",
+        "cache-control": "no-store, no-cache, must-revalidate",
+        ...CORS,
+      },
     });
   }
 
