@@ -394,9 +394,29 @@ castling through check, an en-passant capture that exposes a rank, a pinned
 knight, a promotion that gives mate are all a number that does not match, rather
 than a subtlety nobody notices until it costs somebody a pot.
 
-Ninety seconds a move, because a chess table holds an escrow and a game somebody
-wandered away from cannot sit there forever holding the other player's sahurs.
-Running out loses, through the same deadline every other pit table expires on.
+**Each player has their own clock**, the way chess has been played with one
+since 1861, and the lobby picks which: 3 min, 3 | 2, 5 min, 10 min, 15 min or
+1 hour. Only the player to move is spending anything; an increment goes back on
+when they move. The table's own expiry is set to whenever the running clock hits
+zero, so the same sweeper that takes down every other abandoned pit table is
+what flags a chess game — one deadline, not two, and an escrow can never sit
+there forever holding the other player's sahurs.
+
+Running out loses, **unless the other player could never have mated**: against a
+bare king, or a lone bishop or knight, a flag is a draw. That is the rule every
+chess clock in the world implements and the one nobody remembers, and it is
+`chessMatingMaterial()` in `server.ts`.
+
+Your own move is painted **before** the server answers. The client already knows
+the move is legal — the server sent the legal list it was picked from — so the
+piece lands, the clock changes hands and the increment goes on locally, and the
+next poll is a reconciliation rather than the thing you were waiting for. A
+refusal puts the position back. What the client guesses is only the bookkeeping
+around a move it was already told was legal: the rook that comes with a castling
+king, the pawn taken in passing, what a promotion turns into. It still owns no
+rules, and it does not guess the scoresheet — spelling a move in algebraic needs
+the rulebook, so the move list is the server's and arrives with the poll.
+
 Resigning and offering a draw are there because chess needs them; an offer does
 not survive the move that answers it.
 

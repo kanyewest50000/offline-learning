@@ -649,6 +649,15 @@
       '.chdot{width:11px;height:11px;border-radius:50%;border:1px solid #3a2410;flex:0 0 auto}' +
       '.chdot.w{background:#fffaf0}' + '.chdot.b{background:#241505}' +
       '.chname{font-weight:700;font-size:13px;color:#f5efe0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      /* the clock. Dim until it is your turn, and it goes red in the last ten
+         seconds, which is when it stops being furniture and starts being the
+         only thing on the screen. */
+      '.chclock{margin-left:auto;flex:0 0 auto;font-variant-numeric:tabular-nums;font-weight:800;' +
+      'font-size:17px;letter-spacing:.02em;padding:3px 10px;border-radius:7px;' +
+      'background:#1a1008;border:1px solid #3a2410;color:#8a6a3a;min-width:66px;text-align:center}' +
+      '.chclock.on{background:#e8d3ae;border-color:#e8d3ae;color:#241505}' +
+      '.chclock.low{color:#f2c063}' + '.chclock.on.low{background:#c8823c;border-color:#c8823c;color:#1d1206}' +
+      '.chclock.out{background:#7a2b1e;border-color:#7a2b1e;color:#fff}' +
       '.chstate{font-size:12px;color:#c8823c;font-weight:700}' +
       '.chstate.check{color:#f2c063}' + '.chstate.over{color:#f5efe0}' +
       '.chmoves{flex:1;min-height:0;max-height:210px;overflow-y:auto;background:#1a1008;border:1px solid #3a2410;' +
@@ -1056,7 +1065,14 @@
       '& .pkhelptip{color:{text};border-color:{lineMid}}' +
       '& .pkchipbtn:hover{background:{hover}}' +
       '& .chboard{border-color:{line}}' +
-      '& .chside .chname{color:{text}}' + '& .chstate{color:{textDim}}' +
+      '& .chside .chname{color:{text}}' +
+      '& .chclock{background:{sunk};border-color:{line};color:{muted}}' +
+      '& .chclock.on{background:{solid};border-color:{solid};color:{solidInk}}' +
+      '& .chclock.low{color:{heading}}' +
+      '& .chclock.on.low{background:{lineHot};border-color:{lineHot};color:{solidInk}}' +
+      /* .out keeps its red in every skin: a flag is the one thing on this board
+         that has to read the same whatever the shrine is painted like */
+      '& .chstate{color:{textDim}}' +
       '& .chstate.check{color:{heading}}' + '& .chstate.over{color:{text}}' +
       '& .chmoves{background:{sunk};border-color:{line}}' +
       '& .chmvn{color:{muted}}' + '& .chmv{color:{text}}' +

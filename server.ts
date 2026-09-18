@@ -1384,6 +1384,9 @@ type Duel = {
   // at the top, sharing what was on the table. `winner` is only ever set when
   // this holds exactly one name, so the two can never disagree.
   paid: { name: string; amount: number }[];
+  // which chess clock this table plays with, chosen by whoever put it up so
+  // that joining tells you what you are sitting down to
+  tc?: string;
   reason: string;        // why it ended: cancelled | expired | unconfirmed | forfeit | play | clock | bust | draw
   rounds: { host: string; guest: string; won: string | null }[];
   cards?: CutCards;
@@ -1596,6 +1599,11 @@ function duelView(d: Duel, uid: string | null) {
     // position, and the only thing either of them does not know is what the
     // other is going to do about it.
     chess: d.game === "chess" && d.chess ? chessView(d, uid) : null,
+    // the clock this table was opened at, which is worth knowing while it is
+    // still waiting for somebody — before there is a board to read it off
+    tcName: d.game === "chess"
+      ? (CHESS_TC[d.tc || CHESS_TC_DEFAULT] || CHESS_TC[CHESS_TC_DEFAULT]).name
+      : null,
   };
 }
 
@@ -1616,7 +1624,16 @@ function chessView(d: Duel, uid?: string | null) {
     toAct: toAct < 0 ? null : (toAct === cs.white ? "w" : "b"),
     yourTurn: seat >= 0 && seat === toAct && !cs.result,
     check: pos ? chessInCheck(pos, pos.w) : false,
-    moveBy: cs.moveBy,
+    // both clocks, as milliseconds, plus when the running one started — the
+    // client ticks it down itself rather than asking, so a countdown costs
+    // nothing and does not stutter between polls
+    clock: cs.clock,
+    since: cs.since,
+    inc: cs.inc,
+    tc: cs.tc,
+    tcName: (CHESS_TC[cs.tc] || CHESS_TC[CHESS_TC_DEFAULT]).name,
+    running: cs.result ? -1 : chessSeatToAct(cs),
+    yourSeat: seat,
     // the two squares the last move used, so both boards can keep it lit
     lastFrom: cs.last ? cs.last.slice(0, 2) : null,
     lastTo: cs.last ? cs.last.slice(2, 4) : null,
@@ -1821,15 +1838,30 @@ async function sweepDuel(entry: Deno.KvEntryMaybe<Duel>): Promise<Deno.KvEntryMa
       // along, and the clock stopping is simply when they are read.
       out = compResult(d, "clock");
     } else if (d.game === "chess" && d.chess) {
-      // the clock is the only way a chess table ends without somebody pressing
-      // something: whoever was to move did not, and loses for it
+      // somebody's clock ran out. Their own reaches zero and stays there; the
+      // other player's is untouched, because it was never running.
       const cs: ChessState = JSON.parse(JSON.stringify(d.chess)) as ChessState;
       const people = seatedPlayers(d);
       const late = chessSeatToAct(cs);
-      cs.result = late === cs.white ? "b" : "w";
-      cs.reason = "out of time";
-      const winner = people[1 - late];
-      out = finishDuel({ ...d, chess: cs }, winner ? winner.id : null, "clock");
+      cs.clock[late] = 0;
+      cs.since = Date.now();
+      // Flagging only LOSES if the other player could have mated. Against a
+      // bare king it is a draw — the rule every chess clock implements and
+      // nobody remembers until it costs them a pot.
+      const pos = chessParse(cs.fen);
+      const other = 1 - late;
+      const otherIsWhite = other === cs.white;
+      const canMate = pos ? chessMatingMaterial(pos, otherIsWhite) : true;
+      if (canMate) {
+        cs.result = late === cs.white ? "b" : "w";
+        cs.reason = "out of time";
+        const winner = people[other];
+        out = finishDuel({ ...d, chess: cs }, winner ? winner.id : null, "clock");
+      } else {
+        cs.result = "d";
+        cs.reason = "out of time \u2014 no mating material";
+        out = finishDuel({ ...d, chess: cs }, null, "draw");
+      }
       out.next.chess = cs;
     } else if (d.game === "poker") {
       // Not an ending: a tournament does not expire, one player runs out of
@@ -2293,11 +2325,30 @@ function chessKey(p: ChessPos): string {
   return chessFen(p).split(" ").slice(0, 4).join(" ");
 }
 
-// How long a player has to find a move before they lose on time. Chess in the
-// pit still holds an escrow, so a game somebody wandered away from cannot be
-// allowed to sit there forever holding the other player's sahurs. Generous
-// enough to think in, short enough that a table clears itself.
-const CHESS_MOVE_MS = Number(Deno.env.get("CHESS_MOVE_MS") || 90 * 1000);
+// A real chess clock: each player has their own, it runs only while it is their
+// move, and when it reaches zero they have lost. A per-move allowance was the
+// wrong shape for chess — it let somebody take ninety seconds over every move
+// of a hundred-move game, which is not a time control, it is a nap. It also
+// happens to be what the pit needs anyway: a table holds an escrow, and a clock
+// that only ever runs down is a game somebody wandered away from clearing
+// itself without anybody having to come back for it.
+//
+// `inc` is added to a player's clock after they move, so a 3|2 game does not
+// end in a scramble nobody can play. The id is what the client sends and is
+// stored on the table, so joining tells you what you are sitting down to.
+const CHESS_TC: Record<string, { base: number; inc: number; name: string }> = {
+  "3+0": { base: 3 * 60_000, inc: 0, name: "3 min" },
+  "3+2": { base: 3 * 60_000, inc: 2_000, name: "3 | 2" },
+  "5+0": { base: 5 * 60_000, inc: 0, name: "5 min" },
+  "10+0": { base: 10 * 60_000, inc: 0, name: "10 min" },
+  "15+0": { base: 15 * 60_000, inc: 0, name: "15 min" },
+  "60+0": { base: 60 * 60_000, inc: 0, name: "1 hour" },
+};
+const CHESS_TC_DEFAULT = "10+0";
+function chessTc(id: unknown): string {
+  const k = clip(id, 8);
+  return k && CHESS_TC[k] ? k : CHESS_TC_DEFAULT;
+}
 
 type ChessState = {
   fen: string;
@@ -2309,25 +2360,64 @@ type ChessState = {
   san: string[];         // the move list as it reads on a scoresheet
   last: string;          // the move just played, so the board can light it
   white: number;         // which seat has white: 0 is the host
-  moveBy: number;        // when the side to move runs out of time
+  // milliseconds left, BY SEAT rather than by colour, so it does not have to be
+  // re-read every time the colours are looked up
+  clock: [number, number];
+  inc: number;           // added to a clock after that player moves
+  since: number;         // when the running clock was last started
+  tc: string;            // which control this is, for the client to name
   draw: number;          // seat that has a draw offer standing, or -1
   result: "" | "w" | "b" | "d";
   reason: string;
 };
 
-function chessStart(): ChessState {
+function chessStart(tcId: string): ChessState {
   const p = chessParse(CHESS_START)!;
+  const tc = CHESS_TC[tcId] || CHESS_TC[CHESS_TC_DEFAULT];
   return {
     fen: CHESS_START,
     reps: [chessKey(p)],
     san: [],
     last: "",
     white: rndInt(2),
-    moveBy: Date.now() + CHESS_MOVE_MS,
+    clock: [tc.base, tc.base],
+    inc: tc.inc,
+    since: Date.now(),
+    tc: tcId,
     draw: -1,
     result: "",
     reason: "",
   };
+}
+
+// What is left on the clock of whoever is to move, right now. Everything else
+// reads from this rather than from `clock` directly, because `clock` is only
+// brought up to date when a move is actually made.
+function chessLeft(cs: ChessState, at = Date.now()): number {
+  const seat = chessSeatToAct(cs);
+  if (seat < 0 || cs.result) return 0;
+  return Math.max(0, cs.clock[seat] - Math.max(0, at - cs.since));
+}
+// When the running clock hits zero, which is what the duel's deadline is set to.
+function chessDeadline(cs: ChessState): number {
+  return cs.since + Math.max(0, cs.clock[chessSeatToAct(cs)] || 0);
+}
+
+// Can this side still deliver mate with what it has? Flagging is only a LOSS if
+// the other player could have mated; against a bare king it is a draw, which is
+// the rule every clock in the world implements and the one nobody remembers.
+function chessMatingMaterial(p: ChessPos, white: boolean): boolean {
+  let minors = 0, bishops = 0, knights = 0;
+  for (let i = 0; i < 64; i++) {
+    const v = p.b[i];
+    if (!v || (v > 0) !== white) continue;
+    const t = Math.abs(v);
+    if (t === P || t === R || t === Q) return true;
+    if (t === B) { bishops++; minors++; }
+    if (t === N) { knights++; minors++; }
+  }
+  // a lone minor cannot; two of anything can at least be helpmated into it
+  return minors >= 2 || (bishops >= 1 && knights >= 1);
 }
 
 // Which seat is to move: white's seat before an even number of moves have been
@@ -3839,6 +3929,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         id: d.id, game: d.game, gameName: DUEL_GAMES[d.game]?.name || d.game,
         bet: d.bet, seats: duelSeats(d), filled: seatedPlayers(d).length,
         host: d.host.name, mine: d.host.id === u.id, ts: d.ts, deadline: d.deadline,
+        // chess only: what you are sitting down to. Two people who agreed on a
+        // stake can still want very different games, and "3 | 2" is the whole
+        // difference between a quick one and an evening.
+        ...(d.game === "chess"
+          ? { tcName: (CHESS_TC[d.tc || CHESS_TC_DEFAULT] || CHESS_TC[CHESS_TC_DEFAULT]).name }
+          : {}),
       });
     }
     open.sort((a, b) => (b as { ts: number }).ts - (a as { ts: number }).ts);
@@ -3896,6 +3992,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const duel: Duel = {
       id, game, bet, seats, host: duelSide(u), guest: null, extra: [], state: "open", ts: now,
       deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, paid: [], reason: "", rounds: [],
+      ...(game === "chess" ? { tc: chessTc(b.tc) } : {}),
     };
     const res = await kv.atomic()
       .check(lock).check(cur)
@@ -4069,8 +4166,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         // is decided here and once, because it decides the game and must not be
         // something either client can influence or re-roll.
         next.state = "live";
-        next.chess = chessStart();
-        next.deadline = next.chess.moveBy;
+        next.chess = chessStart(chessTc(d.tc));
+        next.deadline = chessDeadline(next.chess);
       } else if (allIn && d.game === "comp") {
         // three minutes on the clock and a stack of wood chips each, dealt in the
         // same commit as the last yes so nobody starts a tick early
@@ -4160,6 +4257,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
           m.from === want.from && m.to === want.to && (m.promo || 0) === (want.promo || 0)
         );
         if (!legal) return json({ error: "illegal move", duel: duelView(d, u.id) }, 400);
+        // the clock first: whatever this move took comes off the mover, and the
+        // increment goes back on. Reaching zero here is not a move at all —
+        // the sweeper below flags them and this branch is never reached.
+        // chessLeft() is what this arithmetic is, and it lives in one place so
+        // that the countdown, the deadline and the charge can never drift apart
+        const now = Date.now();
+        cs.clock[seat] = chessLeft(cs, now) + cs.inc;
+        cs.since = now;
         cs.san.push(chessSan(pos, legal));
         cs.last = chessUci(legal);
         const after = chessApply(pos, legal);
@@ -4171,7 +4276,6 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         cs.reps.push(chessKey(after));
         // an offer does not survive the move it was answered with
         cs.draw = -1;
-        cs.moveBy = Date.now() + CHESS_MOVE_MS;
         const end = chessEnd(after, cs.reps);
         if (end.over) {
           cs.result = end.winner === null ? "d" : end.winner;
@@ -4180,7 +4284,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         }
       }
 
-      let next: Duel = { ...d, chess: cs, deadline: cs.moveBy };
+      let next: Duel = { ...d, chess: cs, deadline: chessDeadline(cs) };
       let credits: { id: string; amount: number }[] = [];
       if (cs.result) {
         const winner = winnerSeat === null ? null : people[winnerSeat];

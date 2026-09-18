@@ -1940,7 +1940,7 @@
       sub:"two to five seats, no limit hold'em. the chips are dealt by the table and are worth nothing off it \u2014 your sahurs sit in the pot the whole time and go to whoever is last standing. the blinds go up every three minutes and do not stop going up, so it finishes."},
     chess:{name:"Chess",moves:[],
       blurb:"a board, two of you, and the rules. play it for nothing, or put sahurs on it.",
-      sub:"the server holds the position and checks every move against it, so an illegal one never lands. ninety seconds a move \u2014 run out of them and you lose the game."}
+      sub:"the server holds the position and checks every move against it, so an illegal one never lands. each of you has your own clock, running only while it is your move \u2014 run it out and you lose, unless the other one has nothing left to mate with."}
   };
 
   /* ---- the chess board ----
@@ -2083,6 +2083,8 @@
     var top=el("div","chwho");
     top.appendChild(el("span","chdot "+(c.youAre==="w"?"b":"w")));
     top.appendChild(el("span","chname",(c.youAre==="w"?c.black:c.white)||"…"));
+    var topClock=el("div","chclock","");
+    top.appendChild(topClock);
     side.appendChild(top);
     var st=el("div","chstate","");
     if(c.result){
@@ -2123,6 +2125,16 @@
       acts.appendChild(dr);acts.appendChild(rs);
       side.appendChild(acts);
     }
+    /* your own name and clock at the foot of the panel, the way a board is laid
+       out everywhere: theirs at the top, yours at the bottom */
+    var mine=el("div","chwho");
+    mine.appendChild(el("span","chdot "+(c.youAre==="w"?"w":"b")));
+    mine.appendChild(el("span","chname","you"));
+    var botClock=el("div","chclock","");
+    mine.appendChild(botClock);
+    side.appendChild(mine);
+    PIT.chClocks={top:topClock,bot:botClock,view:c};
+    chPaintClocks();
     wrap.appendChild(side);
     body.appendChild(wrap);
   }
@@ -2236,10 +2248,79 @@
     });
     boardEl.addEventListener("pointercancel",function(){drop();PIT.chFrom=null;hint(null,{});});
   }
+  /* ---- your own move, before the server has heard about it ----
+     The server still decides: this only moves the piece on screen so the board
+     answers the hand that moved it instead of freezing for a round trip. The
+     reply repaints from the position the server actually holds, so anything
+     guessed wrong here lives for about as long as it takes to be corrected.
+     What is guessed: the rook that comes with a castling king, the pawn that
+     is taken past, and what a promoting pawn turns into. Not whether the move
+     was legal — the server said that before it was offered. */
+  function chessGuess(uci,c){
+    var boardEl=document.querySelector(".chboard");
+    if(!boardEl)return;
+    var from=uci.slice(0,2),to=uci.slice(2,4),promo=uci.slice(4,5);
+    var sqEl=function(n){return boardEl.querySelector('.chsq[data-sq="'+n+'"]');};
+    var f=sqEl(from),t=sqEl(to);
+    if(!f||!t)return;
+    var pc=f.querySelector(".chp");
+    if(!pc)return;
+    var mover=pc.className.indexOf(" w")>=0||pc.className.indexOf("img w")>=0?"w":"b";
+    var isKing=false,isPawn=false;
+    /* which piece it is, read off what is drawn rather than off a rulebook */
+    if(pc.tagName==="IMG")
+      {isKing=/k\.png$/.test(pc.src);isPawn=/p\.png$/.test(pc.src);}
+    else
+      {isKing=pc.textContent==="\u265A";isPawn=pc.textContent==="\u265F";}
+    var file=function(n){return n.charCodeAt(0)-97;};
+    /* the rook goes with the king */
+    if(isKing&&Math.abs(file(to)-file(from))===2){
+      var rank=from.charAt(1);
+      var rf=file(to)>file(from)?"h":"a", rt=file(to)>file(from)?"f":"d";
+      var r0=sqEl(rf+rank),r1=sqEl(rt+rank);
+      if(r0&&r1){var rk=r0.querySelector(".chp");if(rk){r1.innerHTML="";r1.appendChild(rk);}}
+    }
+    /* a pawn that goes diagonally onto an empty square took one in passing */
+    if(isPawn&&file(to)!==file(from)&&!t.querySelector(".chp")){
+      var gone=sqEl(to.charAt(0)+from.charAt(1));
+      if(gone){var g=gone.querySelector(".chp");if(g&&g.parentNode)g.parentNode.removeChild(g);}
+    }
+    t.innerHTML="";
+    t.appendChild(promo?pcEl(mover==="w"?promo.toUpperCase():promo.toLowerCase()):pc);
+    /* light the move and take the hints down, so it reads as played */
+    var all=boardEl.querySelectorAll(".chsq");
+    for(var i=0;i<all.length;i++)all[i].classList.remove("from","go","take","over","last");
+    f.classList.add("last");t.classList.add("last");
+    /* and start their clock, because it is their move now */
+    if(c&&c.clock&&c.running===c.yourSeat){
+      var now=Date.now()+PIT.skew;
+      c.clock[c.yourSeat]=Math.max(0,c.clock[c.yourSeat]-Math.max(0,now-c.since))+(c.inc||0);
+      c.since=now;c.running=1-c.yourSeat;c.yourTurn=false;
+      chPaintClocks();
+    }
+    /* the panel has to agree with the board: it said "your move" a moment ago
+       and the move has been made. The scoresheet is left to the server — the
+       client does not own the rules and cannot spell the move in algebraic. */
+    var stEl=document.querySelector(".chstate");
+    if(stEl&&stEl.className.indexOf("over")<0)
+      {stEl.textContent="their move";stEl.className="chstate";}
+  }
   function chessMove(d,uci,note){
     PIT.chFrom=null;
+    /* paint it first, then tell the server */
+    chessGuess(uci,d.chess);
+    /* and hold the next render, so the poll does not put the piece back where
+       it was in the half second before the reply lands */
+    PIT.chSent=true;
     pitSend("/duel/chess",{id:d.id,move:uci},function(e){
+      PIT.chSent=false;PIT.shape="";pitRender(PIT.last);
       bad(note,e==="illegal move"?"not a legal move.":(e||"that did not go through."));
+    }).then(function(){
+      /* the reply already went through pitRender, which this gate turned away —
+         so lift it and paint the position the server actually holds, rather
+         than leaving the guess up until the next poll comes round */
+      PIT.chSent=false;
+      if(PIT.last)pitRender(PIT.last);
     });
   }
   function chessAct(d,action,note){
@@ -2272,7 +2353,7 @@
     /* leaving the table forgets which cards have already been dealt in, so
        coming back deals the hand in fresh rather than showing it half-landed */
     PIT.pkSeen=null;PIT.pkHand=null;PIT.pkAuto=false;PIT.pkAutoBusy=false;PIT.pkUp=null;PIT.pkUpAt=0;
-    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;PIT.chFrom=null;PIT.chDrag=null;
+    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;PIT.chFrom=null;PIT.chDrag=null;PIT.chSent=false;PIT.chClocks=null;
     if(PIT.pkKeyBound){document.removeEventListener("keydown",PIT.pkKeyBound);PIT.pkKeyBound=null;}
     /* if a clash was mid-flight its callback will never land, so the render
        gate has to be lifted here or every later paint would be swallowed */
@@ -2738,6 +2819,13 @@
     /* chess is the one table that can be played for nothing, so it gets the
        choice, and the stake box is only worth showing once there is a stake */
     var freeSel=game==="chess"?selectOf([["0","free \u2014 nothing on it"],["1","for sahurs"]],"0"):null;
+    /* the clock. Each player gets their own, it runs only while it is their
+       move, and the id here is what the server keys CHESS_TC on \u2014 keep the
+       left-hand column in step with that table (scripts/test-chess.ts checks). */
+    var tcSel=game==="chess"?selectOf([
+      ["3+0","3 min"],["3+2","3 | 2"],["5+0","5 min"],
+      ["10+0","10 min"],["15+0","15 min"],["60+0","1 hour"]
+    ],"10+0"):null;
     /* which set the pieces are drawn with. Remembered, and it takes effect on
        the board the moment it is changed rather than on the next game. */
     var pieceSel=null;
@@ -2750,6 +2838,7 @@
     }
     var open=el("button","cbtn go","put up a table");
     var row=el("div","ctlrow");
+    if(tcSel)row.appendChild(ctl("clock",tcSel));
     if(freeSel)row.appendChild(ctl("playing for",freeSel));
     if(pieceSel)row.appendChild(ctl("pieces",pieceSel));
     var betCtl=ctl("stake",bet);
@@ -2777,6 +2866,7 @@
       open.disabled=true;r.className="casres";r.textContent="";
       var body={game:game,bet:(freeSel&&freeSel.value==="0")?0:Number(bet.value)};
       if(seatsSel)body.seats=Number(seatsSel.value);
+      if(tcSel)body.tc=tcSel.value;
       jpost("/duel/create",body).then(function(d){if(refused(d)){refusedGate();return;}
         open.disabled=false;
         if(!d||d.error){bad(r,d&&d.error==="already in a duel"?"you are already at a table.":(d&&d.error)||"could not open a table");return;}
@@ -2800,6 +2890,9 @@
         var seats=t.seats||2, filled=t.filled||1;
         var wait=(seats>2?(filled+" / "+seats+" seated"):(t.mine?"waiting for someone":"waiting"))
           +" — "+pitClockText(lf)+" left";
+        /* what you are actually sitting down to. Worth saying before you do:
+           three minutes and an hour are not the same game. */
+        if(t.tcName)wait=t.tcName+" — "+wait;
         g.appendChild(el("p",null,wait));
         box.appendChild(g);
         box.appendChild(el("div","price",money(t.bet)+" sahurs"));
@@ -2871,7 +2964,7 @@
        render and the duel is polled about once a second, so without this the
        poll yanks the element the pointer was captured on out from under a drag
        and the drop lands on nothing. The next poll redraws it a moment later. */
-    if(PIT.chDrag)return;
+    if(PIT.chDrag||PIT.chSent)return;
     /* first sight of a duel establishes the baseline, so reopening one that is
        already several rounds in does not replay them all */
     if(PIT.roundsSeen===null){PIT.roundsSeen=(d.rounds&&d.rounds.length)||0;}
@@ -3336,12 +3429,41 @@
     body.appendChild(hist);
   }
 
-  /* The only things that move between rebuilds: the countdown, and — while a
+  /* mm:ss, and tenths once it is under ten seconds, which is when tenths are
+     the only thing you are looking at */
+  function chClockText(ms){
+    ms=Math.max(0,ms);
+    if(ms<10000)return (Math.floor(ms/100)/10).toFixed(1);
+    var t=Math.ceil(ms/1000);
+    var m=Math.floor(t/60),ss=t%60;
+    return m+":"+(ss<10?"0":"")+ss;
+  }
+  /* Both clocks, ticked here rather than fetched. The server sends what each
+     player has left and when the running one started; the difference is
+     arithmetic, so a countdown costs nothing and does not stutter between
+     polls. PIT.skew is the server/client offset the pit already tracks. */
+  function chPaintClocks(){
+    var cl=PIT.chClocks;
+    if(!cl||!cl.top||!cl.top.isConnected)return;
+    var c=cl.view;
+    if(!c||!c.clock)return;
+    var now=Date.now()+PIT.skew;
+    for(var seat=0;seat<2;seat++){
+      var left=c.clock[seat];
+      if(c.running===seat)left=left-Math.max(0,now-c.since);
+      var box=(seat===c.yourSeat)?cl.bot:cl.top;
+      if(!box)continue;
+      box.textContent=chClockText(left);
+      box.className="chclock"+(c.running===seat?" on":"")+(left<=10000?" low":"")+(left<=0?" out":"");
+    }
+  }
+  /* The only things that move between rebuilds: the countdowns, and — while a
      round is running — the two stacks, which change on every roll either of
      them makes and must not take the screen with them. */
   function pitPaintClock(){
     var d=PIT.last;
     if(!d)return;
+    chPaintClocks();
     if(PIT.chips&&PIT.chips.length&&PIT.chips[0].el.isConnected){
       var seats=compSeats(d);
       PIT.chips.forEach(function(c,i){
@@ -3356,6 +3478,11 @@
     }
     if(!PIT.left||!PIT.left.isConnected)return;
     if(d.state==="done"||!d.deadline){PIT.left.textContent="";PIT.left.className="pitclock";return;}
+    /* a chess game has two clocks of its own, drawn beside the board where you
+       are already looking. This big number is the same figure a third time and
+       reads as a third rule; it is only worth showing while the table is still
+       filling, when it is the wait rather than the game. */
+    if(d.game==="chess"&&d.state==="live"){PIT.left.textContent="";PIT.left.className="pitclock";return;}
     var ms=pitLeft(d.deadline);
     PIT.left.textContent=pitClockText(ms);
     /* three minutes is not ten seconds: "hot" has to mean something different

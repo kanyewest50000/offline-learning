@@ -40,11 +40,27 @@ function must(cond: unknown, msg: string) {
 // this cannot quietly pass against a copy that has drifted
 const src = await Deno.readTextFile(`${ROOT}/server.ts`);
 const from = src.indexOf("type ChessPos = {");
-const to = src.indexOf("const CHESS_MOVE_MS");
+// down to the pit's other game, which takes in the clock block below the engine
+// as well — flagging is a rule like any other and is unreachable over HTTP
+// without sitting here for three minutes
+const to = src.indexOf("// POKER — the pit's tournament.");
 must(from > 0 && to > from, "could not find the chess engine in server.ts");
+// the general helpers the clock block leans on, lifted the same way rather than
+// rewritten here, so a change to any of them shows up as a missing match
+const helpers = ["function rnd(", "function rndInt(", "function clip("].map((sig) => {
+  const i = src.indexOf("\n" + sig);
+  must(i > 0, "could not find " + sig + " in server.ts");
+  const line = src.indexOf("\n", i + 1);
+  // a one-liner closes on its own line; anything else runs to its closing brace
+  if (src.slice(i + 1, line).trimEnd().endsWith("}")) return src.slice(i, line);
+  const end = src.indexOf("\n}", i);
+  must(end > i, sig + " does not close");
+  return src.slice(i, end + 2);
+}).join("\n");
 const engine = `
+${helpers}
 ${src.slice(from, to)}
-export { chessApply, chessEnd, chessFen, chessFromUci, chessKey, chessMoves, chessParse, chessSan, chessUci, CHESS_START };
+export { chessApply, chessDeadline, chessEnd, chessFen, chessFromUci, chessKey, chessLeft, chessMatingMaterial, chessMoves, chessParse, chessSan, chessSeatToAct, chessStart, chessTc, chessUci, CHESS_START, CHESS_TC, CHESS_TC_DEFAULT };
 `;
 const mod = await import("data:application/typescript," + encodeURIComponent(engine));
 const { chessApply, chessEnd, chessFen, chessKey, chessMoves, chessParse, chessSan, CHESS_START } = mod;
@@ -146,6 +162,61 @@ for (const [name, fen, want] of PERFT) {
   must(d4 && chessSan(dp, d4) === "Ncd4", "an ambiguous knight move names its file, got " + chessSan(dp, d4));
 }
 
+// ---- the clocks ------------------------------------------------------------
+//
+// Each player has their own, it runs only while it is their move, and running
+// it out ends the game. The half of that worth testing here is the half that
+// takes minutes to reach over HTTP: what the clock is worth when it hits zero.
+{
+  const { chessDeadline, chessLeft, chessMatingMaterial, chessStart, chessTc, CHESS_TC, CHESS_TC_DEFAULT } = mod;
+
+  // the six the lobby offers, and nothing else gets through
+  must(Object.keys(CHESS_TC).length === 6, "six controls, got " + Object.keys(CHESS_TC).length);
+  for (const id of ["3+0", "3+2", "5+0", "10+0", "15+0", "60+0"]) {
+    must(chessTc(id) === id, id + " should be a control you can ask for");
+  }
+  for (const junk of ["", "1+0", "banana", null, undefined, 5, "99+99"]) {
+    must(chessTc(junk) === CHESS_TC_DEFAULT, "a control nobody offers must fall back: " + String(junk));
+  }
+
+  // both sides start with the same time, and the increment comes off the table
+  const blitz = chessStart("3+2");
+  must(blitz.clock[0] === 180_000 && blitz.clock[1] === 180_000, "3|2 starts both sides at three minutes");
+  must(blitz.inc === 2_000, "…with two seconds a move");
+  must(chessStart("15+0").inc === 0, "15 min has no increment");
+  must(chessStart("60+0").clock[0] === 3_600_000, "an hour is an hour");
+
+  // only the player to move is spending anything
+  const g = chessStart("5+0");
+  const t0 = g.since;
+  const toAct = mod.chessSeatToAct(g);
+  must(toAct === g.white, "white is to move from the start");
+  must(chessLeft(g, t0 + 30_000) === 270_000, "thirty seconds off five minutes");
+  must(g.clock[1 - toAct] === 300_000, "the other clock has not moved — it was never running");
+  must(chessLeft(g, t0 + 999_999) === 0, "a clock stops at zero rather than going negative");
+  must(chessDeadline(g) === t0 + 300_000, "the table's deadline is when the running clock runs out");
+  // a finished game is not still counting
+  must(chessLeft({ ...g, result: "w" }, t0 + 30_000) === 0, "a game that is over has no clock");
+
+  // and what flagging is worth, which is the rule nobody remembers
+  const mates: [string, boolean, boolean][] = [
+    ["8/8/8/4k3/8/8/8/4K3 w - - 0 1", true, false],            // bare kings
+    ["8/8/8/4k3/8/8/8/4KB2 w - - 0 1", true, false],           // king and bishop
+    ["8/8/8/4k3/8/8/8/4KN2 w - - 0 1", true, false],           // king and knight
+    ["8/8/8/4k3/8/8/8/3NKN2 w - - 0 1", true, true],           // two knights: helpmate exists
+    ["8/8/8/4k3/8/8/8/2B1KN2 w - - 0 1", true, true],          // bishop and knight
+    ["8/8/8/4k3/8/8/8/4K2R w - - 0 1", true, true],            // a rook is plenty
+    ["8/8/8/4k3/8/8/4P3/4K3 w - - 0 1", true, true],           // so is a pawn
+    ["8/5bk1/8/8/8/8/8/4K3 w - - 0 1", false, false],          // black's lone bishop
+  ];
+  for (const [fen, white, want] of mates) {
+    const p = chessParse(fen);
+    must(p, "bad test fen " + fen);
+    must(chessMatingMaterial(p, white) === want,
+      `mating material for ${white ? "white" : "black"} in ${fen} should be ${want}`);
+  }
+}
+
 // ===========================================================================
 // the table
 // ===========================================================================
@@ -177,8 +248,8 @@ const balOf = async (token: string) =>
   (await j("/cas/me?token=" + encodeURIComponent(token))).body.balance as number;
 
 // deno-lint-ignore no-explicit-any
-async function table(a: any, b: any, bet: number) {
-  const made = await post("/duel/create", { token: a.token, game: "chess", bet });
+async function table(a: any, b: any, bet: number, tc?: string) {
+  const made = await post("/duel/create", { token: a.token, game: "chess", bet, ...(tc ? { tc } : {}) });
   must(made.body?.ok, `a chess table at ${bet} was refused: ` + JSON.stringify(made.body));
   const id = (made.body.duel as { id: string }).id;
   must((await post("/duel/join", { token: b.token, id })).body?.ok, "join failed");
@@ -257,6 +328,88 @@ must(Math.abs(loseAfter - (loseBefore - bet)) < 1e-9,
   `the loser should be down one: ${loseBefore} -> ${loseAfter}`);
 must(Math.abs((winAfter + loseAfter) - (winBefore + loseBefore)) < 1e-9,
   "and the two of them together must be exactly where they started");
+
+// --- the clock at a real table -----------------------------------------------
+{
+  await nap(1200);
+  const F = await member("csF"), G = await member("csG");
+  // the table is opened at 3|2 and has to still be 3|2 when it deals
+  const t3 = await table(F, G, 0, "3+2");
+  // deno-lint-ignore no-explicit-any
+  const cs0 = t3.cs as any;
+  must(cs0.tc === "3+2" && cs0.tcName === "3 | 2", "the table kept its control: " + JSON.stringify(cs0.tc));
+  must(cs0.clock[0] === 180_000 && cs0.clock[1] === 180_000, "both sides start at three minutes");
+  must(cs0.inc === 2_000, "with two seconds a move");
+  must(cs0.running === cs0.yourSeat || cs0.running === 1 - cs0.yourSeat, "somebody's clock is running");
+
+  // it is advertised before you sit down, because three minutes and an hour
+  // are not the same game whatever the stake says
+  const H = await member("csH");
+  await post("/duel/create", { token: H.token, game: "chess", bet: 0, tc: "60+0" });
+  const listed = (await j("/duel/list?token=" + encodeURIComponent(H.token))).body;
+  // deno-lint-ignore no-explicit-any
+  const mineRow = (listed.mine as any);
+  must(mineRow?.tcName === "1 hour", "an hour table must say so: " + JSON.stringify(mineRow?.tcName));
+  // deno-lint-ignore no-explicit-any
+  const others = (await j("/duel/list?token=" + encodeURIComponent(F.token))).body as any;
+  // deno-lint-ignore no-explicit-any
+  const seen = others.open.find((o: any) => o.host === H.name);
+  must(seen && seen.tcName === "1 hour", "and so must the row somebody else sees: " + JSON.stringify(seen));
+  await post("/duel/cancel", { token: H.token, id: (mineRow as { id: string }).id });
+
+  // a move spends the mover's time and nobody else's, and hands back the
+  // increment. Bracketed by the two clock readings either side of the request,
+  // so this is what the clock actually says rather than roughly right: two
+  // seconds of increment is far wider than a local round trip, and dropping it
+  // puts the answer outside the bracket.
+  await nap(1100);
+  const beforeMove = Date.now();
+  const r = await move(t3.wTok, t3.id, "e2e4");
+  const afterMove = Date.now();
+  must(r.body?.ok, "e4 was refused: " + JSON.stringify(r.body));
+  // deno-lint-ignore no-explicit-any
+  const cs1 = (r.body.duel as any).chess;
+  const wSeat = cs0.running;               // white's seat: it was white to move
+  // what came off white, which must be the time between the clock starting and
+  // the move landing, less the two seconds back
+  const charged = 180_000 + 2_000 - cs1.clock[wSeat];
+  const lo = beforeMove - cs0.since, hi = afterMove - cs0.since;
+  must(charged >= lo - 250 && charged <= hi + 250,
+    `white should have been charged between ${lo} and ${hi} ms with the increment back, got ${charged}`);
+  must(charged >= 1_000, "and the clock must move at all — it had been white's move for a second");
+  must(cs1.clock[1 - wSeat] === 180_000, "black's clock has not started and must be untouched");
+  must(cs1.running === 1 - wSeat, "and now it has");
+  must(cs1.since >= beforeMove, "the running clock restarts from the move");
+  // the table's own deadline follows the clock rather than a fixed per-move slot
+  const dl = (r.body.duel as { deadline: number }).deadline;
+  must(Math.abs(dl - (cs1.since + cs1.clock[1 - wSeat])) < 1_000,
+    "the table expires when the running clock does");
+
+  // a control nobody offers is not a way to give yourself an hour
+  const I = await member("csI");
+  const odd = await post("/duel/create", { token: I.token, game: "chess", bet: 0, tc: "999+99" });
+  must(odd.body?.ok, "the table should still open: " + JSON.stringify(odd.body));
+  // deno-lint-ignore no-explicit-any
+  const oddList = (await j("/duel/list?token=" + encodeURIComponent(I.token))).body.mine as any;
+  must(oddList?.tcName === "10 min",
+    "junk falls back to the default: " + JSON.stringify(oddList?.tcName));
+  await post("/duel/cancel", { token: I.token, id: oddList.id });
+}
+
+// --- and the lobby offers exactly what the server will take ------------------
+{
+  const client = await Deno.readTextFile(`${ROOT}/assets/js/shrine/casino.js`);
+  const block = client.slice(client.indexOf("var tcSel=game===\"chess\""));
+  must(block, "the chess lobby needs a clock picker");
+  const offered = [...block.slice(0, block.indexOf(":null;")).matchAll(/\["([0-9]+\+[0-9]+)"/g)].map((m) => m[1]);
+  must(offered.length === 6, "the picker should offer six controls, found " + offered.length);
+  for (const id of offered) {
+    must(mod.CHESS_TC[id], "the lobby offers a control the server does not know: " + id);
+  }
+  for (const id of Object.keys(mod.CHESS_TC)) {
+    must(offered.includes(id), "the server has a control the lobby never offers: " + id);
+  }
+}
 
 // ===========================================================================
 // the game against the computer
@@ -339,5 +492,8 @@ console.log(
     "the game correctly, the scoresheet reads back in algebraic, and at the table the server " +
     "refuses a move out of turn, an illegal move, nonsense, a stranger and a finished game — " +
     "while a friendly table moves no sahurs and a staked one pays the winner exactly what the " +
-    "loser put up",
+    "loser put up. The six clocks are the six the lobby offers and nothing else gets through; " +
+    "each player spends only their own time, the increment comes back on their own move, the " +
+    "table expires when the running clock does, and flagging against a side that could never " +
+    "have mated is a draw rather than a loss",
 );
