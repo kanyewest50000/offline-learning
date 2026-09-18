@@ -1390,6 +1390,8 @@ type Duel = {
   // the whole poker tournament, carried on the duel record so that a hand and
   // the escrow that pays for it move in the same atomic commit
   poker?: PokerState;
+  // and the whole chess game, for the same reason
+  chess?: ChessState;
 };
 
 function extraOf(d: Duel): DuelSide[] {
@@ -1459,7 +1461,15 @@ const DUEL_GAMES: Record<string, { name: string; moves: string[]; target: number
   // no moves in the duel sense either: poker has its own turn order, its own
   // clock and its own endpoint, and it runs for as long as it takes
   poker: { name: "Poker", moves: [], target: 1 },
+  // same again: chess keeps its whole position on the duel record and takes
+  // its moves through /duel/chess
+  chess: { name: "Chess", moves: [], target: 1 },
 };
+// Chess is the one table that can be played for nothing. Everything else in
+// the pit is a wager with a floor under it; a game of chess is a game of chess
+// whether or not there is anything on it, and refusing the friendly version
+// would just mean two people agreeing to bet the minimum and hand it back.
+const FREE_OK = new Set(["chess"]);
 // The games that can wait for a third and a fourth chair. Tung, Wood, Fire is
 // a hand against ONE opponent — its rounds, its score and its forfeit rule are
 // all written for two — so it stays two however many a client asks for.
@@ -1582,6 +1592,37 @@ function duelView(d: Duel, uid: string | null) {
     settled: d.settled,
     // the whole tournament, already redacted for this player
     poker: d.game === "poker" ? pokerView(d, uid) : null,
+    // the board. Nothing here is secret — both players are looking at the same
+    // position, and the only thing either of them does not know is what the
+    // other is going to do about it.
+    chess: d.game === "chess" && d.chess ? chessView(d, uid) : null,
+  };
+}
+
+function chessView(d: Duel, uid?: string | null) {
+  const cs = d.chess!;
+  const people = seatedPlayers(d);
+  const seat = uid ? people.findIndex((p) => p.id === uid) : -1;
+  const toAct = chessSeatToAct(cs);
+  const pos = chessParse(cs.fen);
+  return {
+    fen: cs.fen,
+    san: cs.san,
+    // the legal moves for whoever is to move, so the client can light up a
+    // square without owning a copy of the rules. Sent only to the player whose
+    // move it is: it is their own position, and nobody else needs it.
+    legal: pos && seat >= 0 && seat === toAct ? chessMoves(pos).map(chessUci) : [],
+    youAre: seat < 0 ? null : (seat === cs.white ? "w" : "b"),
+    toAct: toAct < 0 ? null : (toAct === cs.white ? "w" : "b"),
+    yourTurn: seat >= 0 && seat === toAct && !cs.result,
+    check: pos ? chessInCheck(pos, pos.w) : false,
+    moveBy: cs.moveBy,
+    // whose offer is standing, as a colour, so it reads the same on both screens
+    drawFrom: cs.draw < 0 ? null : (cs.draw === cs.white ? "w" : "b"),
+    result: cs.result,
+    reason: cs.reason,
+    white: people[cs.white]?.name || "",
+    black: people[1 - cs.white]?.name || "",
   };
 }
 
@@ -1776,6 +1817,17 @@ async function sweepDuel(entry: Deno.KvEntryMaybe<Duel>): Promise<Deno.KvEntryMa
       // the buzzer. nothing to play out — the stacks have been the score all
       // along, and the clock stopping is simply when they are read.
       out = compResult(d, "clock");
+    } else if (d.game === "chess" && d.chess) {
+      // the clock is the only way a chess table ends without somebody pressing
+      // something: whoever was to move did not, and loses for it
+      const cs: ChessState = JSON.parse(JSON.stringify(d.chess)) as ChessState;
+      const people = seatedPlayers(d);
+      const late = chessSeatToAct(cs);
+      cs.result = late === cs.white ? "b" : "w";
+      cs.reason = "out of time";
+      const winner = people[1 - late];
+      out = finishDuel({ ...d, chess: cs }, winner ? winner.id : null, "clock");
+      out.next.chess = cs;
     } else if (d.game === "poker") {
       // Not an ending: a tournament does not expire, one player runs out of
       // time to act. They check or fold, the hand carries on, and the clock is
@@ -1837,6 +1889,451 @@ function cutDealFor(people: DuelSide[]): { cards: CutCards; winnerId: string } {
 }
 
 // ---------------------------------------------------------------------------
+// ===========================================================================
+// CHESS
+//
+// The board a player sees is a picture. Every question about whether a move
+// was legal is answered here, because a table can be played for sahurs and a
+// client that can invent moves is a client that can invent wins. The whole
+// rulebook lives in this block and nowhere else.
+//
+// It is verified by perft: counting every leaf of the move tree from the six
+// standard test positions and comparing against the published totals. That is
+// the only test worth having for a move generator — castling into check, an
+// en-passant capture that exposes a rank, a pinned knight, a promotion that
+// gives mate, all of them show up as a number that does not match.
+// scripts/test-chess.ts runs it over about sixteen million positions.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Chess — the rules, and nothing else
+//
+// Sahurs can ride on a game of this, so the rules are the server's: the client
+// draws a board and sends "e2e4", and every question about whether that was
+// allowed is answered here. There is no second copy of the rules anywhere.
+//
+// Squares are 0 = a1 to 63 = h8, so a white pawn pushes +8 and a rank is a
+// row of eight. FEN lists rank 8 first, which is the one place that order is
+// reversed, and it is reversed in exactly two functions.
+// ---------------------------------------------------------------------------
+type ChessPos = {
+  b: Int8Array; // piece codes: + white, - black, 0 empty
+  w: boolean; // white to move
+  cs: number; // castling rights: 1 K, 2 Q, 4 k, 8 q
+  ep: number; // en-passant target square, or -1
+  half: number; // halfmove clock, for the fifty-move rule
+  full: number; // fullmove number
+};
+type ChessMove = { from: number; to: number; promo: number };
+
+const P = 1, N = 2, B = 3, R = 4, Q = 5, K = 6;
+const LETTER = ".PNBRQK";
+const FILE = (i: number) => i & 7;
+const RANK = (i: number) => i >> 3;
+
+// ---- FEN ------------------------------------------------------------------
+function chessParse(fen: string): ChessPos | null {
+  const parts = String(fen).trim().split(/\s+/);
+  if (parts.length < 4) return null;
+  const b = new Int8Array(64);
+  const rows = parts[0].split("/");
+  if (rows.length !== 8) return null;
+  for (let r = 0; r < 8; r++) {
+    // FEN's first row is rank 8, which is the top of the board and the high
+    // end of the index
+    let f = 0;
+    for (const ch of rows[r]) {
+      if (ch >= "1" && ch <= "8") { f += Number(ch); continue; }
+      const up = ch.toUpperCase();
+      const k = LETTER.indexOf(up);
+      if (k <= 0 || f > 7) return null;
+      b[(7 - r) * 8 + f] = ch === up ? k : -k;
+      f++;
+    }
+    if (f !== 8) return null;
+  }
+  const w = parts[1] === "w";
+  let cs = 0;
+  if (parts[2] !== "-") {
+    for (const ch of parts[2]) {
+      const k = "KQkq".indexOf(ch);
+      if (k < 0) return null;
+      cs |= 1 << k;
+    }
+  }
+  let ep = -1;
+  if (parts[3] !== "-") {
+    const f = parts[3].charCodeAt(0) - 97, r = Number(parts[3][1]) - 1;
+    if (f < 0 || f > 7 || r < 0 || r > 7) return null;
+    ep = r * 8 + f;
+  }
+  const half = parts.length > 4 ? Number(parts[4]) : 0;
+  const full = parts.length > 5 ? Number(parts[5]) : 1;
+  if (!Number.isFinite(half) || !Number.isFinite(full)) return null;
+  return { b, w, cs, ep, half: Math.max(0, half | 0), full: Math.max(1, full | 0) };
+}
+
+function chessFen(p: ChessPos): string {
+  const rows: string[] = [];
+  for (let r = 7; r >= 0; r--) {
+    let s = "", gap = 0;
+    for (let f = 0; f < 8; f++) {
+      const v = p.b[r * 8 + f];
+      if (!v) { gap++; continue; }
+      if (gap) { s += gap; gap = 0; }
+      const ch = LETTER[Math.abs(v)];
+      s += v > 0 ? ch : ch.toLowerCase();
+    }
+    if (gap) s += gap;
+    rows.push(s);
+  }
+  let cs = "";
+  for (let i = 0; i < 4; i++) if (p.cs & (1 << i)) cs += "KQkq"[i];
+  const ep = p.ep < 0 ? "-" : String.fromCharCode(97 + FILE(p.ep)) + (RANK(p.ep) + 1);
+  return `${rows.join("/")} ${p.w ? "w" : "b"} ${cs || "-"} ${ep} ${p.half} ${p.full}`;
+}
+
+const CHESS_START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+// ---- attacks ---------------------------------------------------------------
+const KN = [17, 15, 10, 6, -17, -15, -10, -6];
+const KD = [8, -8, 1, -1, 9, 7, -9, -7];
+const BD = [9, 7, -9, -7];
+const RD = [8, -8, 1, -1];
+
+// A step is on the board if it did not fall off the end AND did not wrap to
+// the other side, which is the whole trick with a flat 64-square array.
+function step(from: number, d: number): number {
+  const to = from + d;
+  if (to < 0 || to > 63) return -1;
+  const df = Math.abs(FILE(to) - FILE(from));
+  // every offset in use moves at most two files; a wrap shows up as a jump of
+  // six or seven
+  if (df > 2) return -1;
+  return to;
+}
+
+/** Is `sq` attacked by the side `byWhite`? */
+function chessAttacked(p: ChessPos, sq: number, byWhite: boolean): boolean {
+  const sign = byWhite ? 1 : -1;
+  // pawns: a white pawn on sq-9/sq-7 attacks sq
+  for (const d of byWhite ? [-9, -7] : [9, 7]) {
+    const s = step(sq, d);
+    if (s >= 0 && p.b[s] === sign * P) return true;
+  }
+  for (const d of KN) {
+    const s = step(sq, d);
+    if (s >= 0 && p.b[s] === sign * N) return true;
+  }
+  for (const d of KD) {
+    const s = step(sq, d);
+    if (s >= 0 && p.b[s] === sign * K) return true;
+  }
+  for (const d of BD) {
+    let s = step(sq, d);
+    while (s >= 0) {
+      const v = p.b[s];
+      if (v) { if (v === sign * B || v === sign * Q) return true; break; }
+      s = step(s, d);
+    }
+  }
+  for (const d of RD) {
+    let s = step(sq, d);
+    while (s >= 0) {
+      const v = p.b[s];
+      if (v) { if (v === sign * R || v === sign * Q) return true; break; }
+      s = step(s, d);
+    }
+  }
+  return false;
+}
+
+function kingOf(p: ChessPos, white: boolean): number {
+  const want = white ? K : -K;
+  for (let i = 0; i < 64; i++) if (p.b[i] === want) return i;
+  return -1;
+}
+
+function chessInCheck(p: ChessPos, white: boolean): boolean {
+  const k = kingOf(p, white);
+  return k >= 0 && chessAttacked(p, k, !white);
+}
+
+// ---- moves -----------------------------------------------------------------
+function pushPromos(out: ChessMove[], from: number, to: number) {
+  for (const promo of [Q, R, B, N]) out.push({ from, to, promo });
+}
+
+/** Every move the side to move could make, before king safety is considered. */
+function pseudo(p: ChessPos): ChessMove[] {
+  const out: ChessMove[] = [];
+  const me = p.w ? 1 : -1;
+  const last = p.w ? 7 : 0;
+  for (let i = 0; i < 64; i++) {
+    const v = p.b[i];
+    if (!v || Math.sign(v) !== me) continue;
+    const t = Math.abs(v);
+    if (t === P) {
+      const fwd = p.w ? 8 : -8;
+      const one = i + fwd;
+      if (one >= 0 && one < 64 && !p.b[one]) {
+        if (RANK(one) === last) pushPromos(out, i, one);
+        else {
+          out.push({ from: i, to: one, promo: 0 });
+          const home = p.w ? 1 : 6;
+          const two = i + fwd * 2;
+          if (RANK(i) === home && !p.b[two]) out.push({ from: i, to: two, promo: 0 });
+        }
+      }
+      for (const d of p.w ? [7, 9] : [-7, -9]) {
+        const s = step(i, d);
+        if (s < 0) continue;
+        const tv = p.b[s];
+        // a capture, or the en-passant square, which is empty by definition
+        if ((tv && Math.sign(tv) !== me) || s === p.ep) {
+          if (RANK(s) === last) pushPromos(out, i, s);
+          else out.push({ from: i, to: s, promo: 0 });
+        }
+      }
+    } else if (t === N || t === K) {
+      for (const d of t === N ? KN : KD) {
+        const s = step(i, d);
+        if (s < 0) continue;
+        const tv = p.b[s];
+        if (!tv || Math.sign(tv) !== me) out.push({ from: i, to: s, promo: 0 });
+      }
+    } else {
+      const dirs = t === B ? BD : t === R ? RD : KD;
+      for (const d of dirs) {
+        let s = step(i, d);
+        while (s >= 0) {
+          const tv = p.b[s];
+          if (!tv) out.push({ from: i, to: s, promo: 0 });
+          else {
+            if (Math.sign(tv) !== me) out.push({ from: i, to: s, promo: 0 });
+            break;
+          }
+          s = step(s, d);
+        }
+      }
+    }
+  }
+  // Castling. The king may not start in check, pass through an attacked square,
+  // or land on one — and every square between must be empty, which for the
+  // queen's side is three of them, not two.
+  const home = p.w ? 4 : 60;
+  if (p.b[home] === me * K) {
+    const kSide = p.w ? 1 : 4, qSide = p.w ? 2 : 8;
+    const rk = p.w ? 7 : 63, rq = p.w ? 0 : 56;
+    if ((p.cs & kSide) && p.b[rk] === me * R && !p.b[home + 1] && !p.b[home + 2]) {
+      if (
+        !chessAttacked(p, home, !p.w) && !chessAttacked(p, home + 1, !p.w) &&
+        !chessAttacked(p, home + 2, !p.w)
+      ) out.push({ from: home, to: home + 2, promo: 0 });
+    }
+    if (
+      (p.cs & qSide) && p.b[rq] === me * R &&
+      !p.b[home - 1] && !p.b[home - 2] && !p.b[home - 3]
+    ) {
+      if (
+        !chessAttacked(p, home, !p.w) && !chessAttacked(p, home - 1, !p.w) &&
+        !chessAttacked(p, home - 2, !p.w)
+      ) out.push({ from: home, to: home - 2, promo: 0 });
+    }
+  }
+  return out;
+}
+
+/** Apply a move with no checking whatsoever. The caller has already vetted it. */
+function chessApply(p: ChessPos, m: ChessMove): ChessPos {
+  const b = Int8Array.from(p.b);
+  const me = p.w ? 1 : -1;
+  const piece = b[m.from];
+  const t = Math.abs(piece);
+  const captured = b[m.to];
+  b[m.to] = piece;
+  b[m.from] = 0;
+  // en passant takes a pawn that is not on the square being moved to
+  if (t === P && m.to === p.ep && !captured) b[m.to - (p.w ? 8 : -8)] = 0;
+  if (t === P && m.promo) b[m.to] = me * m.promo;
+  // the rook comes with the king
+  if (t === K && Math.abs(m.to - m.from) === 2) {
+    const mid = (m.from + m.to) >> 1;
+    const rookFrom = m.to > m.from ? m.from + 3 : m.from - 4;
+    b[mid] = b[rookFrom];
+    b[rookFrom] = 0;
+  }
+  let cs = p.cs;
+  if (t === K) cs &= p.w ? ~3 : ~12;
+  // a rook that moves, and a rook that is taken where it stood, both end the
+  // right that belonged to that corner
+  for (const [sq, bit] of [[0, 2], [7, 1], [56, 8], [63, 4]] as const) {
+    if (m.from === sq || m.to === sq) cs &= ~bit;
+  }
+  const ep = t === P && Math.abs(m.to - m.from) === 16 ? (m.from + m.to) >> 1 : -1;
+  return {
+    b,
+    w: !p.w,
+    cs,
+    ep,
+    half: (t === P || captured) ? 0 : p.half + 1,
+    full: p.full + (p.w ? 0 : 1),
+  };
+}
+
+/** Every LEGAL move: the pseudo-legal ones that do not leave the king attacked. */
+function chessMoves(p: ChessPos): ChessMove[] {
+  const out: ChessMove[] = [];
+  for (const m of pseudo(p)) {
+    const n = chessApply(p, m);
+    if (!chessInCheck(n, p.w)) out.push(m);
+  }
+  return out;
+}
+
+// ---- notation --------------------------------------------------------------
+function chessSq(i: number): string {
+  return String.fromCharCode(97 + FILE(i)) + (RANK(i) + 1);
+}
+function chessUci(m: ChessMove): string {
+  return chessSq(m.from) + chessSq(m.to) + (m.promo ? LETTER[m.promo].toLowerCase() : "");
+}
+function chessFromUci(s: string): ChessMove | null {
+  const t = String(s).trim().toLowerCase();
+  if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(t)) return null;
+  const sq = (a: string, b: string) => (Number(b) - 1) * 8 + (a.charCodeAt(0) - 97);
+  return {
+    from: sq(t[0], t[1]),
+    to: sq(t[2], t[3]),
+    promo: t[4] ? LETTER.indexOf(t[4].toUpperCase()) : 0,
+  };
+}
+
+/** How the move reads on a scoresheet. Needs the position it was made from. */
+function chessSan(p: ChessPos, m: ChessMove): string {
+  const piece = Math.abs(p.b[m.from]);
+  const after = chessApply(p, m);
+  const check = chessInCheck(after, after.w);
+  const mate = check && chessMoves(after).length === 0;
+  const suffix = mate ? "#" : check ? "+" : "";
+  if (piece === K && Math.abs(m.to - m.from) === 2) {
+    return (m.to > m.from ? "O-O" : "O-O-O") + suffix;
+  }
+  const capture = !!p.b[m.to] || (piece === P && m.to === p.ep);
+  if (piece === P) {
+    const body = capture ? String.fromCharCode(97 + FILE(m.from)) + "x" + chessSq(m.to) : chessSq(m.to);
+    return body + (m.promo ? "=" + LETTER[m.promo] : "") + suffix;
+  }
+  // only disambiguate when another piece of the same kind could also go there
+  const rivals = chessMoves(p).filter((o) =>
+    o.to === m.to && o.from !== m.from && Math.abs(p.b[o.from]) === piece
+  );
+  let dis = "";
+  if (rivals.length) {
+    const sameFile = rivals.some((o) => FILE(o.from) === FILE(m.from));
+    const sameRank = rivals.some((o) => RANK(o.from) === RANK(m.from));
+    if (!sameFile) dis = String.fromCharCode(97 + FILE(m.from));
+    else if (!sameRank) dis = String(RANK(m.from) + 1);
+    else dis = chessSq(m.from);
+  }
+  return LETTER[piece] + dis + (capture ? "x" : "") + chessSq(m.to) + suffix;
+}
+
+// ---- how a game ends -------------------------------------------------------
+/** Neither side could deliver mate with what is left, so nobody can win. */
+function chessDeadMaterial(p: ChessPos): boolean {
+  const minor: number[] = [];
+  for (let i = 0; i < 64; i++) {
+    const t = Math.abs(p.b[i]);
+    if (!t || t === K) continue;
+    if (t === P || t === R || t === Q) return false;
+    minor.push(p.b[i] > 0 ? i : -i - 1);
+  }
+  if (minor.length <= 1) return true; // bare kings, or one minor piece
+  if (minor.length === 2) {
+    // two bishops on the same colour square cannot mate either
+    const sq = minor.map((v) => (v >= 0 ? v : -v - 1));
+    const isB = (i: number) => Math.abs(p.b[i]) === B;
+    if (isB(sq[0]) && isB(sq[1])) {
+      const dark = (i: number) => (FILE(i) + RANK(i)) & 1;
+      return dark(sq[0]) === dark(sq[1]);
+    }
+  }
+  return false;
+}
+
+type ChessEnd =
+  | { over: false }
+  | { over: true; winner: "w" | "b" | null; reason: string };
+
+/**
+ * `reps` is every position seen since the last irreversible move, which is the
+ * only window a repetition can happen in: a pawn push or a capture can never be
+ * undone, so a position from before one can never come back.
+ */
+function chessEnd(p: ChessPos, reps: string[]): ChessEnd {
+  if (chessMoves(p).length === 0) {
+    if (chessInCheck(p, p.w)) return { over: true, winner: p.w ? "b" : "w", reason: "checkmate" };
+    return { over: true, winner: null, reason: "stalemate" };
+  }
+  if (chessDeadMaterial(p)) return { over: true, winner: null, reason: "dead position" };
+  if (p.half >= 100) return { over: true, winner: null, reason: "fifty-move rule" };
+  const key = chessKey(p);
+  let seen = 0;
+  for (const r of reps) if (r === key) seen++;
+  if (seen >= 3) return { over: true, winner: null, reason: "threefold repetition" };
+  return { over: false };
+}
+
+/** What makes two positions "the same" for repetition: everything but the clocks. */
+function chessKey(p: ChessPos): string {
+  return chessFen(p).split(" ").slice(0, 4).join(" ");
+}
+
+// How long a player has to find a move before they lose on time. Chess in the
+// pit still holds an escrow, so a game somebody wandered away from cannot be
+// allowed to sit there forever holding the other player's sahurs. Generous
+// enough to think in, short enough that a table clears itself.
+const CHESS_MOVE_MS = Number(Deno.env.get("CHESS_MOVE_MS") || 90 * 1000);
+
+type ChessState = {
+  fen: string;
+  // Every position since the last irreversible move, which is the only window
+  // a repetition can happen in — a pawn push or a capture can never be undone,
+  // so a position from before one can never come back. Resetting it there is
+  // what keeps this array short enough to live on a KV record.
+  reps: string[];
+  san: string[];         // the move list as it reads on a scoresheet
+  white: number;         // which seat has white: 0 is the host
+  moveBy: number;        // when the side to move runs out of time
+  draw: number;          // seat that has a draw offer standing, or -1
+  result: "" | "w" | "b" | "d";
+  reason: string;
+};
+
+function chessStart(): ChessState {
+  const p = chessParse(CHESS_START)!;
+  return {
+    fen: CHESS_START,
+    reps: [chessKey(p)],
+    san: [],
+    white: rndInt(2),
+    moveBy: Date.now() + CHESS_MOVE_MS,
+    draw: -1,
+    result: "",
+    reason: "",
+  };
+}
+
+// Which seat is to move: white's seat before an even number of moves have been
+// played, black's after an odd one. The position is the source of truth for
+// whose turn it is, and the seat is read off it rather than tracked alongside.
+function chessSeatToAct(cs: ChessState): number {
+  const p = chessParse(cs.fen);
+  if (!p) return -1;
+  return p.w ? cs.white : 1 - cs.white;
+}
+
 // POKER — the pit's tournament.
 //
 // Every other table in the pit resolves in one stroke: a hand thrown, a card
@@ -3369,7 +3866,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!allow("duel:" + u.id, 20, 60_000)) return tooMany(30);
     const game = DUEL_GAMES[clip(b.game, 16)] ? clip(b.game, 16) : null;
     if (!game) return json({ error: "no such game" }, 400);
-    const bet = parseBet(b.bet);
+    // A friendly table stakes nothing, so it skips the wager floor entirely —
+    // and because the debit, the escrow and the payout are all `bet` arithmetic,
+    // a bet of zero moves no money anywhere without a single special case
+    // further down.
+    const free = FREE_OK.has(game) && Number(b.bet) === 0;
+    const bet = free ? 0 : parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     // one table at a time. the lock is claimed in the same commit as the debit,
     // so two tabs racing to open a table cannot both stake.
@@ -3556,6 +4058,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         next.state = "live";
         next.poker = pokerStart(people);
         next.deadline = Date.now() + POKER_ACT_MS;
+      } else if (allIn && d.game === "chess") {
+        // the board is set in the same commit as the last yes. Who gets white
+        // is decided here and once, because it decides the game and must not be
+        // something either client can influence or re-roll.
+        next.state = "live";
+        next.chess = chessStart();
+        next.deadline = next.chess.moveBy;
       } else if (allIn && d.game === "comp") {
         // three minutes on the clock and a stack of wood chips each, dealt in the
         // same commit as the last yes so nobody starts a tick early
@@ -3581,6 +4090,104 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // the record is re-read, the action is applied to a copy, and the copy is
   // committed against the entry it was read from, so two clicks racing cannot
   // both be taken.
+  // ---------- one move ----------
+  // Everything a chess client can ask for: a move, a resignation, a draw
+  // offered, a draw taken. The move is the interesting one, and the whole of
+  // its validation is "is it in the list the engine generated" — there is no
+  // second, looser path by which a move can reach the board.
+  if (req.method === "POST" && path === "/duel/chess") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const action = clip(b.action, 8) || "move";
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const entry = await loadDuel(clip(b.id, 32));
+      const d = entry.value;
+      if (!d) return json({ error: "gone" }, 404);
+      if (d.settled) return json({ error: "over", duel: duelView(d, u.id) }, 409);
+      if (d.game !== "chess" || !d.chess) return json({ error: "not a chess table" }, 400);
+      if (d.state !== "live") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
+      const people = seatedPlayers(d);
+      const seat = people.findIndex((pl) => pl.id === u.id);
+      if (seat < 0) return json({ error: "not your table" }, 403);
+      const cs: ChessState = JSON.parse(JSON.stringify(d.chess)) as ChessState;
+      const pos = chessParse(cs.fen);
+      if (!pos) return json({ error: "broken board" }, 500);
+
+      let winnerSeat: number | null = null;
+      let reason = "";
+
+      if (action === "resign") {
+        winnerSeat = 1 - seat;
+        reason = "resignation";
+        cs.result = seat === cs.white ? "b" : "w";
+        cs.reason = reason;
+      } else if (action === "draw") {
+        // an offer standing from the other side is an agreement, not a second
+        // offer — which is why this is one action and not two
+        if (cs.draw >= 0 && cs.draw !== seat) {
+          cs.result = "d";
+          cs.reason = reason = "agreed";
+          winnerSeat = null;
+        } else {
+          cs.draw = seat;
+          const next: Duel = { ...d, chess: cs };
+          if (await commitDuel(entry, next, [])) {
+            return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
+          }
+          continue;
+        }
+      } else if (action === "unoffer") {
+        if (cs.draw === seat) cs.draw = -1;
+        const next: Duel = { ...d, chess: cs };
+        if (await commitDuel(entry, next, [])) {
+          return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
+        }
+        continue;
+      } else {
+        if (chessSeatToAct(cs) !== seat) return json({ error: "not your move", duel: duelView(d, u.id) }, 409);
+        const want = chessFromUci(clip(b.move, 6));
+        if (!want) return json({ error: "that is not a move" }, 400);
+        // the only gate there is: it has to be one the engine generated
+        const legal = chessMoves(pos).find((m) =>
+          m.from === want.from && m.to === want.to && (m.promo || 0) === (want.promo || 0)
+        );
+        if (!legal) return json({ error: "illegal move", duel: duelView(d, u.id) }, 400);
+        cs.san.push(chessSan(pos, legal));
+        const after = chessApply(pos, legal);
+        cs.fen = chessFen(after);
+        // a pawn move or a capture can never be undone, so no position from
+        // before one can come back — which is exactly when the repetition
+        // window resets, and what keeps this list short
+        if (after.half === 0) cs.reps = [];
+        cs.reps.push(chessKey(after));
+        // an offer does not survive the move it was answered with
+        cs.draw = -1;
+        cs.moveBy = Date.now() + CHESS_MOVE_MS;
+        const end = chessEnd(after, cs.reps);
+        if (end.over) {
+          cs.result = end.winner === null ? "d" : end.winner;
+          cs.reason = reason = end.reason;
+          winnerSeat = end.winner === null ? null : (end.winner === "w" ? cs.white : 1 - cs.white);
+        }
+      }
+
+      let next: Duel = { ...d, chess: cs, deadline: cs.moveBy };
+      let credits: { id: string; amount: number }[] = [];
+      if (cs.result) {
+        const winner = winnerSeat === null ? null : people[winnerSeat];
+        const done = finishDuel(next, winner ? winner.id : null, reason || "play");
+        credits = done.credits;
+        next = { ...done.next, chess: cs };
+      }
+      if (await commitDuel(entry, next, credits)) {
+        return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
+      }
+    }
+    return json({ error: "busy" }, 503);
+  }
+
   if (req.method === "POST" && path === "/duel/poker") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));

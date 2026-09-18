@@ -145,6 +145,15 @@
     s.appendChild(sv("path",{d:"M15.3 9.4c-.9.9-2.2 2-2.2 3.1a1.5 1.5 0 0 0 2.2 1.2 1.5 1.5 0 0 0 2.2-1.2c0-1.1-1.3-2.2-2.2-3.1z",fill:"currentColor"}));
     return s;
   }
+  function icoChess(){
+    /* a knight in profile: the one piece that reads as chess at 26 pixels */
+    var s=sv("svg",{viewBox:"0 0 24 24",width:"26",height:"26","aria-hidden":"true"});
+    s.appendChild(sv("path",{d:"M8.4 4.2c.2 1 .1 1.8-.4 2.5L6.2 9.1c-.5.7-.6 1.5-.2 2.2l.6 1 1.7-1.5.5-1.5 1.6-.8-.6 2.1-2.7 2.9c-.7.8-1.1 1.7-1.1 2.7v1.2h10.6v-2.4c0-3.6-1.3-6.6-3.9-8.9-.9-.8-1.7-1.6-2.2-2.6a3 3 0 0 0-2.1-.3z",
+      fill:"currentColor","fill-opacity":".2",stroke:"currentColor","stroke-width":"1.25","stroke-linejoin":"round"}));
+    s.appendChild(sv("rect",{x:"5",y:"18.4",width:"13.4",height:"2.3",rx:"1",fill:"currentColor","fill-opacity":".35",stroke:"currentColor","stroke-width":"1.1"}));
+    s.appendChild(sv("circle",{cx:"9.1",cy:"8.1",r:".72",fill:"currentColor"}));
+    return s;
+  }
   function gameIcon(id){
     if(id==="plinko")return icoPlinko();
     if(id==="blackjack")return icoBlackjack();
@@ -152,6 +161,7 @@
     if(id==="pit-cut")return icoCut();
     if(id==="pit-comp")return icoComp();
     if(id==="pit-poker")return icoPoker();
+    if(id==="pit-chess")return icoChess();
     return el("span",null,{roulette:"◉",mines:"💣",beef:"🐄",limbo:"📈",dice:"🎲"}[id]||"");
   }
   function money(n){return (Math.round(Number(n)*100)/100).toFixed(2);}
@@ -793,7 +803,7 @@
     // the pit first: the tables where the opponent is a person, not the house
     w.appendChild(el("div","seclabel","the pit — player against player"));
     var pit=el("div","casmenu pit");
-    [["Tung, Wood, Fire","pit-tung"],["The Cut","pit-cut"],["Competitive Gambling","pit-comp"],["Poker","pit-poker"]].forEach(function(g){
+    [["Tung, Wood, Fire","pit-tung"],["The Cut","pit-cut"],["Competitive Gambling","pit-comp"],["Poker","pit-poker"],["Chess","pit-chess"]].forEach(function(g){
       var b=el("button","casgame pvp");
       var ci=el("div","ci");ci.appendChild(gameIcon(g[1]));
       b.appendChild(ci);
@@ -1927,8 +1937,164 @@
       sub:"two, three or four of you, the whole floor, played in wood. it is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends, while your sahurs sit in the pot the whole time. run the wood out with nothing left on a table and you are done, and the round ends the moment there is nobody left to play against. finish level at the top and the pot is split."},
     poker:{name:"Poker",moves:[],
       blurb:"everyone buys in for the same stake. everyone gets the same chips. it ends when one of you has all of them.",
-      sub:"two to five seats, no limit hold'em. the chips are dealt by the table and are worth nothing off it \u2014 your sahurs sit in the pot the whole time and go to whoever is last standing. the blinds go up every three minutes and do not stop going up, so it finishes."}
+      sub:"two to five seats, no limit hold'em. the chips are dealt by the table and are worth nothing off it \u2014 your sahurs sit in the pot the whole time and go to whoever is last standing. the blinds go up every three minutes and do not stop going up, so it finishes."},
+    chess:{name:"Chess",moves:[],
+      blurb:"a board, two of you, and the rules. play it for nothing, or put sahurs on it.",
+      sub:"the server holds the position and checks every move against it, so an illegal one never lands. ninety seconds a move \u2014 run out of them and you lose the game."}
   };
+
+  /* ---- the chess board ----
+     The server owns the rules; this draws the position it sent and offers the
+     moves it listed. The legal list arrives as UCI strings for whoever is to
+     move, so picking a piece is a filter over that list rather than a second
+     copy of the rulebook out here, where it could disagree. */
+  var PIECES={P:"♙",N:"♘",B:"♗",R:"♖",Q:"♕",K:"♔",
+              p:"♟",n:"♞",b:"♝",r:"♜",q:"♛",k:"♚"};
+  function fenBoard(fen){
+    /* FEN's first rank is rank 8; the array that comes back is indexed the
+       same way the squares are named, 0 = a8 across to 63 = h1 */
+    var out=[],rows=String(fen||"").split(" ")[0].split("/");
+    for(var r=0;r<8;r++){
+      var row=rows[r]||"8";
+      for(var i=0;i<row.length;i++){
+        var c=row.charAt(i);
+        if(c>="1"&&c<="8"){for(var k=0;k<Number(c);k++)out.push("");}
+        else out.push(c);
+      }
+    }
+    return out;
+  }
+  function sqName(idx){ /* idx is 0 = a8 */
+    return "abcdefgh".charAt(idx%8)+String(8-Math.floor(idx/8));
+  }
+  function chessBoard(body,d,note){
+    var c=d.chess;if(!c)return;
+    var flip=c.youAre==="b";
+    var cells=fenBoard(c.fen);
+    var legal=c.legal||[];
+    var wrap=el("div","chwrap");
+    var boardEl=el("div","chboard");
+    var picked=PIT.chFrom||null;
+    /* where the picked piece could go, so the squares can be dotted */
+    var targets={};
+    if(picked){
+      for(var i=0;i<legal.length;i++){
+        if(legal[i].slice(0,2)===picked)targets[legal[i].slice(2,4)]=1;
+      }
+    }
+    var order=[];
+    for(var q=0;q<64;q++)order.push(flip?63-q:q);
+    order.forEach(function(idx){
+      var name=sqName(idx);
+      var file=idx%8,rank=Math.floor(idx/8);
+      var dark=((file+rank)%2)===1;
+      var sq=el("button","chsq"+(dark?" dk":" lt"));
+      sq.setAttribute("data-sq",name);
+      if(picked===name)sq.className+=" from";
+      if(targets[name])sq.className+=cells[idx]?" take":" go";
+      var piece=cells[idx];
+      if(piece){
+        var pe=el("span","chp"+(piece===piece.toUpperCase()?" w":" b"),PIECES[piece]||"");
+        sq.appendChild(pe);
+      }
+      /* the coordinates, on the edges only, the way a board is printed */
+      if((flip?file===7:file===0))sq.appendChild(el("span","chrk",String(8-rank)));
+      if((flip?rank===0:rank===7))sq.appendChild(el("span","chfl","abcdefgh".charAt(file)));
+      sq.onclick=function(){
+        if(!c.yourTurn||c.result)return;
+        if(picked&&targets[name]){
+          var uci=picked+name;
+          /* a pawn reaching the last rank needs to say what it becomes; the
+             server will refuse the move without it */
+          var needs=legal.indexOf(uci)<0&&legal.indexOf(uci+"q")>=0;
+          PIT.chFrom=null;
+          if(needs)chessPromote(d,uci,note);
+          else chessMove(d,uci,note);
+          return;
+        }
+        /* picking up: only a square this player actually has a move from */
+        var any=false;
+        for(var i=0;i<legal.length;i++)if(legal[i].slice(0,2)===name){any=true;break;}
+        PIT.chFrom=any?name:null;
+        pitRender(PIT.last);
+      };
+      boardEl.appendChild(sq);
+    });
+    wrap.appendChild(boardEl);
+
+    /* the side panel: who is who, the clock, the moves, and the two buttons
+       that end a game without a mate on the board */
+    var side=el("div","chside");
+    var top=el("div","chwho");
+    top.appendChild(el("span","chdot "+(c.youAre==="w"?"b":"w")));
+    top.appendChild(el("span","chname",(c.youAre==="w"?c.black:c.white)||"…"));
+    side.appendChild(top);
+    var st=el("div","chstate","");
+    if(c.result){
+      st.textContent=c.result==="d"?("draw — "+c.reason)
+        :((c.result===c.youAre?"you win":"you lose")+" — "+c.reason);
+      st.className="chstate over";
+    }else{
+      st.textContent=(c.yourTurn?"your move":"their move")+(c.check?" — check":"");
+      if(c.check)st.className="chstate check";
+    }
+    side.appendChild(st);
+    var mv=el("div","chmoves");
+    for(var i=0;i<(c.san||[]).length;i+=2){
+      var line=el("div","chmvrow");
+      line.appendChild(el("span","chmvn",String(i/2+1)+"."));
+      line.appendChild(el("span","chmv",c.san[i]||""));
+      line.appendChild(el("span","chmv",c.san[i+1]||""));
+      mv.appendChild(line);
+    }
+    side.appendChild(mv);
+    if(!c.result){
+      if(c.drawFrom&&c.drawFrom!==c.youAre){
+        var off=el("div","choffer");
+        off.appendChild(el("span","",(c.youAre==="w"?c.black:c.white)+" offers a draw"));
+        var take=el("button","cbtn go","accept");
+        take.onclick=function(){chessAct(d,"draw",note);};
+        var no=el("button","cbtn","decline");
+        no.onclick=function(){chessAct(d,"unoffer",note);};
+        off.appendChild(take);off.appendChild(no);
+        side.appendChild(off);
+      }
+      var acts=el("div","chacts");
+      var dr=el("button","cbtn",c.drawFrom===c.youAre?"draw offered":"offer draw");
+      dr.disabled=c.drawFrom===c.youAre;
+      dr.onclick=function(){chessAct(d,"draw",note);};
+      var rs=el("button","cbtn","resign");
+      rs.onclick=function(){if(confirm("resign this game?"))chessAct(d,"resign",note);};
+      acts.appendChild(dr);acts.appendChild(rs);
+      side.appendChild(acts);
+    }
+    wrap.appendChild(side);
+    body.appendChild(wrap);
+  }
+  function chessMove(d,uci,note){
+    PIT.chFrom=null;
+    pitSend("/duel/chess",{id:d.id,move:uci},function(e){
+      bad(note,e==="illegal move"?"not a legal move.":(e||"that did not go through."));
+    });
+  }
+  function chessAct(d,action,note){
+    PIT.chFrom=null;
+    pitSend("/duel/chess",{id:d.id,action:action},function(e){bad(note,e||"that did not go through.");});
+  }
+  /* queen, rook, bishop or knight — asked before the move is sent, because
+     the server takes the piece as part of the move and not as a follow-up */
+  function chessPromote(d,uci,note){
+    var ov=el("div","chpromo");
+    ["q","r","b","n"].forEach(function(k){
+      var b=el("button","chpbtn",PIECES[d.chess.youAre==="w"?k.toUpperCase():k]);
+      b.onclick=function(){if(ov.parentNode)ov.parentNode.removeChild(ov);chessMove(d,uci+k,note);};
+      ov.appendChild(b);
+    });
+    var cancel=el("button","cbtn","cancel");
+    cancel.onclick=function(){if(ov.parentNode)ov.parentNode.removeChild(ov);pitRender(PIT.last);};
+    ov.appendChild(cancel);
+    document.body.appendChild(ov);
+  }
   function pitStop(){
     if(PIT.poll){clearInterval(PIT.poll);PIT.poll=null;WAKE=null;}
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
@@ -1940,7 +2106,7 @@
     /* leaving the table forgets which cards have already been dealt in, so
        coming back deals the hand in fresh rather than showing it half-landed */
     PIT.pkSeen=null;PIT.pkHand=null;PIT.pkAuto=false;PIT.pkAutoBusy=false;PIT.pkUp=null;PIT.pkUpAt=0;
-    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;
+    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;PIT.chFrom=null;
     if(PIT.pkKeyBound){document.removeEventListener("keydown",PIT.pkKeyBound);PIT.pkKeyBound=null;}
     /* if a clash was mid-flight its callback will never land, so the render
        gate has to be lifted here or every later paint would be swallowed */
@@ -2403,9 +2569,18 @@
     var seatsSel=(game==="cut"||game==="comp")
       ?selectOf([["2","2"],["3","3"],["4","4"]],"2")
       :(game==="poker"?selectOf([["2","2 — heads up"],["3","3"],["4","4"],["5","5"]],"2"):null);
+    /* chess is the one table that can be played for nothing, so it gets the
+       choice, and the stake box is only worth showing once there is a stake */
+    var freeSel=game==="chess"?selectOf([["0","free \u2014 nothing on it"],["1","for sahurs"]],"0"):null;
     var open=el("button","cbtn go","put up a table");
     var row=el("div","ctlrow");
-    row.appendChild(ctl("stake",bet));
+    if(freeSel)row.appendChild(ctl("playing for",freeSel));
+    var betCtl=ctl("stake",bet);
+    row.appendChild(betCtl);
+    if(freeSel){
+      var syncFree=function(){betCtl.style.display=freeSel.value==="0"?"none":"";};
+      freeSel.addEventListener("change",syncFree);syncFree();
+    }
     if(seatsSel)row.appendChild(ctl("players",seatsSel));
     var bw=el("div","casrow");bw.appendChild(open);
     row.appendChild(ctl(" ",bw));
@@ -2423,7 +2598,7 @@
 
     open.onclick=function(){
       open.disabled=true;r.className="casres";r.textContent="";
-      var body={game:game,bet:Number(bet.value)};
+      var body={game:game,bet:(freeSel&&freeSel.value==="0")?0:Number(bet.value)};
       if(seatsSel)body.seats=Number(seatsSel.value);
       jpost("/duel/create",body).then(function(d){if(refused(d)){refusedGate();return;}
         open.disabled=false;
@@ -2542,7 +2717,12 @@
       (pk.seats||[]).map(function(s){
         return s.chips+"."+s.inStreet+"."+(s.folded?1:0)+(s.allIn?1:0)+(s.out?1:0)+"."+(s.cards||[]).join("");
       }).join(",")].join("~"):"";
-    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,d.tungs,who,pkShape].join("|");
+    /* the position, whose move it is and what has been offered \u2014 the clock
+       is left out on purpose, the same as poker's: a countdown must not rebuild
+       the board out from under the hand reaching for a piece */
+    var ch=d.chess;
+    var chShape=ch?[ch.fen,ch.result,ch.reason,ch.drawFrom,ch.yourTurn?1:0,PIT.chFrom||""].join("~"):"";
+    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,d.tungs,who,pkShape,chShape].join("|");
     if(shape===PIT.shape){pitPaintClock();return;}
     PIT.shape=shape;
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
@@ -2571,7 +2751,11 @@
       });
       v.appendChild(head);
     }
-    v.appendChild(el("div","pitpot",money(d.pot)+" sahurs on the table"+(d.tung?" \u2014 tung's table":"")));
+    /* "0.00 sahurs on the table" is a true sentence and a silly one; a table
+       with nothing on it should say so in words */
+    v.appendChild(el("div","pitpot",(Number(d.pot)>0
+      ?money(d.pot)+" sahurs on the table"
+      :"nothing on the table \u2014 a friendly game")+(d.tung?" \u2014 tung's table":"")));
 
     var clock=el("div","pitclock","");v.appendChild(clock);
     PIT.left=clock;
@@ -2669,6 +2853,8 @@
       body.appendChild(floorMenu("comp"));
       body.appendChild(el("p","pitsub","the whole floor, and the round follows you onto whatever you pick. a hand still open when the clock stops is a stake you paid and never played, so finish what you start \u2014 and while one is still open you are not out, however empty the stack reads."+
         (many2(d)?" run the wood out here and you are done, but the round plays on while two of you still have something.":"")));
+    }else if(d.state==="live"&&d.game==="chess"){
+      chessBoard(body,d,note);
     }else if(d.state==="live"&&d.game==="poker"){
       pokerTable(body,d,note);
     }else if(d.state==="live"){

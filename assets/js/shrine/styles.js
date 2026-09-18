@@ -45,7 +45,11 @@
          to go looking for is one you never read. */
       '#chat{flex:1;display:none;flex-direction:row;min-height:0}' +
       '#chatmain{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}' +
-      '#dmrail{flex:0 0 232px;display:flex;flex-direction:column;min-height:0;' +
+      /* min-width:0 and the cap are what actually hold the rail at its width:
+         a flex item's min-width is auto, so one long line with no spaces in it
+         widens the rail and squeezes the conversation, and the ellipsis below
+         never gets the chance to do its job */
+      '#dmrail{flex:0 0 232px;max-width:232px;min-width:0;display:flex;flex-direction:column;min-height:0;' +
       'background:#1d1206;border-right:1px solid #3a2410}' +
       '#dmrailhead{padding:13px 14px 9px;font-size:11px;font-weight:800;letter-spacing:.14em;' +
       'text-transform:uppercase;color:#8a6a3a}' +
@@ -54,11 +58,11 @@
       'padding:8px 10px;border-radius:9px;border:1px solid transparent;background:transparent;cursor:pointer}' +
       '.dmrow:hover{background:#241505}' +
       '.dmrow.on{background:#2b1a0a;border-color:#3a2410}' +
-      '.dmtop{display:flex;align-items:center;gap:7px}' +
+      '.dmtop{display:flex;align-items:center;gap:7px;min-width:0}' +
       '.dmname{flex:1;min-width:0;font-size:13px;font-weight:700;color:#f5efe0;overflow:hidden;' +
       'text-overflow:ellipsis;white-space:nowrap}' +
       '.dmrow.unread .dmname{color:#f2c063}' +
-      '.dmlast{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.dmlast{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%}' +
       '.dmbadge{flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#c8823c;' +
       'color:#1d1206;font-size:10px;font-weight:800;line-height:18px;text-align:center}' +
       '.dmempty{padding:10px;font-size:11px;color:#8a6a3a;line-height:1.5}' +
@@ -603,6 +607,47 @@
       '.pkact:not(.off):hover{filter:brightness(1.2)}' +
       /* the raise panel, which takes the bar's place rather than sitting under
          it: while you are picking a number, the number is the only decision */
+      /* ---- chess ----
+         The board is a square grid that gives up its width before the side
+         panel does, so on a narrow screen the moves go under it rather than
+         the board shrinking to a postage stamp. */
+      '.chwrap{display:flex;gap:16px;align-items:flex-start;justify-content:center;flex-wrap:wrap;width:100%}' +
+      '.chboard{display:grid;grid-template-columns:repeat(8,1fr);width:min(72vh,440px);aspect-ratio:1;' +
+      'border:2px solid #3a2410;border-radius:6px;overflow:hidden;flex:0 0 auto}' +
+      '.chsq{position:relative;padding:0;border:0;border-radius:0;display:flex;align-items:center;' +
+      'justify-content:center;cursor:pointer;font-size:clamp(18px,4.4vh,34px);line-height:1}' +
+      '.chsq.lt{background:#d9b98c}' + '.chsq.dk{background:#8a5a28}' +
+      /* the piece is drawn as a glyph, outlined so a white piece reads on the
+         light squares and a black one on the dark */
+      '.chp{pointer-events:none;text-shadow:0 1px 0 rgba(0,0,0,.35)}' +
+      '.chp.w{color:#fffaf0}' + '.chp.b{color:#241505}' +
+      '.chsq.from{box-shadow:inset 0 0 0 3px #f2c063}' +
+      /* somewhere you could go: a dot on an empty square, a ring round a piece */
+      '.chsq.go::after{content:"";position:absolute;width:26%;height:26%;border-radius:50%;background:rgba(36,21,5,.38)}' +
+      '.chsq.take::after{content:"";position:absolute;inset:6%;border-radius:50%;border:3px solid rgba(36,21,5,.42)}' +
+      '.chrk,.chfl{position:absolute;font-size:9px;font-weight:800;color:rgba(36,21,5,.55);pointer-events:none}' +
+      '.chrk{top:2px;left:3px}' + '.chfl{bottom:1px;right:3px}' +
+      '.chside{flex:1 1 190px;min-width:180px;max-width:280px;display:flex;flex-direction:column;gap:9px}' +
+      '.chwho{display:flex;align-items:center;gap:8px}' +
+      '.chdot{width:11px;height:11px;border-radius:50%;border:1px solid #3a2410;flex:0 0 auto}' +
+      '.chdot.w{background:#fffaf0}' + '.chdot.b{background:#241505}' +
+      '.chname{font-weight:700;font-size:13px;color:#f5efe0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '.chstate{font-size:12px;color:#c8823c;font-weight:700}' +
+      '.chstate.check{color:#f2c063}' + '.chstate.over{color:#f5efe0}' +
+      '.chmoves{flex:1;min-height:0;max-height:210px;overflow-y:auto;background:#1a1008;border:1px solid #3a2410;' +
+      'border-radius:8px;padding:7px 9px;font-size:12px;font-variant-numeric:tabular-nums}' +
+      '.chmvrow{display:grid;grid-template-columns:28px 1fr 1fr;gap:4px}' +
+      '.chmvn{color:#8a6a3a}' + '.chmv{color:#f5efe0}' +
+      '.choffer{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12px;color:#f2c063}' +
+      '.chacts{display:flex;gap:7px}' + '.chacts .cbtn{flex:1;padding:8px 10px;font-size:12px}' +
+      /* the promotion picker sits over everything, because the move is not sent
+         until it has been answered */
+      '.chpromo{position:fixed;inset:0;margin:auto;height:max-content;width:max-content;z-index:60;display:flex;gap:8px;' +
+      'align-items:center;background:#241505;border:1px solid #8a5a28;border-radius:12px;padding:12px}' +
+      '.chpbtn{font-size:30px;line-height:1;padding:6px 10px;border-radius:8px;border:1px solid #3a2410;' +
+      'background:#d9b98c;color:#241505;cursor:pointer}' +
+      '.chpbtn:hover{background:#f2c063}' +
+      '@media (max-width:620px){.chboard{width:min(92vw,440px)}}' +
       '.pkbet{display:flex;flex-direction:column;gap:7px;width:100%;max-width:470px;margin:0 auto}' +
       '.pkbetval{display:flex;align-items:center;gap:8px;background:#1a1008;border:1px solid #3a2410;border-radius:10px;padding:7px 11px}' +
       '.pkbetlab{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a;flex:0 0 auto}' +
@@ -991,6 +1036,15 @@
       '& .pkhelp:hover .pkhelpq,& .pkhelp:focus .pkhelpq{background:{lineHot};color:{solidInk};border-color:{lineHot}}' +
       '& .pkhelptip{color:{text};border-color:{lineMid}}' +
       '& .pkchipbtn:hover{background:{hover}}' +
+      '& .chboard{border-color:{line}}' +
+      '& .chside .chname{color:{text}}' + '& .chstate{color:{textDim}}' +
+      '& .chstate.check{color:{heading}}' + '& .chstate.over{color:{text}}' +
+      '& .chmoves{background:{sunk};border-color:{line}}' +
+      '& .chmvn{color:{muted}}' + '& .chmv{color:{text}}' +
+      '& .chdot{border-color:{line}}' +
+      '& .choffer{color:{heading}}' +
+      '& .chpromo{background:{surface};border-color:{lineHot}}' +
+      '& .chsq.from{box-shadow:inset 0 0 0 3px {lineHot}}' +
       '& .pkbetnum,& .pkbetbb{color:{heading}}' + '& .pkbetlab{color:{muted}}' +
       '& .pkminlab{color:{muted}}' + '& .pkminval{color:{heading}}' +
       '& .pkslide{accent-color:{lineHot}}' +
