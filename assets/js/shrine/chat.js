@@ -29,7 +29,7 @@
        both come off /status and both are about THIS client only — the moderator
        flag is never on anything the room can see, so a moderator looks exactly
        like everybody else to everybody else. */
-    'var IS_MOD=false,APPROVED=false;' +
+    'var IS_MOD=false,APPROVED=false,OPENED=false;' +
     'if(typeof SHRINE_BOOT_TOKEN==="string"&&SHRINE_BOOT_TOKEN){try{if(!localStorage.getItem(TKEY))localStorage.setItem(TKEY,SHRINE_BOOT_TOKEN);}catch(e){}}' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
@@ -465,7 +465,11 @@
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 4s. */
     'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}if(r&&r.mine)markMine(r.mine);}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,4000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
-    'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();dmStart();}' +
+    'function startChat(name){ME=name;nameEl.value=name;nameEl.readOnly=true;paintKey();show("chat");input.focus();startPoll();dmStart();' +
+    /* the first time tung says yes, the door opens onto the chooser rather than
+       dropping them straight into the room \u2014 but only once, or every poll
+       would yank them back out of whatever they were doing */
+    'if(!OPENED){OPENED=true;topShow("choose");}}' +
     /* render tung<->applicant follow-up messages on the pending screen; show the
        reply box only once tung has actually asked something. */
     'function renderThread(thread){thread=thread||[];appThread.innerHTML="";var hasAdmin=false;thread.forEach(function(m){var b=document.createElement("div");b.className="tmsg "+(m.from==="admin"?"admin":"me");var tw=document.createElement("div");tw.className="twhen";tw.textContent=(m.from==="admin"?"tung":"you")+(m.ts?" · "+fmtWhen(m.ts):"");var tx=document.createElement("div");tx.textContent=m.text;b.appendChild(tw);b.appendChild(tx);appThread.appendChild(b);if(m.from==="admin")hasAdmin=true;});respBox.style.display=hasAdmin?"flex":"none";}' +
@@ -473,8 +477,40 @@
        approved you — the server refuses every table to an unapproved token anyway,
        this just stops the tile existing. the moderator flag rides in on the same
        answer. both start off and are only ever turned on by a real /status. */
-    'function paintCasinoGate(){if(chooseCasino)chooseCasino.style.display=APPROVED?"":"none";}' +
-    'function syncAccess(s){APPROVED=!!(s&&s.status==="approved");IS_MOD=APPROVED&&s.mod===true;paintCasinoGate();}' +
+    /* Sent to tung. Not a screen with a message on it \u2014 the whole document
+       goes, and what is left is a white page with nothing in it and nothing
+       polling. It is keyed to the token in this browser, so clearing site data
+       gets them back to an application form; what does not come back is the
+       account, which stays banned server-side however many times they apply. */
+    'var BANISHED=false;' +
+    'function banish(){' +
+    'if(BANISHED)return;BANISHED=true;' +
+    'polling=false;if(pollT){clearTimeout(pollT);pollT=null;}' +
+    'if(statusT){clearTimeout(statusT);statusT=null;}' +
+    'if(dmListT){clearInterval(dmListT);dmListT=null;}dmStop();' +
+    'try{document.documentElement.setAttribute("data-theme","");}catch(e){}' +
+    'document.title="";' +
+    /* built rather than written as markup: this file is one long single-quoted
+       string, and a nested attribute quote does not survive the trip out */
+    'document.documentElement.innerHTML="<head></head><body></body>";' +
+    'try{document.body.style.background="#fff";document.body.style.margin="0";}catch(e){}' +
+    '}' +
+    /* Everything behind the door is behind the door. Before tung has said yes
+       there is no chooser, no catalog, no originals, no proxy and no casino \u2014
+       one page, and it is the application. The casino used to be hidden on its
+       own for this; it does not need its own rule any more, because nothing at
+       all is reachable until APPROVED is true. */
+    'function paintGate(){' +
+    'if(sback)sback.style.display=APPROVED?"":"none";' +
+    /* the casino tile ships hidden in the markup so nothing shows for even a
+       frame before /status has answered; putting it back is this gate's job
+       now rather than a second one of its own */
+    'if(chooseCasino)chooseCasino.style.display=APPROVED?"":"none";' +
+    'if(!APPROVED)topShow("shrine");' +
+    '}' +
+    'function syncAccess(s){' +
+    'if(s&&s.banished){APPROVED=false;IS_MOD=false;banish();return;}' +
+    'APPROVED=!!(s&&s.status==="approved");IS_MOD=APPROVED&&s.mod===true;paintGate();}' +
     'function pokeAccess(){var t=loadToken();if(!t){syncAccess(null);return;}api("/status?token="+encodeURIComponent(t)).then(function(s){if(s&&typeof s.status==="string")syncAccess(s);}).catch(function(){});}' +
     'function refreshGate(){TOKEN=loadToken();paintKey();if(!TOKEN){syncAccess(null);show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(!s||typeof s.status!=="string")return;syncAccess(s);if(s.status==="approved"){if(s.blocked){showBan(s);}else if(s.chatBanned){showBan({reason:"chatban"});}else{startChat(s.username||"");}}else if(s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else if(s.status==="none"||s.status==="rejected"){clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){});}' +
     'applyForm.addEventListener("submit",function(ev){ev.preventDefault();if(loadToken()){refreshGate();return;}var u=gu.value.trim(),a=ga.value.trim();if(!u||!a){applyWarn("pick a username and write an application.");return;}applyBtn.disabled=true;applyWarn("submitting...");apiPost("/apply",{username:u,application:a}).then(function(r){applyBtn.disabled=false;if(r&&r.token){saveToken(r.token);TOKEN=r.token;refreshGate();}else if(r&&r.error==="username taken"){applyWarn("that username is taken — pick another.");}else{applyWarn("could not apply, try again.");}}).catch(function(){applyBtn.disabled=false;applyWarn("network error, try again.");});});' +
@@ -701,8 +737,14 @@
     'cloakTitleEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_TKEY,cloakTitleEl.value);}catch(e){}document.title=cloakTitle();});' +
     'cloakFavEl.addEventListener("input",function(){try{localStorage.setItem(CLOAK_FKEY,cloakFavEl.value);}catch(e){}var fl=document.getElementById("cloakfav");if(fl)fl.href=cloakFav();});' +
     'document.title=cloakTitle();' +
-    'paintCasinoGate();pokeAccess();' +
-    'topShow("choose");' +
+    /* The shrine opens on its own door. refreshGate() is what decides which
+       door it is \u2014 apply, the pending screen, a ban, or the room \u2014 and
+       from there startChat() is the only thing that opens the chooser, so the
+       catalog, the originals, the proxy and the casino do not exist as far as
+       anybody tung has not approved is concerned. It used to boot straight to
+       the chooser and gate only the casino tile; this is that rule made
+       general, which is why the casino no longer needs one of its own. */
+    'topShow("shrine");show("apply");refreshGate();' +
     'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();' +
     /* the conversations went quiet with the tab; catch them up now rather than
        leaving the rail a few seconds stale on the way back in */

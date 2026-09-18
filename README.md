@@ -49,12 +49,37 @@ has to load last. The shrine window is written with `document.write` into an
 `about:blank` popup, so its stylesheet and its two clients travel as strings
 rather than as `<link>` and `<script src>`.
 
-The casino is members-only and the chooser reflects that: its tile ships hidden
-and is only put back once `/status` answers `approved`, so somebody still
-waiting on their application never sees a casino at all. That is presentation —
-the gate itself is `casUser()`, which refuses every table, the pit, the shop and
-the faucet to a token that has not been approved, so unhiding the tile from
-devtools buys nothing.
+Nothing is on the other side of the door until tung says yes. The shrine boots
+to its own door — the application, or the pending screen, or a ban — and the
+chooser is opened from exactly one place, the moment `/status` comes back
+`approved`. Until then there is no chat, no casino, no catalog, no originals and
+no proxy, because there is no chooser to reach them from.
+
+The casino used to be gated on its own, with its tile shipped hidden and put
+back once approved. That rule is gone: a general one replaced it, and two rules
+saying the same thing are one rule and one bug waiting to happen. The tile still
+ships hidden so nothing shows for a frame before `/status` answers, and
+`paintGate()` is what puts it back — which is worth saying because removing the
+old rule without moving that job left approved members looking at a chooser with
+no casino on it, and `scripts/test-gate.ts` now holds it down.
+
+All of that is presentation. The gate itself is `authUser()` and `casUser()`,
+and `authUser()` refuses any token whose account is not approved — so every
+route behind it, the room and DMs included, was already shut. Unhiding a tile
+from devtools buys nothing.
+
+**Send him to tung.** The third verdict on an application, next to approve and
+reject. A rejection leaves somebody able to apply again; this does not. The
+account is rejected *and* banned, so every route that asks `blockState()`
+refuses it and the name stays taken, and `/status` and `/login` both carry a
+`banished` flag that tells their own client to empty the document — not a screen
+with a message on it, an actually blank white page with nothing left polling.
+Approving them again is the only thing that lifts it.
+
+Worth being straight about which half is which. The blank page is keyed to the
+token in their browser, so clearing site data gets them back to an application
+form like any other stranger. The account is what stays banned, and that half is
+real.
 
 Outcomes are the server's, never the client's: the casino code only sends bets
 and paints whatever `server.ts` replies, so editing it in devtools changes

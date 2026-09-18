@@ -112,15 +112,23 @@ must(/allow\("hist:" \+ tok, 6, 60_000\)/.test(src),
   "the fresh-open /events cap must stay where it was — that one replays the window");
 
 // ===========================================================================
-// source-level: no casino door for someone who has not been let in
+// source-level: no door at all for someone who has not been let in
+//
+// The casino used to have a gate of its own — the tile shipped hidden and was
+// put back once /status said approved. It does not need one any more, and
+// having one would be a second rule saying what the first already says: the
+// whole shrine now boots to the application, and nothing but being approved
+// opens the chooser the casino tile lives on. scripts/test-gate.ts owns that
+// rule; this file only checks it has not quietly grown a second one.
 // ===========================================================================
 const markup = await readShrineFile("assets/js/shrine/markup.js");
 must(
   /id="chooseCasino"[^']*style="display:none"/.test(markup),
-  "the casino tile must ship hidden, so an applicant never sees it even for a frame",
+  "the casino tile must still ship hidden, so nothing shows before the gate decides",
 );
-must(/function paintCasinoGate\(\)\{if\(chooseCasino\)chooseCasino\.style\.display=APPROVED/.test(chatJs),
-  "only APPROVED may put the casino tile back");
+must(!chatJs.includes("paintCasinoGate"),
+  "the casino must not gate itself separately — one gate, in paintGate()");
+must(/function paintGate\(\)/.test(chatJs), "…and that one gate has to exist");
 must(/APPROVED=!!\(s&&s\.status==="approved"\)/.test(chatJs),
   "APPROVED must come from /status saying approved, nothing softer");
 must(/chooseCasino\.addEventListener\("click",function\(\)\{if\(!APPROVED\)return;/.test(chatJs),

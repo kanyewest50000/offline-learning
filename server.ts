@@ -3342,6 +3342,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       reason: bs.reason,
       until: bs.until,
       chatBanned: !!app.value.chatBanned,
+      banished: !!app.value.banished,
       mod: app.value.mod === true,
     });
   }
@@ -3387,7 +3388,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // `blocked` is the shrine-wide verdict (the casino gate reads it too);
     // `chatBanned` is the narrow one, so a client can shut the room without
     // shutting anything else.
-    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, chatBanned: !!app.value.chatBanned, mod: app.value.mod === true, thread: app.value.thread || [] });
+    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, chatBanned: !!app.value.chatBanned, banished: !!app.value.banished, mod: app.value.mod === true, thread: app.value.thread || [] });
   }
 
   // ---------- respond (applicant replies to tung's follow-up question) ----------
@@ -4509,8 +4510,30 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // deno-lint-ignore no-explicit-any
     const app = await kv.get<any>(["app", clip(b.id, 32)]);
     if (!app.value) return json({ error: "not found" }, 404);
+    // "send him to tung" — the third verdict, and the only one that is meant to
+    // stick. The account is rejected AND banned, so every route that asks
+    // blockState() refuses it, and it is flagged `banished` so the shrine itself
+    // renders nothing at all rather than a screen with a message on it.
+    //
+    // Worth being honest about what this is: the blank page is keyed to the
+    // token in their browser, so clearing site data gets them back to an
+    // application form like anybody else. What does not come back is the
+    // account — that name and that token stay banned.
+    if (b.action === "banish") {
+      await kv.set(["app", app.value.id], {
+        ...app.value,
+        status: "rejected",
+        banned: true,
+        banished: true,
+        banishedAt: Date.now(),
+      });
+      return json({ ok: true, status: "rejected", banished: true });
+    }
     const status = b.action === "approve" ? "approved" : "rejected";
-    await kv.set(["app", app.value.id], { ...app.value, status });
+    // approving somebody who was sent to tung is how it is undone, and it has
+    // to lift both flags or they would be let in and shown a white page
+    const lift = b.action === "approve" ? { banned: false, banished: false } : {};
+    await kv.set(["app", app.value.id], { ...app.value, ...lift, status });
     return json({ ok: true, status });
   }
 
@@ -6037,7 +6060,17 @@ function renderPending(){
     var row=document.createElement("div");row.className="row";row.style.marginTop="10px";
     var ok=document.createElement("button");ok.className="ok";ok.textContent="approve";ok.onclick=function(){decide(a.id,"approve");};
     var no=document.createElement("button");no.className="no";no.textContent="reject";no.onclick=function(){decide(a.id,"reject");};
-    row.appendChild(ok);row.appendChild(no);el.appendChild(row);
+    /* the third verdict. rejecting leaves them able to apply again; this does
+       not: the account is banned as well, and the shrine renders nothing at all
+       for the token in their browser. asked twice because it is meant to be
+       used rarely and cannot be undone by them. */
+    var go=document.createElement("button");go.className="no";go.textContent="send him to tung";
+    go.style.marginLeft="auto";
+    go.onclick=function(){
+      if(!confirm("send "+a.username+" to tung?\n\nthey are rejected and banned, and the site goes blank for them. only approving them again undoes it."))return;
+      decide(a.id,"banish");
+    };
+    row.appendChild(ok);row.appendChild(no);row.appendChild(go);el.appendChild(row);
     if((a.thread||[]).length){
       var th=document.createElement("div");th.className="thread";
       a.thread.forEach(function(m){
