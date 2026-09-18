@@ -65,6 +65,11 @@
         text-shadow:0 1.5px 1.5px rgba(0,0,0,.30)}
   .pc.b{color:#2b2018;-webkit-text-stroke:1.2px #16100b;
         text-shadow:0 1.5px 1.5px rgba(0,0,0,.25)}
+  /* a real piece set: the image fills the square and none of the glyph's type
+     styling applies to it */
+  .pc.img{width:100%;height:100%;object-fit:contain;-webkit-text-stroke:0;text-shadow:none;
+          display:block}
+  .drag .pc.img{width:100%;height:100%}
   /* lichess's own cues: the square you came from and the square you landed on
      stay lit, the one you are holding is brighter */
   .sq.last{background:rgba(205,210,106,.62)}
@@ -194,10 +199,34 @@
 (function(){
   "use strict";
   var R = window.ChessRules;
-  /* the solid glyphs for BOTH colours; .pc.w / .pc.b do the colouring, which is
-     how a real board draws them */
+  /* ---- what a piece is drawn with ----
+     A proper piece set out of pieces/ if one has been dropped there, and the
+     glyphs otherwise. Probed once with a single image rather than by letting
+     twelve of them fail, and the glyphs are used until the probe answers so the
+     board is never empty waiting on it. Names are the usual wP/bN form. */
   var SOLID = {p:"\u265F",n:"\u265E",b:"\u265D",r:"\u265C",q:"\u265B",k:"\u265A"};
   function glyph(ch){ return SOLID[String(ch).toLowerCase()] || ""; }
+  var SET = false;
+  function pieceFile(ch){ return (ch === ch.toUpperCase() ? "w" : "b") + ch.toUpperCase() + ".png"; }
+  function pieceEl(ch){
+    var white = ch === ch.toUpperCase();
+    if (SET){
+      var i = document.createElement("img");
+      i.className = "pc img " + (white ? "w" : "b");
+      i.src = "pieces/" + pieceFile(ch);
+      i.alt = ""; i.draggable = false;
+      return i;
+    }
+    var e = document.createElement("span");
+    e.className = "pc " + (white ? "w" : "b");
+    e.textContent = glyph(ch);
+    return e;
+  }
+  (function probe(){
+    var im = new Image();
+    im.onload = function(){ SET = true; if (G) paint(); };
+    im.src = "pieces/wP.png";
+  })();
 
   var lobby = document.getElementById("lobby");
   var gameEl = document.getElementById("game");
@@ -265,9 +294,7 @@
       if (targets[name]) sq.className += cells[idx] ? " take" : " go";
       var piece = cells[idx];
       if (piece){
-        var pe = document.createElement("span");
-        pe.className = "pc " + (piece === piece.toUpperCase() ? "w" : "b");
-        pe.textContent = glyph(piece);
+        var pe = pieceEl(piece);
         /* the square being dragged from keeps its slot but lets go of the piece */
         if (G.dragFrom === name) pe.style.visibility = "hidden";
         sq.appendChild(pe);
@@ -379,8 +406,8 @@
       var box = boardEl.getBoundingClientRect();
       var size = box.width / 8;
       var el = document.createElement("div");
-      el.className = "drag pc " + (piece === piece.toUpperCase() ? "w" : "b");
-      el.textContent = glyph(piece);
+      el.className = "drag";
+      el.appendChild(pieceEl(piece));
       el.style.width = size + "px";
       el.style.height = size + "px";
       el.style.fontSize = (size * 0.82) + "px";
@@ -431,7 +458,7 @@
     ["q","r","b","n"].forEach(function(k){
       var b = document.createElement("button");
       b.className = "pbtn " + (G.you === "w" ? "w" : "b");
-      b.textContent = glyph(k);
+      b.appendChild(pieceEl(G.you === "w" ? k.toUpperCase() : k));
       b.onclick = function(){ document.body.removeChild(ov); play(uci + k); };
       ov.appendChild(b);
     });

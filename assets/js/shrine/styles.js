@@ -627,6 +627,10 @@
       'font-size:min(7.4vh,45px);line-height:1;pointer-events:none;user-select:none}' +
       '.chp.w{color:#fffdf8;-webkit-text-stroke:1.6px #2b2018;text-shadow:0 1.5px 1.5px rgba(0,0,0,.30)}' +
       '.chp.b{color:#2b2018;-webkit-text-stroke:1.2px #16100b;text-shadow:0 1.5px 1.5px rgba(0,0,0,.25)}' +
+      /* a real piece set: the image fills the square and takes none of the
+         glyph's type styling with it */
+      '.chp.img{width:100%;height:100%;object-fit:contain;-webkit-text-stroke:0;text-shadow:none;display:block}' +
+      '.chdrag .chp.img{width:100%;height:100%}' +
       '.chsq.last{background:rgba(205,210,106,.62)}' + '.chsq.last.dk{background:rgba(170,178,74,.72)}' +
       '.chsq.from{background:rgba(242,192,99,.78)}' + '.chsq.from.dk{background:rgba(214,161,66,.85)}' +
       '.chsq.chk{background:radial-gradient(circle,rgba(255,80,60,.95) 0%,rgba(255,80,60,.75) 32%,rgba(255,60,40,0) 72%)}' +

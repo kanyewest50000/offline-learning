@@ -23,6 +23,7 @@
       ';var SHRINE_BOOT_TOKEN=' + JSON.stringify(bootToken || "") +
       ';var TUNG_IMG=' + JSON.stringify(Shrine.TUNG_IMG) +
       ';var TUNGGOD_IMG=' + JSON.stringify(Shrine.TUNGGOD_IMG) +
+      ';var PIECES_BASE=' + JSON.stringify(Shrine.PIECES_BASE) +
       ';var BANK_IMG=' + JSON.stringify(Shrine.BANK_IMG) +
       ';var BANK_RARE_IMG=' + JSON.stringify(Shrine.BANK_RARE_IMG) +
       ';var BANK_RARE_CHANCE=' + JSON.stringify(Shrine.BANK_RARE_CHANCE) +

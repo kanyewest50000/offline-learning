@@ -63,6 +63,10 @@
      BANK_RARE_CHANCE is how often the rare one comes up, as a fraction.
      Swap either path, or change the odds, and nothing else needs touching. */
   var BANK_IMG = new URL("assets/tungtungtungsahur.png", SHRINE_BASE).href;
+  /* the chess piece set, if there is one. Resolved against SHRINE_BASE like
+     every other repo file, so the pit board finds it from an embed too —
+     a relative path here would go looking on whoever pasted the tag. */
+  var PIECES_BASE = new URL("games/tung/pieces/", SHRINE_BASE).href;
   var BANK_RARE_IMG = new URL("assets/lendersahur.jpg", SHRINE_BASE).href;
   var BANK_RARE_CHANCE = 0.15;
 
@@ -148,6 +152,7 @@
   Shrine.BASE = SHRINE_BASE;
   Shrine.THEMES = THEMES;
   Shrine.THEME_DEFAULT = THEME_DEFAULT;
+  Shrine.PIECES_BASE = PIECES_BASE;
   Shrine.TUNG_IMG = TUNG_IMG;
   Shrine.TUNGGOD_IMG = TUNGGOD_IMG;
   Shrine.BANK_IMG = BANK_IMG;

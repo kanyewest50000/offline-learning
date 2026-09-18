@@ -1948,10 +1948,39 @@
      moves it listed. The legal list arrives as UCI strings for whoever is to
      move, so picking a piece is a filter over that list rather than a second
      copy of the rulebook out here, where it could disagree. */
-  /* the solid glyphs for both sides; .chp.w / .chp.b colour them, which is how
-     a real board draws pieces */
+  /* ---- what a piece is drawn with ----
+     A proper piece set if one has been dropped into games/tung/pieces/, and the
+     glyphs otherwise. The set is probed once, with one image: asking for all
+     twelve and letting them fail would flash twelve broken images on a board
+     that has none. Until the probe answers the glyphs are used, so the board is
+     never empty waiting for it. Names are the usual wP/bN form, so a set
+     downloaded from anywhere is already named right. */
   var SOLIDP={p:"\u265F",n:"\u265E",b:"\u265D",r:"\u265C",q:"\u265B",k:"\u265A"};
   function pcGlyph(ch){return SOLIDP[String(ch).toLowerCase()]||"";}
+  var PC_SET=false,PC_PROBED=false;
+  function pcFile(ch){
+    return (ch===ch.toUpperCase()?"w":"b")+String(ch).toUpperCase()+".png";
+  }
+  function pcProbe(){
+    if(PC_PROBED||typeof PIECES_BASE==="undefined"||!PIECES_BASE)return;
+    PC_PROBED=true;
+    var im=new Image();
+    im.onload=function(){PC_SET=true;if(PIT.last&&PIT.last.game==="chess"){PIT.shape="";pitRender(PIT.last);}};
+    im.onerror=function(){PC_SET=false;};
+    im.src=PIECES_BASE+"wP.png";
+  }
+  /* one piece, as an image if there is a set and as a glyph if there is not */
+  function pcEl(ch){
+    var white=ch===ch.toUpperCase();
+    if(PC_SET){
+      var i=document.createElement("img");
+      i.className="chp img "+(white?"w":"b");
+      i.src=PIECES_BASE+pcFile(ch);
+      i.alt="";i.draggable=false;
+      return i;
+    }
+    return el("span","chp"+(white?" w":" b"),pcGlyph(ch));
+  }
   function fenBoard(fen){
     /* FEN's first rank is rank 8; the array that comes back is indexed the
        same way the squares are named, 0 = a8 across to 63 = h1 */
@@ -1971,6 +2000,7 @@
   }
   function chessBoard(body,d,note){
     var c=d.chess;if(!c)return;
+    pcProbe();
     var flip=c.youAre==="b";
     var cells=fenBoard(c.fen);
     var legal=c.legal||[];
@@ -2004,7 +2034,7 @@
       if(targets[name])sq.className+=cells[idx]?" take":" go";
       var piece=cells[idx];
       if(piece){
-        var pe=el("span","chp"+(piece===piece.toUpperCase()?" w":" b"),pcGlyph(piece));
+        var pe=pcEl(piece);
         if(PIT.chDrag===name)pe.style.visibility="hidden";
         sq.appendChild(pe);
       }
@@ -2139,7 +2169,8 @@
       var piece=idx>=0?cells[idx]:"";
       if(!piece)return;
       var box=boardEl.getBoundingClientRect(),size=box.width/8;
-      var g=el("div","chdrag chp "+(piece===piece.toUpperCase()?"w":"b"),pcGlyph(piece));
+      var g=el("div","chdrag");
+      g.appendChild(pcEl(piece));
       g.style.width=size+"px";g.style.height=size+"px";
       g.style.fontSize=(size*0.82)+"px";g.style.left="0px";g.style.top="0px";
       document.body.appendChild(g);
@@ -2189,7 +2220,8 @@
   function chessPromote(d,uci,note){
     var ov=el("div","chpromo");
     ["q","r","b","n"].forEach(function(k){
-      var b=el("button","chpbtn "+(d.chess.youAre==="w"?"w":"b"),pcGlyph(k));
+      var b=el("button","chpbtn "+(d.chess.youAre==="w"?"w":"b"));
+      b.appendChild(pcEl(d.chess.youAre==="w"?k.toUpperCase():k));
       b.onclick=function(){if(ov.parentNode)ov.parentNode.removeChild(ov);chessMove(d,uci+k,note);};
       ov.appendChild(b);
     });
