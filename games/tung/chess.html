@@ -157,6 +157,10 @@
           </select>
         </div>
         <div class="ctl">
+          <label for="pieces">pieces</label>
+          <select id="pieces"></select>
+        </div>
+        <div class="ctl">
           <label>&nbsp;</label>
           <button class="go" id="start">sit down</button>
         </div>
@@ -206,14 +210,37 @@
      board is never empty waiting on it. Names are the usual wP/bN form. */
   var SOLID = {p:"\u265F",n:"\u265E",b:"\u265D",r:"\u265C",q:"\u265B",k:"\u265A"};
   function glyph(ch){ return SOLID[String(ch).toLowerCase()] || ""; }
-  var SET = false;
-  function pieceFile(ch){ return (ch === ch.toUpperCase() ? "w" : "b") + ch.toUpperCase() + ".png"; }
+  /* Four themes, and each is looked for in two places in this order: this
+     repo's own copy, then chess.com's image host, which is where they came
+     from. Local first on purpose — this site is for networks that block things,
+     and images.chesscomfiles.com is exactly what a school filter swallows, so a
+     set sitting in pieces/<theme>/ is the one that survives. Neither reachable
+     and the glyphs stay, because a board of broken images is worse than a plain
+     one. */
+  var THEMES = ["neo", "classic", "ocean", "icy_sea"];
+  var REMOTE = "https://images.chesscomfiles.com/chess-themes/pieces/";
+  var PKEY = "shrine-pieces";
+  var SRC = null;        /* the base the set is coming from, once one answers */
+  var TRIED = {};
+  function theme(){
+    var t = "";
+    try { t = localStorage.getItem(PKEY) || ""; } catch (e) {}
+    return THEMES.indexOf(t) >= 0 ? t : THEMES[0];
+  }
+  function setTheme(t){
+    try { localStorage.setItem(PKEY, t); } catch (e) {}
+    SRC = null; TRIED = {};
+    probe();
+    if (G) paint();
+  }
+  /* chess.com names them lowercase, colour then piece: wq.png, bb.png */
+  function pieceFile(ch){ return (ch === ch.toUpperCase() ? "w" : "b") + ch.toLowerCase() + ".png"; }
   function pieceEl(ch){
     var white = ch === ch.toUpperCase();
-    if (SET){
+    if (SRC){
       var i = document.createElement("img");
       i.className = "pc img " + (white ? "w" : "b");
-      i.src = "pieces/" + pieceFile(ch);
+      i.src = SRC + pieceFile(ch);
       i.alt = ""; i.draggable = false;
       return i;
     }
@@ -222,11 +249,22 @@
     e.textContent = glyph(ch);
     return e;
   }
-  (function probe(){
-    var im = new Image();
-    im.onload = function(){ SET = true; if (G) paint(); };
-    im.src = "pieces/wP.png";
-  })();
+  function probe(){
+    var t = theme();
+    if (TRIED[t]) return;
+    TRIED[t] = true;
+    var tries = ["pieces/" + t + "/", REMOTE + t + "/150/"];
+    var i = 0;
+    (function next(){
+      if (i >= tries.length) return;
+      var base = tries[i++];
+      var im = new Image();
+      im.onload = function(){ SRC = base; if (G) paint(); };
+      im.onerror = next;
+      im.src = base + "wp.png";
+    })();
+  }
+  probe();
 
   var lobby = document.getElementById("lobby");
   var gameEl = document.getElementById("game");
@@ -531,6 +569,18 @@
     paint();
     if (you === "b") setTimeout(botMove, 400);
   }
+
+  /* the piece picker, filled from the theme list and remembered between games */
+  (function(){
+    var sel = document.getElementById("pieces");
+    THEMES.forEach(function(t){
+      var o = document.createElement("option");
+      o.value = t; o.textContent = t.replace(/_/g, " ");
+      sel.appendChild(o);
+    });
+    sel.value = theme();
+    sel.onchange = function(){ setTheme(sel.value); };
+  })();
 
   document.getElementById("start").onclick = begin;
   document.getElementById("again").onclick = function(){

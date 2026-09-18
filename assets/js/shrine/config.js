@@ -63,10 +63,24 @@
      BANK_RARE_CHANCE is how often the rare one comes up, as a fraction.
      Swap either path, or change the odds, and nothing else needs touching. */
   var BANK_IMG = new URL("assets/tungtungtungsahur.png", SHRINE_BASE).href;
-  /* the chess piece set, if there is one. Resolved against SHRINE_BASE like
-     every other repo file, so the pit board finds it from an embed too —
-     a relative path here would go looking on whoever pasted the tag. */
+  /* ---- the chess piece sets ----
+     Four themes, named the way chess.com names them, and each board looks for
+     them in two places in this order:
+
+       1. games/tung/pieces/<theme>/  in this repo, resolved against
+          SHRINE_BASE like every other repo file so an embed finds them here
+          rather than on whoever pasted the tag.
+       2. chess.com's own image host, which is where these came from.
+
+     Local first on purpose. This site exists to work on networks that block
+     things, and images.chesscomfiles.com is exactly the sort of host a school
+     filter swallows — so a set sitting in the repo is the one that survives.
+     Drop the twelve files into games/tung/pieces/<theme>/ and that theme stops
+     depending on anybody else's server. If neither is reachable the boards draw
+     the Unicode glyphs instead of an empty square. */
   var PIECES_BASE = new URL("games/tung/pieces/", SHRINE_BASE).href;
+  var PIECE_REMOTE = "https://images.chesscomfiles.com/chess-themes/pieces/";
+  var PIECE_THEMES = ["neo", "classic", "ocean", "icy_sea"];
   var BANK_RARE_IMG = new URL("assets/lendersahur.jpg", SHRINE_BASE).href;
   var BANK_RARE_CHANCE = 0.15;
 
@@ -153,6 +167,8 @@
   Shrine.THEMES = THEMES;
   Shrine.THEME_DEFAULT = THEME_DEFAULT;
   Shrine.PIECES_BASE = PIECES_BASE;
+  Shrine.PIECE_REMOTE = PIECE_REMOTE;
+  Shrine.PIECE_THEMES = PIECE_THEMES;
   Shrine.TUNG_IMG = TUNG_IMG;
   Shrine.TUNGGOD_IMG = TUNGGOD_IMG;
   Shrine.BANK_IMG = BANK_IMG;

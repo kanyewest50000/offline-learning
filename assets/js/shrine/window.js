@@ -24,6 +24,8 @@
       ';var TUNG_IMG=' + JSON.stringify(Shrine.TUNG_IMG) +
       ';var TUNGGOD_IMG=' + JSON.stringify(Shrine.TUNGGOD_IMG) +
       ';var PIECES_BASE=' + JSON.stringify(Shrine.PIECES_BASE) +
+      ';var PIECE_REMOTE=' + JSON.stringify(Shrine.PIECE_REMOTE) +
+      ';var PIECE_THEMES=' + JSON.stringify(Shrine.PIECE_THEMES) +
       ';var BANK_IMG=' + JSON.stringify(Shrine.BANK_IMG) +
       ';var BANK_RARE_IMG=' + JSON.stringify(Shrine.BANK_RARE_IMG) +
       ';var BANK_RARE_CHANCE=' + JSON.stringify(Shrine.BANK_RARE_CHANCE) +

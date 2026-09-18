@@ -122,9 +122,29 @@ function repoUrls(S: any): string[] {
     "offline-learning.kanyewest50000.deno.net", // the backend
     "cuhsd.instructure.com",        // the cloak favicon
     "www.w3.org",                   // svg namespaces
+    // The chess piece sets, and the ONLY third-party host the shrine reaches
+    // for. It is a fallback, never the first choice: each board looks in
+    // games/tung/pieces/<theme>/ first and only asks this one if the repo has
+    // no copy, because a school filter is far more likely to swallow
+    // chess.com than to swallow our own Pages site. If neither answers the
+    // board draws glyphs. Anything else appearing in this list is the bug this
+    // check exists to catch.
+    "images.chesscomfiles.com",
   ]);
   const strays = Object.keys(hostsIn(doc)).filter((h) => !allowed.has(h));
   must(strays.length === 0, `unexpected host in the shrine document: ${strays.join(", ")}`);
+
+  // the piece set is tried OUR copy first and chess.com second, never the
+  // other way round — a remote-first board is one a blocked network breaks
+  const probe = S.CASINO_JS.slice(S.CASINO_JS.indexOf("function pcProbe("));
+  const ours = probe.indexOf("PIECES_BASE");
+  const theirs = probe.indexOf("PIECE_REMOTE");
+  must(ours > 0 && theirs > 0, "the probe must know about both sources");
+  must(ours < theirs, "the repo's own piece set must be tried before chess.com's");
+  must(
+    S.PIECES_BASE.startsWith(PAGES),
+    `the piece set must resolve against the base, got ${S.PIECES_BASE}`,
+  );
   must(doc.includes(DENO), "the shrine document must still reach the backend");
 }
 

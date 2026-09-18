@@ -1957,25 +1957,56 @@
      downloaded from anywhere is already named right. */
   var SOLIDP={p:"\u265F",n:"\u265E",b:"\u265D",r:"\u265C",q:"\u265B",k:"\u265A"};
   function pcGlyph(ch){return SOLIDP[String(ch).toLowerCase()]||"";}
-  var PC_SET=false,PC_PROBED=false;
+  /* Which theme, and where its twelve files are coming from. Two probes, one
+     image each: the repo's own copy first, then chess.com's host. Whichever
+     answers is used for the rest of the session; if neither does, the glyphs
+     stay, because a board of broken images is worse than a plain one. */
+  var PC_KEY="shrine-pieces";
+  var PC_SRC=null;          /* the base URL the set is coming from, once known */
+  var PC_TRIED={};          /* theme -> true once it has been asked about */
+  function pcTheme(){
+    var t="";
+    try{t=localStorage.getItem(PC_KEY)||"";}catch(e){}
+    if(typeof PIECE_THEMES==="undefined")return t||"neo";
+    return PIECE_THEMES.indexOf(t)>=0?t:PIECE_THEMES[0];
+  }
+  function pcSetTheme(t){
+    try{localStorage.setItem(PC_KEY,t);}catch(e){}
+    PC_SRC=null;PC_TRIED={};pcProbe();
+    if(PIT.last&&PIT.last.game==="chess"){PIT.shape="";pitRender(PIT.last);}
+  }
   function pcFile(ch){
-    return (ch===ch.toUpperCase()?"w":"b")+String(ch).toUpperCase()+".png";
+    /* chess.com names them lowercase, colour then piece: wq.png, bb.png */
+    return (ch===ch.toUpperCase()?"w":"b")+String(ch).toLowerCase()+".png";
   }
   function pcProbe(){
-    if(PC_PROBED||typeof PIECES_BASE==="undefined"||!PIECES_BASE)return;
-    PC_PROBED=true;
-    var im=new Image();
-    im.onload=function(){PC_SET=true;if(PIT.last&&PIT.last.game==="chess"){PIT.shape="";pitRender(PIT.last);}};
-    im.onerror=function(){PC_SET=false;};
-    im.src=PIECES_BASE+"wP.png";
+    var theme=pcTheme();
+    if(PC_TRIED[theme])return;
+    PC_TRIED[theme]=true;
+    var tries=[];
+    if(typeof PIECES_BASE!=="undefined"&&PIECES_BASE)tries.push(PIECES_BASE+theme+"/");
+    if(typeof PIECE_REMOTE!=="undefined"&&PIECE_REMOTE)tries.push(PIECE_REMOTE+theme+"/150/");
+    var i=0;
+    var next=function(){
+      if(i>=tries.length)return;              /* neither answered — keep the glyphs */
+      var base=tries[i++];
+      var im=new Image();
+      im.onload=function(){
+        PC_SRC=base;
+        if(PIT.last&&PIT.last.game==="chess"){PIT.shape="";pitRender(PIT.last);}
+      };
+      im.onerror=next;
+      im.src=base+"wp.png";
+    };
+    next();
   }
   /* one piece, as an image if there is a set and as a glyph if there is not */
   function pcEl(ch){
     var white=ch===ch.toUpperCase();
-    if(PC_SET){
+    if(PC_SRC){
       var i=document.createElement("img");
       i.className="chp img "+(white?"w":"b");
-      i.src=PIECES_BASE+pcFile(ch);
+      i.src=PC_SRC+pcFile(ch);
       i.alt="";i.draggable=false;
       return i;
     }
@@ -2707,9 +2738,20 @@
     /* chess is the one table that can be played for nothing, so it gets the
        choice, and the stake box is only worth showing once there is a stake */
     var freeSel=game==="chess"?selectOf([["0","free \u2014 nothing on it"],["1","for sahurs"]],"0"):null;
+    /* which set the pieces are drawn with. Remembered, and it takes effect on
+       the board the moment it is changed rather than on the next game. */
+    var pieceSel=null;
+    if(game==="chess"&&typeof PIECE_THEMES!=="undefined"){
+      pcProbe();
+      pieceSel=selectOf(PIECE_THEMES.map(function(t){
+        return [t,t.replace(/_/g," ")];
+      }),pcTheme());
+      pieceSel.addEventListener("change",function(){pcSetTheme(pieceSel.value);});
+    }
     var open=el("button","cbtn go","put up a table");
     var row=el("div","ctlrow");
     if(freeSel)row.appendChild(ctl("playing for",freeSel));
+    if(pieceSel)row.appendChild(ctl("pieces",pieceSel));
     var betCtl=ctl("stake",bet);
     row.appendChild(betCtl);
     if(freeSel){
