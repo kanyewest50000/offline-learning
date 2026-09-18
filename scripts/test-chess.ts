@@ -258,6 +258,69 @@ must(Math.abs(loseAfter - (loseBefore - bet)) < 1e-9,
 must(Math.abs((winAfter + loseAfter) - (winBefore + loseBefore)) < 1e-9,
   "and the two of them together must be exactly where they started");
 
+// ===========================================================================
+// the game against the computer
+//
+// It runs entirely in the browser, so it needs the rules in the browser too —
+// and that copy is GENERATED from the one above rather than written beside it,
+// because two hand-maintained rulebooks is one rulebook and a divergence.
+//
+// The opponent is checked for what it is actually for: a search that misses
+// mate in one is not a weak opponent, it is a broken one. The first cut of it
+// was exactly that — the root used a fail-hard window, so any move better than
+// the current best came back clamped to equal it and the first decent move
+// found was never beaten.
+// ===========================================================================
+{
+  const rules = await Deno.readTextFile(`${ROOT}/games/tung/chess-rules.js`);
+  must(rules.includes("GENERATED from server.ts"), "the browser rules must say they are generated");
+  // it has to BE the engine above, not a fork of it that has drifted
+  for (const fn of ["chessMoves", "chessApply", "chessEnd", "chessSan", "chessParse"]) {
+    must(rules.includes(fn), "the generated rules are missing " + fn);
+  }
+  // a few landmarks from the source, so an edit to server.ts that never got
+  // regenerated shows up here rather than as a game that plays by other rules
+  for (const bit of ['const CHESS_START = "rnbqkbnr/pppppppp', "threefold repetition", "fifty-move rule"]) {
+    must(rules.includes(bit), "the generated rules look stale — missing: " + bit);
+  }
+
+  // load both files the way the page does and make the opponent prove itself
+  // deno-lint-ignore no-explicit-any
+  const win: any = { setTimeout };
+  new Function("window", rules)(win);
+  const engineSrc = await Deno.readTextFile(`${ROOT}/games/tung/engine.js`);
+  new Function("window", engineSrc)(win);
+  must(win.TungEngine && typeof win.TungEngine.make === "function", "the page needs an opponent to make");
+
+  const pick = (fen: string): Promise<string> =>
+    new Promise((res) => win.TungEngine.make("medium", () => {}).pick(fen, res));
+
+  // positions with one right answer, and it is not a close call
+  const TACTICS: [string, string, string[]][] = [
+    ["mate in one, back rank", "6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1", ["a1a8"]],
+    ["mate in one, the queen", "6k1/5ppp/8/8/8/8/5PPP/3Q2K1 w - - 0 1", ["d1d8"]],
+    ["a queen hanging on g4", "rnb1kbnr/pppp1ppp/8/4p3/6q1/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 1", ["f3g4"]],
+  ];
+  for (const [name, fen, want] of TACTICS) {
+    const got = await pick(fen);
+    must(want.includes(got), `the opponent missed ${name}: played ${got}, wanted ${want.join(" or ")}`);
+  }
+  // and whatever it plays is always legal, from a position with a lot going on
+  const messy = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
+  const legal = new Set(chessMoves(chessParse(messy)).map(mod.chessUci));
+  for (let i = 0; i < 4; i++) {
+    const got = await pick(messy);
+    must(legal.has(got), "the opponent played an illegal move: " + got);
+  }
+  // it never reaches for the network — that is the whole point of it being here
+  must(!/fetch\(|XMLHttpRequest|SHRINE_API/.test(engineSrc),
+    "the computer opponent must not talk to the backend");
+  must(engineSrc.includes('new Worker("stockfish/stockfish.js")'),
+    "stockfish must be loaded from this host as a static file");
+  must(/playing tung's own head instead/.test(engineSrc),
+    "and it must fall back when stockfish cannot be fetched at all");
+}
+
 // --- the client draws a board and owns no rules ------------------------------
 const casino = await Deno.readTextFile(`${ROOT}/assets/js/shrine/casino.js`);
 must(casino.includes("function chessBoard("), "the client needs a board to draw");

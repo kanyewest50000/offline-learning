@@ -15,7 +15,8 @@
   var ORIGINALS = [
     {n:"Flappy Tung", u: new URL("games/tung/flappy.html", BASE).href, s:"gravity is inevitable. tung disagrees."},
     {n:"Sahur Snake", u: new URL("games/tung/snake.html", BASE).href, s:"eat. lengthen. forget why."},
-    {n:"Sahur Pong", u: new URL("games/tung/pong.html", BASE).href, s:"he returns every serve. he always has."}
+    {n:"Sahur Pong", u: new URL("games/tung/pong.html", BASE).href, s:"he returns every serve. he always has."},
+    {n:"Tung Chess", u: new URL("games/tung/chess.html", BASE).href, s:"he has read the whole book. he is pretending he has not."}
   ];
 
   Shrine.ORIGINALS = ORIGINALS;

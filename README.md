@@ -40,6 +40,9 @@ embed/                  standalone embeds for other hosts: the chat on its own,
                         and the whole shrine from one script tag
 games/                  vendored game files served from this origin, fetched
                         into their own tab rather than framed
+  tung/                 Tung's originals, including chess.html (the game against
+                        the computer), chess-rules.js (generated from server.ts)
+                        and stockfish/ (the real engine, GPL, vendored)
 scripts/                tests and maintenance tools
 ```
 
@@ -369,6 +372,56 @@ settles an overdue one first, and the lobby sweeps abandoned tables — so a sta
 always finds its way home even if the host never reopens the page.
 `scripts/test-duel.ts` walks every exit and counts the money after each, with a
 dozen readers racing the same expiry.
+
+### chess
+
+The fifth pit table, and the only one that can be played for nothing: the lobby
+asks whether there are sahurs on it, and a bet of zero moves no money anywhere
+without a single special case in the escrow — the debit, the hold and the payout
+are all `bet` arithmetic already.
+
+The rules are the server's. A table can be played for sahurs, and a client that
+can invent a move is a client that can invent a win, so the whole rulebook is
+one block in `server.ts` and the pit client holds no copy of it: the board draws
+the position it was sent and offers the legal moves it was given, so picking a
+piece up is a filter over that list rather than a second opinion that could
+disagree with the first.
+
+That generator is verified by **perft** — counting every leaf of the move tree
+from the six standard test positions and comparing against the published totals,
+16,564,718 of them. It is the only test worth having for a move generator:
+castling through check, an en-passant capture that exposes a rank, a pinned
+knight, a promotion that gives mate are all a number that does not match, rather
+than a subtlety nobody notices until it costs somebody a pot.
+
+Ninety seconds a move, because a chess table holds an escrow and a game somebody
+wandered away from cannot sit there forever holding the other player's sahurs.
+Running out loses, through the same deadline every other pit table expires on.
+Resigning and offering a draw are there because chess needs them; an offer does
+not survive the move that answers it.
+
+**Tung Chess**, in the originals, is the same game against the computer instead
+of a person — and it never touches the backend at all. No table, no escrow, no
+polling, nothing for anybody to pay for. Two opponents: *tung's own head* is a
+few hundred lines of alpha-beta with piece-square tables that ship with the page
+and start instantly, and *stockfish* is the real engine, 350KB of WebAssembly
+served from this site as a static file and run in a Worker. If the wasm cannot
+be fetched — a network that blocks it, a school proxy — the game falls back to
+tung's own head at its strongest and says so rather than breaking.
+
+The rules in the browser are **generated** from the ones in `server.ts` by
+`scripts/build-chess-rules.sh`, not written beside them: two hand-maintained
+rulebooks is one rulebook and a divergence waiting to happen, and if the two
+ever disagreed the server would be right by definition. `scripts/test-chess.ts`
+checks the generated copy has not gone stale, and makes the opponent prove
+itself on positions with one right answer — a search that misses mate in one is
+not a weak opponent, it is a broken one, which is exactly what the first cut of
+it was.
+
+Stockfish is GPL-3.0. It lives in `games/tung/stockfish/` with its licence
+alongside it, unmodified, loaded as a separate program the page talks to over
+UCI — the same arrangement every browser chess front end uses. Keep
+`Copying.txt` next to it if you fork this.
 
 ### poker
 

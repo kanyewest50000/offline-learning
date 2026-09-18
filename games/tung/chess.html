@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tung Chess</title>
+<link rel="stylesheet" href="tung.css">
+<style>
+  /* the lobby, laid out like the pit's: pick what you are playing, then play */
+  html,body{overflow:auto}
+  .wrap{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;padding:0 16px 20px;gap:14px}
+  .lobby{width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px}
+  .blurb{margin:0;color:#c8823c;font-size:14px;line-height:1.5}
+  .sub{margin:0;color:#8a6a3a;font-size:12px;line-height:1.55}
+  .ctlrow{display:flex;gap:10px;flex-wrap:wrap}
+  .ctl{display:flex;flex-direction:column;gap:5px;flex:1 1 150px;min-width:140px}
+  .ctl label{font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:#8a6a3a}
+  select,button{font-family:inherit}
+  select{padding:9px 10px;border-radius:8px;border:1px solid #3a2410;background:#1a1008;color:#f5efe0;font-size:13px}
+  .go{padding:11px 18px;border:0;border-radius:9px;background:#c8823c;color:#1d1206;font-weight:800;
+      font-size:14px;cursor:pointer}
+  .go:hover{background:#f2c063}
+  .go:disabled{opacity:.55;cursor:default}
+  .ghost{background:transparent;border:1px solid #3a2410;color:#c8823c;padding:8px 14px;border-radius:8px;
+         font-weight:700;font-size:12px;cursor:pointer}
+  .ghost:hover{border-color:#8a5a28;color:#f2c063}
+  .note{font-size:11px;color:#8a6a3a;line-height:1.5}
+
+  .game{display:none;gap:16px;align-items:flex-start;justify-content:center;flex-wrap:wrap;width:100%}
+  .board{display:grid;grid-template-columns:repeat(8,1fr);width:min(70vh,430px);aspect-ratio:1;
+         border:2px solid #3a2410;border-radius:6px;overflow:hidden;flex:0 0 auto}
+  .sq{position:relative;padding:0;border:0;display:flex;align-items:center;justify-content:center;
+      cursor:pointer;font-size:clamp(18px,4.2vh,33px);line-height:1}
+  .sq.lt{background:#d9b98c}
+  .sq.dk{background:#8a5a28}
+  .pc{pointer-events:none;text-shadow:0 1px 0 rgba(0,0,0,.35)}
+  .pc.w{color:#fffaf0}
+  .pc.b{color:#241505}
+  .sq.from{box-shadow:inset 0 0 0 3px #f2c063}
+  .sq.last{box-shadow:inset 0 0 0 3px rgba(242,192,99,.38)}
+  .sq.go::after{content:"";position:absolute;width:26%;height:26%;border-radius:50%;background:rgba(36,21,5,.38)}
+  .sq.take::after{content:"";position:absolute;inset:6%;border-radius:50%;border:3px solid rgba(36,21,5,.42)}
+  .rk,.fl{position:absolute;font-size:9px;font-weight:800;color:rgba(36,21,5,.55);pointer-events:none}
+  .rk{top:2px;left:3px}
+  .fl{bottom:1px;right:3px}
+  .side{flex:1 1 200px;min-width:190px;max-width:290px;display:flex;flex-direction:column;gap:9px}
+  .state{font-size:13px;font-weight:800;color:#c8823c;min-height:19px}
+  .state.check{color:#f2c063}
+  .state.over{color:#f5efe0}
+  .think{font-size:11px;color:#8a6a3a;min-height:15px}
+  .moves{max-height:240px;overflow-y:auto;background:#1a1008;border:1px solid #3a2410;border-radius:8px;
+         padding:7px 9px;font-size:12px;font-variant-numeric:tabular-nums}
+  .mrow{display:grid;grid-template-columns:28px 1fr 1fr;gap:4px}
+  .mn{color:#8a6a3a}
+  .mv{color:#f5efe0}
+  .row{display:flex;gap:7px;flex-wrap:wrap}
+  .promo{position:fixed;inset:0;margin:auto;height:max-content;width:max-content;z-index:60;display:flex;gap:8px;
+         align-items:center;background:#241505;border:1px solid #8a5a28;border-radius:12px;padding:12px}
+  .pbtn{font-size:30px;line-height:1;padding:6px 10px;border-radius:8px;border:1px solid #3a2410;
+        background:#d9b98c;color:#241505;cursor:pointer}
+  .pbtn:hover{background:#f2c063}
+  @media (max-width:620px){.board{width:min(92vw,430px)}}
+</style>
+</head>
+<body>
+  <div class="hud">
+    <div>
+      <h1>Tung Chess</h1>
+      <p class="line">he has read the whole book. he is pretending he has not.</p>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <!-- the lobby, before a game exists -->
+    <div class="lobby" id="lobby">
+      <p class="blurb">a board, you, and something that does not get bored.</p>
+      <p class="sub">
+        two opponents live here. <b>tung's own head</b> is a few hundred lines of search that
+        ships with the page and starts instantly. <b>stockfish</b> is the real engine, about
+        350KB of it, fetched once from this site and then cached — stronger than anybody
+        reading this. neither of them touches the shrine's backend: the whole game happens
+        in this tab.
+      </p>
+      <div class="ctlrow">
+        <div class="ctl">
+          <label for="opp">opponent</label>
+          <select id="opp">
+            <option value="easy">tung's own head — easy</option>
+            <option value="medium" selected>tung's own head — thinking</option>
+            <option value="hard">stockfish — it will beat you</option>
+          </select>
+        </div>
+        <div class="ctl">
+          <label for="side">you play</label>
+          <select id="side">
+            <option value="w" selected>white</option>
+            <option value="b">black</option>
+            <option value="r">whichever he hands you</option>
+          </select>
+        </div>
+        <div class="ctl">
+          <label>&nbsp;</label>
+          <button class="go" id="start">sit down</button>
+        </div>
+      </div>
+      <p class="note" id="lnote">
+        want to play a person instead? the pit in tung's casino has a chess table — for
+        sahurs, or for nothing.
+      </p>
+    </div>
+
+    <!-- the game -->
+    <div class="game" id="game">
+      <div class="board" id="board"></div>
+      <div class="side">
+        <div class="state" id="state"></div>
+        <div class="think" id="think"></div>
+        <div class="moves" id="moves"></div>
+        <div class="row">
+          <button class="ghost" id="undo">take it back</button>
+          <button class="ghost" id="again">new game</button>
+        </div>
+        <p class="note" id="gnote"></p>
+      </div>
+    </div>
+  </div>
+
+<script src="chess-rules.js"></script>
+<script src="engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  var R = window.ChessRules;
+  var GLYPH = {P:"♙",N:"♘",B:"♗",R:"♖",Q:"♕",K:"♔",
+               p:"♟",n:"♞",b:"♝",r:"♜",q:"♛",k:"♚"};
+
+  var lobby = document.getElementById("lobby");
+  var gameEl = document.getElementById("game");
+  var boardEl = document.getElementById("board");
+  var stateEl = document.getElementById("state");
+  var thinkEl = document.getElementById("think");
+  var movesEl = document.getElementById("moves");
+  var gnote = document.getElementById("gnote");
+
+  var G = null;   /* the game in progress, or null in the lobby */
+  var bot = null; /* whatever is playing the other side */
+
+  function fenCells(fen){
+    /* FEN's first row is rank 8; this comes back indexed the way squares are
+       named, 0 = a8 across to 63 = h1 */
+    var out = [], rows = String(fen).split(" ")[0].split("/");
+    for (var r = 0; r < 8; r++){
+      var row = rows[r] || "8";
+      for (var i = 0; i < row.length; i++){
+        var c = row.charAt(i);
+        if (c >= "1" && c <= "8"){ for (var k = 0; k < Number(c); k++) out.push(""); }
+        else out.push(c);
+      }
+    }
+    return out;
+  }
+  function sqName(idx){ return "abcdefgh".charAt(idx % 8) + String(8 - Math.floor(idx / 8)); }
+
+  function paint(){
+    if (!G) return;
+    var pos = R.chessParse(G.fen);
+    var cells = fenCells(G.fen);
+    var mine = pos.w === (G.you === "w");
+    var legal = (mine && !G.over) ? R.chessMoves(pos).map(R.chessUci) : [];
+    var targets = {};
+    if (G.pick){
+      for (var i = 0; i < legal.length; i++){
+        if (legal[i].slice(0, 2) === G.pick) targets[legal[i].slice(2, 4)] = 1;
+      }
+    }
+    boardEl.innerHTML = "";
+    var flip = G.you === "b";
+    for (var q = 0; q < 64; q++){
+      var idx = flip ? 63 - q : q;
+      var name = sqName(idx);
+      var file = idx % 8, rank = Math.floor(idx / 8);
+      var sq = document.createElement("button");
+      sq.className = "sq " + (((file + rank) % 2) === 1 ? "dk" : "lt");
+      if (G.pick === name) sq.className += " from";
+      else if (G.lastFrom === name || G.lastTo === name) sq.className += " last";
+      if (targets[name]) sq.className += cells[idx] ? " take" : " go";
+      var piece = cells[idx];
+      if (piece){
+        var pe = document.createElement("span");
+        pe.className = "pc " + (piece === piece.toUpperCase() ? "w" : "b");
+        pe.textContent = GLYPH[piece] || "";
+        sq.appendChild(pe);
+      }
+      if (flip ? file === 7 : file === 0) mark(sq, "rk", String(8 - rank));
+      if (flip ? rank === 0 : rank === 7) mark(sq, "fl", "abcdefgh".charAt(file));
+      (function(nm){ sq.onclick = function(){ tap(nm, targets, legal); }; })(name);
+      boardEl.appendChild(sq);
+    }
+
+    if (G.over){
+      stateEl.textContent = G.overText;
+      stateEl.className = "state over";
+    } else {
+      var check = R.chessInCheck(pos, pos.w);
+      stateEl.textContent = (mine ? "your move" : "he is thinking") + (check ? " — check" : "");
+      stateEl.className = "state" + (check ? " check" : "");
+    }
+    movesEl.innerHTML = "";
+    for (var m = 0; m < G.san.length; m += 2){
+      var line = document.createElement("div");
+      line.className = "mrow";
+      add(line, "mn", String(m / 2 + 1) + ".");
+      add(line, "mv", G.san[m] || "");
+      add(line, "mv", G.san[m + 1] || "");
+      movesEl.appendChild(line);
+    }
+    movesEl.scrollTop = movesEl.scrollHeight;
+  }
+  function mark(sq, cls, txt){
+    var e = document.createElement("span"); e.className = cls; e.textContent = txt; sq.appendChild(e);
+  }
+  function add(row, cls, txt){
+    var e = document.createElement("span"); e.className = cls; e.textContent = txt; row.appendChild(e);
+  }
+
+  function tap(name, targets, legal){
+    if (!G || G.over) return;
+    var pos = R.chessParse(G.fen);
+    if (pos.w !== (G.you === "w")) return;      /* not your turn */
+    if (G.pick && targets[name]){
+      var uci = G.pick + name;
+      G.pick = null;
+      /* a pawn reaching the last rank has to say what it becomes */
+      if (legal.indexOf(uci) < 0 && legal.indexOf(uci + "q") >= 0) askPromo(uci);
+      else play(uci);
+      return;
+    }
+    var any = false;
+    for (var i = 0; i < legal.length; i++) if (legal[i].slice(0, 2) === name){ any = true; break; }
+    G.pick = any ? name : null;
+    paint();
+  }
+
+  function askPromo(uci){
+    var ov = document.createElement("div");
+    ov.className = "promo";
+    ["q","r","b","n"].forEach(function(k){
+      var b = document.createElement("button");
+      b.className = "pbtn";
+      b.textContent = GLYPH[G.you === "w" ? k.toUpperCase() : k];
+      b.onclick = function(){ document.body.removeChild(ov); play(uci + k); };
+      ov.appendChild(b);
+    });
+    var c = document.createElement("button");
+    c.className = "ghost"; c.textContent = "cancel";
+    c.onclick = function(){ document.body.removeChild(ov); paint(); };
+    ov.appendChild(c);
+    document.body.appendChild(ov);
+  }
+
+  /* one move onto the board, whoever made it */
+  function play(uci){
+    var pos = R.chessParse(G.fen);
+    var want = R.chessFromUci(uci);
+    if (!want) return;
+    var legal = R.chessMoves(pos);
+    var m = null;
+    for (var i = 0; i < legal.length; i++){
+      if (legal[i].from === want.from && legal[i].to === want.to &&
+          (legal[i].promo || 0) === (want.promo || 0)) { m = legal[i]; break; }
+    }
+    if (!m) return;
+    G.san.push(R.chessSan(pos, m));
+    G.hist.push(G.fen);
+    var after = R.chessApply(pos, m);
+    G.fen = R.chessFen(after);
+    if (after.half === 0) G.reps = [];
+    G.reps.push(R.chessKey(after));
+    G.lastFrom = R.chessSq(m.from);
+    G.lastTo = R.chessSq(m.to);
+    var end = R.chessEnd(after, G.reps);
+    if (end.over){
+      G.over = true;
+      G.overText = end.winner === null
+        ? ("draw — " + end.reason)
+        : ((end.winner === G.you ? "you win" : "you lose") + " — " + end.reason);
+      thinkEl.textContent = "";
+      paint();
+      return;
+    }
+    paint();
+    if (after.w !== (G.you === "w")) setTimeout(botMove, 180);
+  }
+
+  function botMove(){
+    if (!G || G.over || !bot) return;
+    thinkEl.textContent = "thinking…";
+    bot.pick(G.fen, function(uci){
+      thinkEl.textContent = "";
+      if (!G || G.over) return;
+      if (!uci){ G.over = true; G.overText = "he has resigned. take it."; paint(); return; }
+      play(uci);
+    });
+  }
+
+  /* ---- starting and stopping ---- */
+  function begin(){
+    var opp = document.getElementById("opp").value;
+    var pickSide = document.getElementById("side").value;
+    var you = pickSide === "r" ? (Math.random() < 0.5 ? "w" : "b") : pickSide;
+    G = { fen: R.CHESS_START, san: [], reps: [], hist: [], you: you,
+          pick: null, lastFrom: null, lastTo: null, over: false, overText: "" };
+    G.reps.push(R.chessKey(R.chessParse(G.fen)));
+    lobby.style.display = "none";
+    gameEl.style.display = "flex";
+    gnote.textContent = opp === "hard"
+      ? "stockfish, running in this tab. nothing is sent anywhere."
+      : "tung's own head. it ships with the page and plays instantly.";
+    if (bot && bot.stop) bot.stop();
+    thinkEl.textContent = opp === "hard" ? "waking stockfish…" : "";
+    bot = window.TungEngine.make(opp, function(msg){ thinkEl.textContent = msg || ""; });
+    paint();
+    if (you === "b") setTimeout(botMove, 400);
+  }
+
+  document.getElementById("start").onclick = begin;
+  document.getElementById("again").onclick = function(){
+    if (bot && bot.stop) bot.stop();
+    bot = null; G = null;
+    gameEl.style.display = "none";
+    lobby.style.display = "flex";
+  };
+  /* a take-back undoes the pair, so it is your move again rather than his */
+  document.getElementById("undo").onclick = function(){
+    if (!G || !G.hist.length) return;
+    var back = G.over ? 1 : 2;
+    while (back-- > 0 && G.hist.length){
+      G.fen = G.hist.pop();
+      G.san.pop();
+      G.reps.pop();
+    }
+    if (!G.reps.length) G.reps.push(R.chessKey(R.chessParse(G.fen)));
+    G.over = false; G.overText = ""; G.pick = null; G.lastFrom = G.lastTo = null;
+    paint();
+  };
+})();
+</script>
+</body>
+</html>
