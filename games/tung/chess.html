@@ -8,7 +8,8 @@
 <style>
   /* the lobby, laid out like the pit's: pick what you are playing, then play */
   html,body{overflow:auto}
-  .wrap{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;padding:0 16px 20px;gap:14px}
+  .wrap{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;
+        justify-content:center;padding:0 16px 20px;gap:14px}
   .lobby{width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px}
   .blurb{margin:0;color:#c8823c;font-size:14px;line-height:1.5}
   .sub{margin:0;color:#8a6a3a;font-size:12px;line-height:1.55}
@@ -26,40 +27,93 @@
   .ghost:hover{border-color:#8a5a28;color:#f2c063}
   .note{font-size:11px;color:#8a6a3a;line-height:1.5}
 
-  .game{display:none;gap:16px;align-items:flex-start;justify-content:center;flex-wrap:wrap;width:100%}
-  .board{display:grid;grid-template-columns:repeat(8,1fr);width:min(70vh,430px);aspect-ratio:1;
-         border:2px solid #3a2410;border-radius:6px;overflow:hidden;flex:0 0 auto}
-  .sq{position:relative;padding:0;border:0;display:flex;align-items:center;justify-content:center;
-      cursor:pointer;font-size:clamp(18px,4.2vh,33px);line-height:1}
-  .sq.lt{background:#d9b98c}
-  .sq.dk{background:#8a5a28}
-  .pc{pointer-events:none;text-shadow:0 1px 0 rgba(0,0,0,.35)}
-  .pc.w{color:#fffaf0}
-  .pc.b{color:#241505}
-  .sq.from{box-shadow:inset 0 0 0 3px #f2c063}
-  .sq.last{box-shadow:inset 0 0 0 3px rgba(242,192,99,.38)}
-  .sq.go::after{content:"";position:absolute;width:26%;height:26%;border-radius:50%;background:rgba(36,21,5,.38)}
-  .sq.take::after{content:"";position:absolute;inset:6%;border-radius:50%;border:3px solid rgba(36,21,5,.42)}
-  .rk,.fl{position:absolute;font-size:9px;font-weight:800;color:rgba(36,21,5,.55);pointer-events:none}
-  .rk{top:2px;left:3px}
-  .fl{bottom:1px;right:3px}
-  .side{flex:1 1 200px;min-width:190px;max-width:290px;display:flex;flex-direction:column;gap:9px}
-  .state{font-size:13px;font-weight:800;color:#c8823c;min-height:19px}
+  /* board on the left with a player strip above and below it, panel on the
+     right — the shape every chess site uses, because it is the one that works */
+  /* stretch, so the panel is exactly as tall as the board next to it */
+  .game{display:none;gap:18px;align-items:stretch;justify-content:center;flex-wrap:wrap;width:100%}
+  .boardcol{display:flex;flex-direction:column;gap:6px;flex:0 0 auto}
+  .who{display:flex;align-items:center;gap:9px;padding:4px 2px;min-height:34px}
+  .av{width:30px;height:30px;border-radius:6px;background:#3a2d20;border:1px solid #4a3826;
+      display:flex;align-items:center;justify-content:center;font-size:16px;flex:0 0 auto}
+  .nm{font-weight:700;font-size:14px;color:#f5efe0}
+  .turn{margin-left:auto;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+        color:#8a6a3a;min-height:14px}
+  .who.on .turn{color:#c8d26a}
+  .who.on .av{border-color:#c8d26a;box-shadow:0 0 0 2px rgba(200,210,106,.28)}
+  /* ROWS as well as columns. Without grid-template-rows a row sizes to its
+     content, so a rank with pieces on it was taller than an empty one and the
+     board came out lopsided. */
+  /* as big as the window will take. The strips above and below it and the page
+     header are what the vh is being shared with, which is where the 68 comes
+     from — any more and the bottom strip walks off the screen. */
+  .board{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);
+         width:min(68vh,620px);aspect-ratio:1;border:2px solid #3a2410;border-radius:4px;
+         overflow:hidden;flex:0 0 auto;touch-action:none;user-select:none}
+  .sq{position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .sq.lt{background:#e8d3ae}
+  .sq.dk{background:#a97a4c}
+  /* One glyph set for both sides — the SOLID one — coloured and outlined,
+     which is how every real board draws them. Mixing the outline glyphs for
+     white with the solid ones for black is what made this look like a text
+     document rather than a chessboard. */
+  /* the glyph is sized off the square rather than the viewport, so it stays
+     the right size in the board whatever the board's size is */
+  .pc{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+      font-size:min(7.1vh,66px);line-height:1;pointer-events:none;
+      -webkit-user-select:none;user-select:none}
+  .pc.w{color:#fffdf8;-webkit-text-stroke:1.6px #2b2018;
+        text-shadow:0 1.5px 1.5px rgba(0,0,0,.30)}
+  .pc.b{color:#2b2018;-webkit-text-stroke:1.2px #16100b;
+        text-shadow:0 1.5px 1.5px rgba(0,0,0,.25)}
+  /* lichess's own cues: the square you came from and the square you landed on
+     stay lit, the one you are holding is brighter */
+  .sq.last{background:rgba(205,210,106,.62)}
+  .sq.last.dk{background:rgba(170,178,74,.72)}
+  .sq.from{background:rgba(242,192,99,.78)}
+  .sq.from.dk{background:rgba(214,161,66,.85)}
+  .sq.check{background:radial-gradient(circle,rgba(255,80,60,.95) 0%,rgba(255,80,60,.75) 32%,rgba(255,60,40,0) 72%)}
+  .sq.go::after{content:"";position:absolute;width:30%;height:30%;border-radius:50%;
+                background:rgba(20,14,8,.26);pointer-events:none}
+  .sq.take::after{content:"";position:absolute;inset:0;border-radius:50%;
+                  border:6px solid rgba(20,14,8,.26);pointer-events:none}
+  .sq.over{box-shadow:inset 0 0 0 4px rgba(255,255,255,.65)}
+  /* the piece under the cursor while it is being dragged */
+  .drag{position:fixed;z-index:80;pointer-events:none;display:flex;align-items:center;
+        justify-content:center;line-height:1;will-change:transform}
+  .rk,.fl{position:absolute;font-size:10px;font-weight:700;pointer-events:none;opacity:.7}
+  .rk{top:1px;left:3px}
+  .fl{bottom:0;right:3px}
+  .lt .rk,.lt .fl{color:#a97a4c}
+  .dk .rk,.dk .fl{color:#e8d3ae}
+  /* the panel: a header, the moves, and the controls pinned to the bottom */
+  .side{flex:0 1 320px;min-width:250px;display:flex;flex-direction:column;
+        background:#241a11;border:1px solid #3a2410;border-radius:10px;overflow:hidden}
+  .panhead{padding:11px 14px;font-size:12px;font-weight:800;letter-spacing:.12em;
+           text-transform:uppercase;color:#c8823c;border-bottom:1px solid #3a2410;background:#2b1f14}
+  .state{padding:9px 14px;font-size:13px;font-weight:800;color:#c8823c;border-bottom:1px solid #3a2410}
   .state.check{color:#f2c063}
   .state.over{color:#f5efe0}
-  .think{font-size:11px;color:#8a6a3a;min-height:15px}
-  .moves{max-height:240px;overflow-y:auto;background:#1a1008;border:1px solid #3a2410;border-radius:8px;
-         padding:7px 9px;font-size:12px;font-variant-numeric:tabular-nums}
-  .mrow{display:grid;grid-template-columns:28px 1fr 1fr;gap:4px}
-  .mn{color:#8a6a3a}
+  .think{padding:0 14px 7px;font-size:11px;color:#8a6a3a;min-height:15px}
+  .moves{flex:1;min-height:0;overflow-y:auto;padding:4px 0;font-size:13px;
+         font-variant-numeric:tabular-nums}
+  .mrow{display:grid;grid-template-columns:42px 1fr 1fr;gap:0;padding:3px 14px}
+  .mrow:nth-child(odd){background:rgba(0,0,0,.16)}
+  .mn{color:#8a6a3a;font-weight:700}
   .mv{color:#f5efe0}
-  .row{display:flex;gap:7px;flex-wrap:wrap}
+  .row{display:flex;gap:8px;padding:10px 12px;border-top:1px solid #3a2410;background:#2b1f14}
+  .row .ghost{flex:1;text-align:center}
   .promo{position:fixed;inset:0;margin:auto;height:max-content;width:max-content;z-index:60;display:flex;gap:8px;
          align-items:center;background:#241505;border:1px solid #8a5a28;border-radius:12px;padding:12px}
-  .pbtn{font-size:30px;line-height:1;padding:6px 10px;border-radius:8px;border:1px solid #3a2410;
-        background:#d9b98c;color:#241505;cursor:pointer}
+  .pbtn{font-size:34px;line-height:1;padding:4px 10px;border-radius:8px;border:1px solid #3a2410;
+        background:#e8d3ae;cursor:pointer}
+  .pbtn.w{color:#fffdf8;-webkit-text-stroke:1.6px #2b2018}
+  .pbtn.b{color:#2b2018;-webkit-text-stroke:1.2px #16100b}
   .pbtn:hover{background:#f2c063}
-  @media (max-width:620px){.board{width:min(92vw,430px)}}
+  @media (max-width:760px){
+    .board{width:min(94vw,520px)}
+    .pc{font-size:min(11vw,58px)}
+    .side{flex:1 1 100%;min-height:220px}
+  }
 </style>
 </head>
 <body>
@@ -78,8 +132,7 @@
         two opponents live here. <b>tung's own head</b> is a few hundred lines of search that
         ships with the page and starts instantly. <b>stockfish</b> is the real engine, about
         350KB of it, fetched once from this site and then cached — stronger than anybody
-        reading this. neither of them touches the shrine's backend: the whole game happens
-        in this tab.
+        reading this.
       </p>
       <div class="ctlrow">
         <div class="ctl">
@@ -111,8 +164,19 @@
 
     <!-- the game -->
     <div class="game" id="game">
-      <div class="board" id="board"></div>
+      <div class="boardcol">
+        <div class="who" id="whoTop">
+          <span class="av">♟</span><span class="nm" id="topName"></span>
+          <span class="turn" id="topTurn"></span>
+        </div>
+        <div class="board" id="board"></div>
+        <div class="who" id="whoBot">
+          <span class="av">♙</span><span class="nm" id="botName">you</span>
+          <span class="turn" id="botTurn"></span>
+        </div>
+      </div>
       <div class="side">
+        <div class="panhead">moves</div>
         <div class="state" id="state"></div>
         <div class="think" id="think"></div>
         <div class="moves" id="moves"></div>
@@ -120,7 +184,6 @@
           <button class="ghost" id="undo">take it back</button>
           <button class="ghost" id="again">new game</button>
         </div>
-        <p class="note" id="gnote"></p>
       </div>
     </div>
   </div>
@@ -131,8 +194,10 @@
 (function(){
   "use strict";
   var R = window.ChessRules;
-  var GLYPH = {P:"♙",N:"♘",B:"♗",R:"♖",Q:"♕",K:"♔",
-               p:"♟",n:"♞",b:"♝",r:"♜",q:"♛",k:"♚"};
+  /* the solid glyphs for BOTH colours; .pc.w / .pc.b do the colouring, which is
+     how a real board draws them */
+  var SOLID = {p:"\u265F",n:"\u265E",b:"\u265D",r:"\u265C",q:"\u265B",k:"\u265A"};
+  function glyph(ch){ return SOLID[String(ch).toLowerCase()] || ""; }
 
   var lobby = document.getElementById("lobby");
   var gameEl = document.getElementById("game");
@@ -140,7 +205,11 @@
   var stateEl = document.getElementById("state");
   var thinkEl = document.getElementById("think");
   var movesEl = document.getElementById("moves");
-  var gnote = document.getElementById("gnote");
+  var topName = document.getElementById("topName");
+  var topTurn = document.getElementById("topTurn");
+  var botTurn = document.getElementById("botTurn");
+  var whoTop = document.getElementById("whoTop");
+  var whoBot = document.getElementById("whoBot");
 
   var G = null;   /* the game in progress, or null in the lobby */
   var bot = null; /* whatever is playing the other side */
@@ -175,36 +244,57 @@
     }
     boardEl.innerHTML = "";
     var flip = G.you === "b";
+    /* the king in check gets lit, the way it is on every board worth using */
+    var checkSq = null;
+    if (!G.over && R.chessInCheck(pos, pos.w)){
+      for (var ci = 0; ci < 64; ci++){
+        if (cells[ci] === (pos.w ? "K" : "k")) { checkSq = sqName(ci); break; }
+      }
+    }
     for (var q = 0; q < 64; q++){
       var idx = flip ? 63 - q : q;
       var name = sqName(idx);
       var file = idx % 8, rank = Math.floor(idx / 8);
-      var sq = document.createElement("button");
-      sq.className = "sq " + (((file + rank) % 2) === 1 ? "dk" : "lt");
+      var dark = ((file + rank) % 2) === 1;
+      var sq = document.createElement("div");
+      sq.className = "sq " + (dark ? "dk" : "lt");
+      sq.setAttribute("data-sq", name);
+      if (G.lastFrom === name || G.lastTo === name) sq.className += " last";
+      if (checkSq === name) sq.className += " check";
       if (G.pick === name) sq.className += " from";
-      else if (G.lastFrom === name || G.lastTo === name) sq.className += " last";
       if (targets[name]) sq.className += cells[idx] ? " take" : " go";
       var piece = cells[idx];
       if (piece){
         var pe = document.createElement("span");
         pe.className = "pc " + (piece === piece.toUpperCase() ? "w" : "b");
-        pe.textContent = GLYPH[piece] || "";
+        pe.textContent = glyph(piece);
+        /* the square being dragged from keeps its slot but lets go of the piece */
+        if (G.dragFrom === name) pe.style.visibility = "hidden";
         sq.appendChild(pe);
       }
       if (flip ? file === 7 : file === 0) mark(sq, "rk", String(8 - rank));
       if (flip ? rank === 0 : rank === 7) mark(sq, "fl", "abcdefgh".charAt(file));
-      (function(nm){ sq.onclick = function(){ tap(nm, targets, legal); }; })(name);
       boardEl.appendChild(sq);
     }
+    LEGAL = legal; TARGETS = targets;
 
     if (G.over){
       stateEl.textContent = G.overText;
       stateEl.className = "state over";
+      whoTop.className = "who"; whoBot.className = "who";
+      topTurn.textContent = ""; botTurn.textContent = "";
     } else {
       var check = R.chessInCheck(pos, pos.w);
       stateEl.textContent = (mine ? "your move" : "he is thinking") + (check ? " — check" : "");
       stateEl.className = "state" + (check ? " check" : "");
+      whoTop.className = "who" + (mine ? "" : " on");
+      whoBot.className = "who" + (mine ? " on" : "");
+      topTurn.textContent = mine ? "" : "to move";
+      botTurn.textContent = mine ? "to move" : "";
     }
+    /* the avatar shows which colour each of you actually has */
+    whoBot.querySelector(".av").textContent = G.you === "w" ? "♙" : "♟";
+    whoTop.querySelector(".av").textContent = G.you === "w" ? "♟" : "♙";
     movesEl.innerHTML = "";
     for (var m = 0; m < G.san.length; m += 2){
       var line = document.createElement("div");
@@ -223,31 +313,125 @@
     var e = document.createElement("span"); e.className = cls; e.textContent = txt; row.appendChild(e);
   }
 
-  function tap(name, targets, legal){
+  /* ---- picking a piece up ----
+     Both ways, the way lichess and chess.com both work: drag it, or click the
+     square and click where it goes. One pointer handler does both, because the
+     difference between them is only whether the pointer moved before it came
+     back up. Pointer events rather than mouse ones so a finger works too. */
+  var LEGAL = [], TARGETS = {};
+  var drag = null;   /* {from, el, moved} while a piece is in hand */
+
+  function squareAt(x, y){
+    var el = document.elementFromPoint(x, y);
+    while (el && el !== boardEl){
+      if (el.classList && el.classList.contains("sq")) return el.getAttribute("data-sq");
+      el = el.parentNode;
+    }
+    return null;
+  }
+  function canMoveFrom(name){
+    for (var i = 0; i < LEGAL.length; i++) if (LEGAL[i].slice(0, 2) === name) return true;
+    return false;
+  }
+  /* commit a move onto a square, asking about a promotion if it needs one */
+  function tryMove(from, to){
+    var uci = from + to;
+    if (LEGAL.indexOf(uci) < 0 && LEGAL.indexOf(uci + "q") >= 0) askPromo(uci);
+    else if (LEGAL.indexOf(uci) >= 0) play(uci);
+    else paint();
+  }
+  function endDrag(){
+    if (!drag) return;
+    if (drag.el && drag.el.parentNode) drag.el.parentNode.removeChild(drag.el);
+    var over = boardEl.querySelector(".sq.over");
+    if (over) over.classList.remove("over");
+    drag = null;
+    G.dragFrom = null;
+  }
+
+  boardEl.addEventListener("pointerdown", function(ev){
     if (!G || G.over) return;
     var pos = R.chessParse(G.fen);
-    if (pos.w !== (G.you === "w")) return;      /* not your turn */
-    if (G.pick && targets[name]){
-      var uci = G.pick + name;
+    if (pos.w !== (G.you === "w")) return;            /* not your turn */
+    var name = squareAt(ev.clientX, ev.clientY);
+    if (!name) return;
+    ev.preventDefault();
+
+    /* clicking a square you were already aiming at is a move, drag or no drag */
+    if (G.pick && TARGETS[name]){
+      var from = G.pick;
       G.pick = null;
-      /* a pawn reaching the last rank has to say what it becomes */
-      if (legal.indexOf(uci) < 0 && legal.indexOf(uci + "q") >= 0) askPromo(uci);
-      else play(uci);
+      tryMove(from, name);
       return;
     }
-    var any = false;
-    for (var i = 0; i < legal.length; i++) if (legal[i].slice(0, 2) === name){ any = true; break; }
-    G.pick = any ? name : null;
+    if (!canMoveFrom(name)){ G.pick = null; paint(); return; }
+
+    G.pick = name;
+    G.dragFrom = name;
     paint();
+
+    /* lift a copy of the piece under the cursor */
+    var cells = fenCells(G.fen);
+    var idx = -1;
+    for (var i = 0; i < 64; i++) if (sqName(i) === name){ idx = i; break; }
+    var piece = idx >= 0 ? cells[idx] : "";
+    if (piece){
+      var box = boardEl.getBoundingClientRect();
+      var size = box.width / 8;
+      var el = document.createElement("div");
+      el.className = "drag pc " + (piece === piece.toUpperCase() ? "w" : "b");
+      el.textContent = glyph(piece);
+      el.style.width = size + "px";
+      el.style.height = size + "px";
+      el.style.fontSize = (size * 0.82) + "px";
+      el.style.left = "0px";
+      el.style.top = "0px";
+      document.body.appendChild(el);
+      drag = { from: name, el: el, size: size, moved: false };
+      moveGhost(ev.clientX, ev.clientY);
+      try { boardEl.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
+  });
+
+  function moveGhost(x, y){
+    if (!drag) return;
+    drag.el.style.transform = "translate(" + (x - drag.size / 2) + "px," + (y - drag.size / 2) + "px)";
   }
+
+  boardEl.addEventListener("pointermove", function(ev){
+    if (!drag) return;
+    drag.moved = true;
+    moveGhost(ev.clientX, ev.clientY);
+    var name = squareAt(ev.clientX, ev.clientY);
+    var was = boardEl.querySelector(".sq.over");
+    if (was && was.getAttribute("data-sq") !== name) was.classList.remove("over");
+    if (name && TARGETS[name]){
+      var sq = boardEl.querySelector('.sq[data-sq="' + name + '"]');
+      if (sq) sq.classList.add("over");
+    }
+  });
+
+  boardEl.addEventListener("pointerup", function(ev){
+    if (!drag) return;
+    var from = drag.from, moved = drag.moved;
+    var name = squareAt(ev.clientX, ev.clientY);
+    endDrag();
+    try { boardEl.releasePointerCapture(ev.pointerId); } catch (e) {}
+    /* dropped somewhere it can go — play it. Let go without moving and the
+       piece just stays picked up, which is the click half of click-to-move. */
+    if (moved && name && name !== from && TARGETS[name]){ G.pick = null; tryMove(from, name); return; }
+    if (moved && name !== from){ G.pick = null; }
+    paint();
+  });
+  boardEl.addEventListener("pointercancel", function(){ endDrag(); paint(); });
 
   function askPromo(uci){
     var ov = document.createElement("div");
     ov.className = "promo";
     ["q","r","b","n"].forEach(function(k){
       var b = document.createElement("button");
-      b.className = "pbtn";
-      b.textContent = GLYPH[G.you === "w" ? k.toUpperCase() : k];
+      b.className = "pbtn " + (G.you === "w" ? "w" : "b");
+      b.textContent = glyph(k);
       b.onclick = function(){ document.body.removeChild(ov); play(uci + k); };
       ov.appendChild(b);
     });
@@ -309,13 +493,11 @@
     var pickSide = document.getElementById("side").value;
     var you = pickSide === "r" ? (Math.random() < 0.5 ? "w" : "b") : pickSide;
     G = { fen: R.CHESS_START, san: [], reps: [], hist: [], you: you,
-          pick: null, lastFrom: null, lastTo: null, over: false, overText: "" };
+          pick: null, dragFrom: null, lastFrom: null, lastTo: null, over: false, overText: "" };
     G.reps.push(R.chessKey(R.chessParse(G.fen)));
     lobby.style.display = "none";
     gameEl.style.display = "flex";
-    gnote.textContent = opp === "hard"
-      ? "stockfish, running in this tab. nothing is sent anywhere."
-      : "tung's own head. it ships with the page and plays instantly.";
+    topName.textContent = opp === "hard" ? "stockfish" : "tung's own head";
     if (bot && bot.stop) bot.stop();
     thinkEl.textContent = opp === "hard" ? "waking stockfish…" : "";
     bot = window.TungEngine.make(opp, function(msg){ thinkEl.textContent = msg || ""; });

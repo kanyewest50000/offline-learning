@@ -612,21 +612,34 @@
          panel does, so on a narrow screen the moves go under it rather than
          the board shrinking to a postage stamp. */
       '.chwrap{display:flex;gap:16px;align-items:flex-start;justify-content:center;flex-wrap:wrap;width:100%}' +
-      '.chboard{display:grid;grid-template-columns:repeat(8,1fr);width:min(72vh,440px);aspect-ratio:1;' +
-      'border:2px solid #3a2410;border-radius:6px;overflow:hidden;flex:0 0 auto}' +
+      /* ROWS as well as columns, or a rank with pieces on it is taller than an
+         empty one and the board comes out lopsided */
+      '.chboard{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);' +
+      'width:min(72vh,440px);aspect-ratio:1;touch-action:none;user-select:none;' +
+      'border:2px solid #3a2410;border-radius:4px;overflow:hidden;flex:0 0 auto}' +
       '.chsq{position:relative;padding:0;border:0;border-radius:0;display:flex;align-items:center;' +
-      'justify-content:center;cursor:pointer;font-size:clamp(18px,4.4vh,34px);line-height:1}' +
-      '.chsq.lt{background:#d9b98c}' + '.chsq.dk{background:#8a5a28}' +
-      /* the piece is drawn as a glyph, outlined so a white piece reads on the
-         light squares and a black one on the dark */
-      '.chp{pointer-events:none;text-shadow:0 1px 0 rgba(0,0,0,.35)}' +
-      '.chp.w{color:#fffaf0}' + '.chp.b{color:#241505}' +
-      '.chsq.from{box-shadow:inset 0 0 0 3px #f2c063}' +
+      'justify-content:center;cursor:pointer}' +
+      '.chsq.lt{background:#e8d3ae}' + '.chsq.dk{background:#a97a4c}' +
+      /* One glyph set for both sides — the solid one — coloured and outlined,
+         which is how a real board draws them. The outline glyphs for white
+         against the solid ones for black read as text, not as pieces. */
+      '.chp{width:100%;height:100%;display:flex;align-items:center;justify-content:center;' +
+      'font-size:min(7.4vh,45px);line-height:1;pointer-events:none;user-select:none}' +
+      '.chp.w{color:#fffdf8;-webkit-text-stroke:1.6px #2b2018;text-shadow:0 1.5px 1.5px rgba(0,0,0,.30)}' +
+      '.chp.b{color:#2b2018;-webkit-text-stroke:1.2px #16100b;text-shadow:0 1.5px 1.5px rgba(0,0,0,.25)}' +
+      '.chsq.last{background:rgba(205,210,106,.62)}' + '.chsq.last.dk{background:rgba(170,178,74,.72)}' +
+      '.chsq.from{background:rgba(242,192,99,.78)}' + '.chsq.from.dk{background:rgba(214,161,66,.85)}' +
+      '.chsq.chk{background:radial-gradient(circle,rgba(255,80,60,.95) 0%,rgba(255,80,60,.75) 32%,rgba(255,60,40,0) 72%)}' +
       /* somewhere you could go: a dot on an empty square, a ring round a piece */
-      '.chsq.go::after{content:"";position:absolute;width:26%;height:26%;border-radius:50%;background:rgba(36,21,5,.38)}' +
-      '.chsq.take::after{content:"";position:absolute;inset:6%;border-radius:50%;border:3px solid rgba(36,21,5,.42)}' +
-      '.chrk,.chfl{position:absolute;font-size:9px;font-weight:800;color:rgba(36,21,5,.55);pointer-events:none}' +
-      '.chrk{top:2px;left:3px}' + '.chfl{bottom:1px;right:3px}' +
+      '.chsq.go::after{content:"";position:absolute;width:30%;height:30%;border-radius:50%;background:rgba(20,14,8,.26);pointer-events:none}' +
+      '.chsq.take::after{content:"";position:absolute;inset:0;border-radius:50%;border:6px solid rgba(20,14,8,.26);pointer-events:none}' +
+      '.chsq.over{box-shadow:inset 0 0 0 4px rgba(255,255,255,.65)}' +
+      '.chdrag{position:fixed;z-index:80;pointer-events:none;display:flex;align-items:center;' +
+      'justify-content:center;line-height:1;will-change:transform}' +
+      '.chrk,.chfl{position:absolute;font-size:10px;font-weight:700;pointer-events:none;opacity:.7}' +
+      '.chrk{top:1px;left:3px}' + '.chfl{bottom:0;right:3px}' +
+      '.chsq.lt .chrk,.chsq.lt .chfl{color:#a97a4c}' +
+      '.chsq.dk .chrk,.chsq.dk .chfl{color:#e8d3ae}' +
       '.chside{flex:1 1 190px;min-width:180px;max-width:280px;display:flex;flex-direction:column;gap:9px}' +
       '.chwho{display:flex;align-items:center;gap:8px}' +
       '.chdot{width:11px;height:11px;border-radius:50%;border:1px solid #3a2410;flex:0 0 auto}' +
@@ -644,8 +657,10 @@
          until it has been answered */
       '.chpromo{position:fixed;inset:0;margin:auto;height:max-content;width:max-content;z-index:60;display:flex;gap:8px;' +
       'align-items:center;background:#241505;border:1px solid #8a5a28;border-radius:12px;padding:12px}' +
-      '.chpbtn{font-size:30px;line-height:1;padding:6px 10px;border-radius:8px;border:1px solid #3a2410;' +
-      'background:#d9b98c;color:#241505;cursor:pointer}' +
+      '.chpbtn{font-size:34px;line-height:1;padding:4px 10px;border-radius:8px;border:1px solid #3a2410;' +
+      'background:#e8d3ae;cursor:pointer}' +
+      '.chpbtn.w{color:#fffdf8;-webkit-text-stroke:1.6px #2b2018}' +
+      '.chpbtn.b{color:#2b2018;-webkit-text-stroke:1.2px #16100b}' +
       '.chpbtn:hover{background:#f2c063}' +
       '@media (max-width:620px){.chboard{width:min(92vw,440px)}}' +
       '.pkbet{display:flex;flex-direction:column;gap:7px;width:100%;max-width:470px;margin:0 auto}' +
@@ -1044,7 +1059,6 @@
       '& .chdot{border-color:{line}}' +
       '& .choffer{color:{heading}}' +
       '& .chpromo{background:{surface};border-color:{lineHot}}' +
-      '& .chsq.from{box-shadow:inset 0 0 0 3px {lineHot}}' +
       '& .pkbetnum,& .pkbetbb{color:{heading}}' + '& .pkbetlab{color:{muted}}' +
       '& .pkminlab{color:{muted}}' + '& .pkminval{color:{heading}}' +
       '& .pkslide{accent-color:{lineHot}}' +

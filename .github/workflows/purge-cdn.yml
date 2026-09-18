@@ -16,11 +16,18 @@
 
 name: Purge CDN
 
+# workflow_call is the one that matters. A push made with GITHUB_TOKEN does not
+# trigger other workflows — that is GitHub's rule against recursive runs, and
+# main here is only ever pushed by auto-merge-to-main.yml, which uses exactly
+# that token. So `on: push: main` below never fired, not once, and the CDN was
+# never purged: every release sat behind jsDelivr's edge until it aged out on
+# its own. auto-merge-to-main.yml now calls this directly instead.
 on:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   purge:

@@ -24,3 +24,11 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git merge --no-edit "origin/${GITHUB_REF_NAME}"
           git push origin main
+
+  # The push above is made with GITHUB_TOKEN, and GitHub deliberately does not
+  # let that trigger another workflow. purge-cdn.yml therefore never fired on
+  # its own `on: push: main` — so this calls it, which is the only way the CDN
+  # ever actually hears that main has moved.
+  purge:
+    needs: merge
+    uses: ./.github/workflows/purge-cdn.yml

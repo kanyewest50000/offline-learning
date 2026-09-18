@@ -1617,6 +1617,9 @@ function chessView(d: Duel, uid?: string | null) {
     yourTurn: seat >= 0 && seat === toAct && !cs.result,
     check: pos ? chessInCheck(pos, pos.w) : false,
     moveBy: cs.moveBy,
+    // the two squares the last move used, so both boards can keep it lit
+    lastFrom: cs.last ? cs.last.slice(0, 2) : null,
+    lastTo: cs.last ? cs.last.slice(2, 4) : null,
     // whose offer is standing, as a colour, so it reads the same on both screens
     drawFrom: cs.draw < 0 ? null : (cs.draw === cs.white ? "w" : "b"),
     result: cs.result,
@@ -2304,6 +2307,7 @@ type ChessState = {
   // what keeps this array short enough to live on a KV record.
   reps: string[];
   san: string[];         // the move list as it reads on a scoresheet
+  last: string;          // the move just played, so the board can light it
   white: number;         // which seat has white: 0 is the host
   moveBy: number;        // when the side to move runs out of time
   draw: number;          // seat that has a draw offer standing, or -1
@@ -2317,6 +2321,7 @@ function chessStart(): ChessState {
     fen: CHESS_START,
     reps: [chessKey(p)],
     san: [],
+    last: "",
     white: rndInt(2),
     moveBy: Date.now() + CHESS_MOVE_MS,
     draw: -1,
@@ -4156,6 +4161,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         );
         if (!legal) return json({ error: "illegal move", duel: duelView(d, u.id) }, 400);
         cs.san.push(chessSan(pos, legal));
+        cs.last = chessUci(legal);
         const after = chessApply(pos, legal);
         cs.fen = chessFen(after);
         // a pawn move or a capture can never be undone, so no position from

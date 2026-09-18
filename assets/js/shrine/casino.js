@@ -1948,8 +1948,10 @@
      moves it listed. The legal list arrives as UCI strings for whoever is to
      move, so picking a piece is a filter over that list rather than a second
      copy of the rulebook out here, where it could disagree. */
-  var PIECES={P:"♙",N:"♘",B:"♗",R:"♖",Q:"♕",K:"♔",
-              p:"♟",n:"♞",b:"♝",r:"♜",q:"♛",k:"♚"};
+  /* the solid glyphs for both sides; .chp.w / .chp.b colour them, which is how
+     a real board draws pieces */
+  var SOLIDP={p:"\u265F",n:"\u265E",b:"\u265D",r:"\u265C",q:"\u265B",k:"\u265A"};
+  function pcGlyph(ch){return SOLIDP[String(ch).toLowerCase()]||"";}
   function fenBoard(fen){
     /* FEN's first rank is rank 8; the array that comes back is indexed the
        same way the squares are named, 0 = a8 across to 63 = h1 */
@@ -1982,44 +1984,36 @@
         if(legal[i].slice(0,2)===picked)targets[legal[i].slice(2,4)]=1;
       }
     }
+    /* the king in check gets lit, the way it is on any board worth using */
+    var chkSq=null;
+    if(!c.result&&c.check){
+      var want=c.toAct==="w"?"K":"k";
+      for(var ck=0;ck<64;ck++)if(cells[ck]===want){chkSq=sqName(ck);break;}
+    }
     var order=[];
     for(var q=0;q<64;q++)order.push(flip?63-q:q);
     order.forEach(function(idx){
       var name=sqName(idx);
       var file=idx%8,rank=Math.floor(idx/8);
       var dark=((file+rank)%2)===1;
-      var sq=el("button","chsq"+(dark?" dk":" lt"));
+      var sq=el("div","chsq"+(dark?" dk":" lt"));
       sq.setAttribute("data-sq",name);
+      if(c.lastFrom===name||c.lastTo===name)sq.className+=" last";
+      if(chkSq===name)sq.className+=" chk";
       if(picked===name)sq.className+=" from";
       if(targets[name])sq.className+=cells[idx]?" take":" go";
       var piece=cells[idx];
       if(piece){
-        var pe=el("span","chp"+(piece===piece.toUpperCase()?" w":" b"),PIECES[piece]||"");
+        var pe=el("span","chp"+(piece===piece.toUpperCase()?" w":" b"),pcGlyph(piece));
+        if(PIT.chDrag===name)pe.style.visibility="hidden";
         sq.appendChild(pe);
       }
       /* the coordinates, on the edges only, the way a board is printed */
       if((flip?file===7:file===0))sq.appendChild(el("span","chrk",String(8-rank)));
       if((flip?rank===0:rank===7))sq.appendChild(el("span","chfl","abcdefgh".charAt(file)));
-      sq.onclick=function(){
-        if(!c.yourTurn||c.result)return;
-        if(picked&&targets[name]){
-          var uci=picked+name;
-          /* a pawn reaching the last rank needs to say what it becomes; the
-             server will refuse the move without it */
-          var needs=legal.indexOf(uci)<0&&legal.indexOf(uci+"q")>=0;
-          PIT.chFrom=null;
-          if(needs)chessPromote(d,uci,note);
-          else chessMove(d,uci,note);
-          return;
-        }
-        /* picking up: only a square this player actually has a move from */
-        var any=false;
-        for(var i=0;i<legal.length;i++)if(legal[i].slice(0,2)===name){any=true;break;}
-        PIT.chFrom=any?name:null;
-        pitRender(PIT.last);
-      };
       boardEl.appendChild(sq);
     });
+    chessHand(boardEl,d,c,cells,legal,targets,note);
     wrap.appendChild(boardEl);
 
     /* the side panel: who is who, the clock, the moves, and the two buttons
@@ -2071,6 +2065,115 @@
     wrap.appendChild(side);
     body.appendChild(wrap);
   }
+  /* ---- picking a piece up, both ways ----
+     Drag it, or click the square and click where it goes \u2014 which is what
+     lichess and chess.com both do, and the difference between them is only
+     whether the pointer moved before it came back up. Pointer events rather
+     than mouse ones, so a finger works the same as a cursor. */
+  function chessHand(boardEl,d,c,cells,legal,targets,note){
+    if(!c.yourTurn||c.result)return;
+    var drag=null;
+    var squareAt=function(x,y){
+      var e=document.elementFromPoint(x,y);
+      while(e&&e!==boardEl){
+        if(e.classList&&e.classList.contains("chsq"))return e.getAttribute("data-sq");
+        e=e.parentNode;
+      }
+      return null;
+    };
+    var sqEl=function(n){return boardEl.querySelector('.chsq[data-sq="'+n+'"]');};
+    var movesFrom=function(n){
+      var out={};
+      for(var i=0;i<legal.length;i++)if(legal[i].slice(0,2)===n)out[legal[i].slice(2,4)]=1;
+      return out;
+    };
+    /* The board is rebuilt from scratch on every render, so a render in the
+       middle of a drag throws away the element the pointer was captured on and
+       the drop never arrives. Picking a piece up therefore paints the hints
+       straight onto the squares that are already there, and nothing re-renders
+       until the move is sent or the piece is put back down. */
+    var hint=function(from,tg){
+      var i,all=boardEl.querySelectorAll(".chsq");
+      for(i=0;i<all.length;i++)all[i].classList.remove("from","go","take","over");
+      if(!from)return;
+      var f=sqEl(from);
+      if(f)f.classList.add("from");
+      for(var n in tg){
+        if(!Object.prototype.hasOwnProperty.call(tg,n))continue;
+        var t=sqEl(n);
+        if(t)t.classList.add(occupied(n)?"take":"go");
+      }
+    };
+    var occupied=function(n){
+      for(var i=0;i<64;i++)if(sqName(i)===n)return !!cells[i];
+      return false;
+    };
+    var send=function(from,to){
+      var uci=from+to;
+      /* a pawn reaching the last rank has to say what it becomes; the server
+         refuses the move without it */
+      if(legal.indexOf(uci)<0&&legal.indexOf(uci+"q")>=0)chessPromote(d,uci,note);
+      else if(legal.indexOf(uci)>=0)chessMove(d,uci,note);
+      else{PIT.chFrom=null;hint(null,{});}
+    };
+    var drop=function(){
+      if(!drag)return;
+      if(drag.el&&drag.el.parentNode)drag.el.parentNode.removeChild(drag.el);
+      if(drag.hidden)drag.hidden.style.visibility="";
+      drag=null;PIT.chDrag=null;
+    };
+    boardEl.addEventListener("pointerdown",function(ev){
+      var name=squareAt(ev.clientX,ev.clientY);
+      if(!name)return;
+      ev.preventDefault();
+      /* already aiming at this square: that is the move, click or drag */
+      if(PIT.chFrom&&movesFrom(PIT.chFrom)[name]){var f=PIT.chFrom;PIT.chFrom=null;send(f,name);return;}
+      var tg=movesFrom(name);
+      var any=false;
+      for(var k in tg){if(Object.prototype.hasOwnProperty.call(tg,k)){any=true;break;}}
+      if(!any){PIT.chFrom=null;hint(null,{});return;}
+      PIT.chFrom=name;
+      hint(name,tg);
+      var idx=-1;
+      for(var i=0;i<64;i++)if(sqName(i)===name){idx=i;break;}
+      var piece=idx>=0?cells[idx]:"";
+      if(!piece)return;
+      var box=boardEl.getBoundingClientRect(),size=box.width/8;
+      var g=el("div","chdrag chp "+(piece===piece.toUpperCase()?"w":"b"),pcGlyph(piece));
+      g.style.width=size+"px";g.style.height=size+"px";
+      g.style.fontSize=(size*0.82)+"px";g.style.left="0px";g.style.top="0px";
+      document.body.appendChild(g);
+      var sqel=sqEl(name),hidden=sqel?sqel.querySelector(".chp"):null;
+      if(hidden)hidden.style.visibility="hidden";
+      drag={from:name,el:g,size:size,moved:false,targets:tg,hidden:hidden};
+      /* the render guard reads this: while a piece is in hand the poll must not
+         rebuild the board and take the pointer capture with it */
+      PIT.chDrag=name;
+      g.style.transform="translate("+(ev.clientX-size/2)+"px,"+(ev.clientY-size/2)+"px)";
+      try{boardEl.setPointerCapture(ev.pointerId);}catch(e){}
+    });
+    boardEl.addEventListener("pointermove",function(ev){
+      if(!drag)return;
+      drag.moved=true;
+      drag.el.style.transform="translate("+(ev.clientX-drag.size/2)+"px,"+(ev.clientY-drag.size/2)+"px)";
+      var name=squareAt(ev.clientX,ev.clientY);
+      var was=boardEl.querySelector(".chsq.over");
+      if(was&&was.getAttribute("data-sq")!==name)was.classList.remove("over");
+      if(name&&drag.targets[name]){var sq=sqEl(name);if(sq)sq.classList.add("over");}
+    });
+    boardEl.addEventListener("pointerup",function(ev){
+      if(!drag)return;
+      var from=drag.from,moved=drag.moved,tg=drag.targets;
+      var name=squareAt(ev.clientX,ev.clientY);
+      drop();
+      try{boardEl.releasePointerCapture(ev.pointerId);}catch(e){}
+      /* dropped somewhere it can go — play it. Let go without moving and it
+         stays picked up, which is the click half of click-to-move. */
+      if(moved&&name&&name!==from&&tg[name]){PIT.chFrom=null;send(from,name);return;}
+      if(moved&&name!==from){PIT.chFrom=null;hint(null,{});}
+    });
+    boardEl.addEventListener("pointercancel",function(){drop();PIT.chFrom=null;hint(null,{});});
+  }
   function chessMove(d,uci,note){
     PIT.chFrom=null;
     pitSend("/duel/chess",{id:d.id,move:uci},function(e){
@@ -2086,7 +2189,7 @@
   function chessPromote(d,uci,note){
     var ov=el("div","chpromo");
     ["q","r","b","n"].forEach(function(k){
-      var b=el("button","chpbtn",PIECES[d.chess.youAre==="w"?k.toUpperCase():k]);
+      var b=el("button","chpbtn "+(d.chess.youAre==="w"?"w":"b"),pcGlyph(k));
       b.onclick=function(){if(ov.parentNode)ov.parentNode.removeChild(ov);chessMove(d,uci+k,note);};
       ov.appendChild(b);
     });
@@ -2106,7 +2209,7 @@
     /* leaving the table forgets which cards have already been dealt in, so
        coming back deals the hand in fresh rather than showing it half-landed */
     PIT.pkSeen=null;PIT.pkHand=null;PIT.pkAuto=false;PIT.pkAutoBusy=false;PIT.pkUp=null;PIT.pkUpAt=0;
-    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;PIT.chFrom=null;
+    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;PIT.chFrom=null;PIT.chDrag=null;
     if(PIT.pkKeyBound){document.removeEventListener("keydown",PIT.pkKeyBound);PIT.pkKeyBound=null;}
     /* if a clash was mid-flight its callback will never land, so the render
        gate has to be lifted here or every later paint would be swallowed */
@@ -2690,6 +2793,11 @@
     else if(ROUND.live&&ROUND.live.id===d.id)roundStop();
     /* a clash owns the screen while it plays; the newest state waits for it */
     if(PIT.busy){PIT.pending=d;return;}
+    /* So does a piece in hand. The board is rebuilt from scratch on every
+       render and the duel is polled about once a second, so without this the
+       poll yanks the element the pointer was captured on out from under a drag
+       and the drop lands on nothing. The next poll redraws it a moment later. */
+    if(PIT.chDrag)return;
     /* first sight of a duel establishes the baseline, so reopening one that is
        already several rounds in does not replay them all */
     if(PIT.roundsSeen===null){PIT.roundsSeen=(d.rounds&&d.rounds.length)||0;}
@@ -2721,7 +2829,7 @@
        is left out on purpose, the same as poker's: a countdown must not rebuild
        the board out from under the hand reaching for a piece */
     var ch=d.chess;
-    var chShape=ch?[ch.fen,ch.result,ch.reason,ch.drawFrom,ch.yourTurn?1:0,PIT.chFrom||""].join("~"):"";
+    var chShape=ch?[ch.fen,ch.result,ch.reason,ch.drawFrom,ch.yourTurn?1:0,PIT.chFrom||"",PIT.chDrag||""].join("~"):"";
     var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,d.tungs,who,pkShape,chShape].join("|");
     if(shape===PIT.shape){pitPaintClock();return;}
     PIT.shape=shape;
