@@ -2273,20 +2273,34 @@
     else
       {isKing=pc.textContent==="\u265A";isPawn=pc.textContent==="\u265F";}
     var file=function(n){return n.charCodeAt(0)-97;};
+    /* A square holds more than its piece: the ones down the edges carry the
+       rank and file they are printed with. Empty it with innerHTML and the
+       coordinates go too, and stay gone until the server's reply redraws the
+       board — so only the piece is ever taken off. */
+    var put=function(sq,piece){
+      var had=sq.querySelector(".chp");
+      if(had&&had.parentNode)had.parentNode.removeChild(had);
+      sq.appendChild(piece);
+    };
     /* the rook goes with the king */
     if(isKing&&Math.abs(file(to)-file(from))===2){
       var rank=from.charAt(1);
       var rf=file(to)>file(from)?"h":"a", rt=file(to)>file(from)?"f":"d";
       var r0=sqEl(rf+rank),r1=sqEl(rt+rank);
-      if(r0&&r1){var rk=r0.querySelector(".chp");if(rk){r1.innerHTML="";r1.appendChild(rk);}}
+      if(r0&&r1){var rk=r0.querySelector(".chp");if(rk)put(r1,rk);}
     }
     /* a pawn that goes diagonally onto an empty square took one in passing */
     if(isPawn&&file(to)!==file(from)&&!t.querySelector(".chp")){
       var gone=sqEl(to.charAt(0)+from.charAt(1));
       if(gone){var g=gone.querySelector(".chp");if(g&&g.parentNode)g.parentNode.removeChild(g);}
     }
-    t.innerHTML="";
-    t.appendChild(promo?pcEl(mover==="w"?promo.toUpperCase():promo.toLowerCase()):pc);
+    /* A promotion puts a NEW piece down, so the pawn has to be picked up by
+       hand — appendChild moves the piece it is given, which is what takes an
+       ordinary move off its own square, and a queen is not the pawn. Without
+       this the pawn sat on the seventh rank beside its own new queen for the
+       length of the round trip. */
+    if(promo&&pc.parentNode)pc.parentNode.removeChild(pc);
+    put(t,promo?pcEl(mover==="w"?promo.toUpperCase():promo.toLowerCase()):pc);
     /* light the move and take the hints down, so it reads as played */
     var all=boardEl.querySelectorAll(".chsq");
     for(var i=0;i<all.length;i++)all[i].classList.remove("from","go","take","over","last");

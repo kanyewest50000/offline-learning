@@ -11,7 +11,19 @@ python3 - <<'PY'
 import io
 src = io.open('server.ts', encoding='utf-8').read()
 a = src.index("type ChessPos = {")
-b = src.index("const CHESS_MOVE_MS")
+# Everything from the position type down to the clock: the rules, and nothing
+# else. The clock is the server's own — the browser game has no escrow to
+# protect and no table to expire — so it is where the cut is made. Anchored on
+# the declaration rather than on the comment above it, and loud if it is ever
+# renamed again: the last rename left this script dying on a traceback, which
+# meant the generated rules could not be regenerated at all.
+try:
+    b = src.index("const CHESS_TC")
+except ValueError:
+    raise SystemExit(
+        "build-chess-rules.sh: cannot find `const CHESS_TC` in server.ts.\n"
+        "That is where the rules stop and the clock starts. If the clock block "
+        "was renamed, point this script at the new name.")
 io.open('/tmp/chess-src.ts', 'w', encoding='utf-8').write(
     src[a:b] +
     "\nexport { chessParse, chessFen, chessMoves, chessApply, chessSan, chessUci, "

@@ -71,6 +71,29 @@ must(typeof res.body.cleared === "number" && res.body.cleared >= 5,
   `expected the messages and the reaction to be counted, got ${res.body.cleared}`);
 must((await dump()).length === 0, "the chat log is not empty after clearing");
 
+// ---- and the words are actually gone ----
+// The log is not the message. ["msg", id] is what a line SAID, and a reply
+// quotes by id with the server filling the words in from there — so a wipe
+// that only took the log left anybody still holding an id able to post a
+// fresh line carrying a wiped message's author and text straight back into
+// the room, and able to react to something nobody could see.
+{
+  const quoted = await post("/send", {
+    token: bob.token, id: tag + "-quote", text: "look what I kept",
+    reply: { id: tag + "-1" },
+  });
+  must(quoted.body?.ok === true, "the reply itself should still send");
+  const back = (await dump()).find((m: { id: string }) => m.id === tag + "-quote");
+  // deno-lint-ignore no-explicit-any
+  must(!(back as any)?.reply,
+    "a wiped message came back as a quote: " + JSON.stringify((back as any)?.reply));
+  const again = await post("/react", { token: bob.token, id: tag + "-1", e: "🔥", op: 1, eid: tag + "r2" });
+  must(again.body?.error === "gone",
+    "a wiped message can still be reacted to: " + JSON.stringify(again.body));
+  // put the room back to empty for the checks below
+  await clear();
+}
+
 // a fresh open sees an empty room (bar anything tung has said since)
 const fresh = await j("/events?since=0&token=" + encodeURIComponent(bob.token));
 // deno-lint-ignore no-explicit-any
@@ -99,4 +122,4 @@ must((await clear()).body?.ok === true, "clearing an empty log should still succ
 must(!!(await post("/send", { token: alice.token, id: tag + "-z", text: "still here" })).body?.ok,
   "clearing the chat must not have disturbed accounts");
 
-console.log("clear chat: admin-key only, wipes messages and reactions, keeps accounts, and a client connected before the wipe still receives what comes after");
+console.log("clear chat: admin-key only, wipes messages and reactions — the quote index and the reaction state with them, so a wiped line cannot be quoted back into the room or reacted to — keeps accounts, and a client connected before the wipe still receives what comes after");

@@ -417,8 +417,12 @@ king, the pawn taken in passing, what a promotion turns into. It still owns no
 rules, and it does not guess the scoresheet — spelling a move in algebraic needs
 the rulebook, so the move list is the server's and arrives with the poll.
 
-Resigning and offering a draw are there because chess needs them; an offer does
-not survive the move that answers it.
+Resigning and offering a draw are there because chess needs them. An offer
+stands for whoever made it and comes off the board three ways: they withdraw
+it, the player it was made to declines it, or a move answers it — an offer
+does not survive the move that answers it. Met with an offer of its own, it
+is an agreement rather than a second offer, which is why offering and
+accepting are one action and not two.
 
 **Tung Chess**, in the originals, is the same game against the computer instead
 of a person — and it never touches the backend at all. No table, no escrow, no
@@ -428,6 +432,17 @@ and start instantly, and *stockfish* is the real engine, 350KB of WebAssembly
 served from this site as a static file and run in a Worker. If the wasm cannot
 be fetched — a network that blocks it, a school proxy — the game falls back to
 tung's own head at its strongest and says so rather than breaking.
+
+**Take it back** goes back until it is *your* move, however many plies that is,
+rather than counting two off the end: one back from a mate he has just delivered
+is his move, and a board handed to somebody who is not going to play it sits on
+“he is thinking” until you give up and start again. If there is no game left to
+go back through — you have black and he has only just opened — he opens again.
+He answers a position, not a board, so a take-back invalidates whatever he is
+chewing on: the page drops an answer to a position it has left, and a second
+question to stockfish stops the search already running rather than talking over
+it, which is what stopped his reply to the board you took back from landing on
+the board you took it back to.
 
 The rules in the browser are **generated** from the ones in `server.ts` by
 `scripts/build-chess-rules.sh`, not written beside them: two hand-maintained
@@ -707,10 +722,30 @@ reaches no history entry, no bookmark and no access log. An old bookmark with
 parameter is still accepted, because the scripts in `scripts/` pass it that way
 from a terminal, where none of those exposures apply.
 
+The panel is one inline script, so a syntax error anywhere in it is a syntax
+error everywhere: the shell renders, the key box sits there, and not one button
+does anything. `\n` inside the template literal that holds the page is a real
+newline by the time it reaches the browser, which inside a JS string is the end
+of the script — it has to be written `\\n`. That is worth a look before
+wondering why a pane is empty.
+
 `/admin` has a **Post as…** pane: drop a line into the chat under an approved
 member's name, or as tung, who posts with his own mark. It is the one place in
 the app where a message's author is not the account that sent the request —
 key-gated, and the name still has to belong to somebody real.
+
+**Clearing the chat log** takes the words with it, not just the log. A line
+lives in two places: the `["ev", seq]` entry the room replays, and `["msg", id]`
+— what it actually said, which is where the server reads a quote from when
+somebody replies by id, and what a reaction checks before it is allowed. Left
+standing, anybody still holding an id could post a fresh line carrying a wiped
+message's author and text back into the room word for word, and could still
+react to something nobody could see. So the quote index goes with the log, and
+`["rx"]` — who has reacted to what — goes with it rather than pointing at
+messages that no longer exist, which is what a single moderator delete has
+always done. The `["seq"]` counter deliberately stays: it is the cursor every
+connected client is holding, and winding it back would make the next messages
+reuse numbers those clients have already passed, so they would never arrive.
 
 There are two bans on the **Manage users** pane and they are not the same ban.
 **ban** shuts the whole shrine: chat, casino, the pit, the veil, everything.

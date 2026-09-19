@@ -329,6 +329,50 @@ must(Math.abs(loseAfter - (loseBefore - bet)) < 1e-9,
 must(Math.abs((winAfter + loseAfter) - (winBefore + loseBefore)) < 1e-9,
   "and the two of them together must be exactly where they started");
 
+// --- offering a draw, and taking the offer back ------------------------------
+// Both halves. Accepting is the one that ends a game, so it is the one with
+// money on it; declining is the one that quietly did nothing for a while —
+// the offer was only cleared for the seat that MADE it, so the player it was
+// made to could press decline all day and it stayed standing on both boards.
+{
+  await nap(1200);
+  const H = await member("csH"), I = await member("csI");
+  let at = "";   // whichever table the two of them are sitting at
+  const t4 = await table(H, I, 0);
+  at = t4.id;
+  const offer = (tok: string) => post("/duel/chess", { token: tok, id: at, action: "draw" });
+  const clear = (tok: string) => post("/duel/chess", { token: tok, id: at, action: "unoffer" });
+  // deno-lint-ignore no-explicit-any
+  const drawFrom = (r: any) => r.body?.duel?.chess?.drawFrom ?? null;
+
+  must(drawFrom(await offer(t4.wTok)) === "w", "white's offer must stand as white's");
+  // the player it was made to says no: it comes off the board for both of them
+  must(drawFrom(await clear(t4.bTok)) === null, "declining must take the offer off the board");
+  must(drawFrom(await move(t4.wTok, t4.id, "e2e4")) === null,
+    "and it must not come back on the next move");
+
+  // the other half: whoever made it may withdraw it themselves
+  must(drawFrom(await offer(t4.bTok)) === "b", "black may offer in turn");
+  must(drawFrom(await clear(t4.bTok)) === null, "and withdraw their own offer");
+
+  // and an offer answered by an offer is an agreement
+  must(drawFrom(await offer(t4.bTok)) === "b", "black offers again");
+  const agreed = await offer(t4.wTok);
+  // deno-lint-ignore no-explicit-any
+  const cs4 = (agreed.body.duel as any).chess;
+  must(cs4.result === "d" && cs4.reason === "agreed",
+    "an offer met with an offer is a draw: " + JSON.stringify(cs4.result));
+  must((agreed.body.duel as { winner: string | null }).winner === null, "a draw has no winner");
+  // an offer does not survive the move that answers it. The same two sit down
+  // again rather than two more being minted: the draw released them both, and
+  // a test that applies for a fresh member every few lines is a test that
+  // eventually trips the shrine's own rate limit on /apply.
+  const t5 = await table(H, I, 0);
+  at = t5.id;
+  must(drawFrom(await offer(t5.wTok)) === "w", "standing before the move");
+  must(drawFrom(await move(t5.wTok, t5.id, "d2d4")) === null, "and gone after it");
+}
+
 // --- the clock at a real table -----------------------------------------------
 {
   await nap(1200);
@@ -472,6 +516,24 @@ must(Math.abs((winAfter + loseAfter) - (winBefore + loseBefore)) < 1e-9,
     "stockfish must be loaded from this host as a static file");
   must(/playing tung's own head instead/.test(engineSrc),
     "and it must fall back when stockfish cannot be fetched at all");
+  // A search runs for the better part of a second and the board can move
+  // underneath it — a take-back is exactly that. Two `go`s outstanding at once
+  // and the bestmove that comes back answers whichever position it feels like,
+  // so a new question has to stop the running search and wait for it to land.
+  must(/w\.postMessage\("stop"\)/.test(engineSrc),
+    "asking stockfish a second question must stop the search already running");
+
+  // The page's take-back goes back until it is YOUR move rather than counting
+  // plies off. Counting landed on the computer's move after it had mated you,
+  // or after its first move when you have black, and the board then sat on
+  // "he is thinking" with nobody to play it — see games/tung/chess.html.
+  const page = await Deno.readTextFile(`${ROOT}/games/tung/chess.html`);
+  must(!/var back = G\.over \? 1 : 2/.test(page),
+    "the take-back must not count plies — it lands on the computer's move");
+  must(/while \(G\.hist\.length && !yours\(\)\)/.test(page),
+    "it must go back until it is your turn");
+  must(/if \(!yours\(\)\) setTimeout\(botMove/.test(page),
+    "and ask him to play again if there is no game left to go back through");
 }
 
 // --- the client draws a board and owns no rules ------------------------------
@@ -495,5 +557,7 @@ console.log(
     "loser put up. The six clocks are the six the lobby offers and nothing else gets through; " +
     "each player spends only their own time, the increment comes back on their own move, the " +
     "table expires when the running clock does, and flagging against a side that could never " +
-    "have mated is a draw rather than a loss",
+    "have mated is a draw rather than a loss. A draw offer stands for whoever made it, comes " +
+    "off the board when it is declined as well as when it is withdrawn, does not survive the " +
+    "move that answers it, and met with an offer of its own is an agreement",
 );

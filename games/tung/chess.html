@@ -411,7 +411,7 @@
     var over = boardEl.querySelector(".sq.over");
     if (over) over.classList.remove("over");
     drag = null;
-    G.dragFrom = null;
+    if (G) G.dragFrom = null;   /* "new game" mid-drag leaves nothing to clear */
   }
 
   boardEl.addEventListener("pointerdown", function(ev){
@@ -543,10 +543,16 @@
 
   function botMove(){
     if (!G || G.over || !bot) return;
+    /* What he is being asked about, so that what comes back can be checked
+       against it. He thinks for the better part of a second, and a take-back
+       inside that second leaves his answer addressed to a position that is no
+       longer on the board — played anyway, it moves whatever piece happens to
+       be standing on those two squares now, on a turn that is not even his. */
+    var asked = G.turn, fen = G.fen;
     thinkEl.textContent = "thinking…";
-    bot.pick(G.fen, function(uci){
+    bot.pick(fen, function(uci){
+      if (!G || G.over || G.turn !== asked || G.fen !== fen) return;
       thinkEl.textContent = "";
-      if (!G || G.over) return;
       if (!uci){ G.over = true; G.overText = "he has resigned. take it."; paint(); return; }
       play(uci);
     });
@@ -557,7 +563,7 @@
     var opp = document.getElementById("opp").value;
     var pickSide = document.getElementById("side").value;
     var you = pickSide === "r" ? (Math.random() < 0.5 ? "w" : "b") : pickSide;
-    G = { fen: R.CHESS_START, san: [], reps: [], hist: [], you: you,
+    G = { fen: R.CHESS_START, san: [], reps: [], hist: [], you: you, turn: 0,
           pick: null, dragFrom: null, lastFrom: null, lastTo: null, over: false, overText: "" };
     G.reps.push(R.chessKey(R.chessParse(G.fen)));
     lobby.style.display = "none";
@@ -589,18 +595,42 @@
     gameEl.style.display = "none";
     lobby.style.display = "flex";
   };
-  /* a take-back undoes the pair, so it is your move again rather than his */
+  /* Every position since the last irreversible move — the only window a
+     repetition can happen in — worked out from the game so far rather than
+     kept in step by hand. A take-back cannot just pop the list: play() empties
+     it on a pawn move or a capture, so popping back across one left a window
+     holding fewer positions than the game had actually been in. */
+  function repsFrom(){
+    var chain = G.hist.concat([G.fen]), out = [];
+    for (var i = chain.length - 1; i >= 0; i--){
+      var p = R.chessParse(chain[i]);
+      out.unshift(R.chessKey(p));
+      if (p.half === 0) break;   /* a pawn move or a capture: nothing before it can come back */
+    }
+    return out;
+  }
+  /* A take-back hands the board back to YOU — however many plies that is,
+     rather than a count of them. Counting got it wrong at both ends: two plies
+     back from his mating move is one ply too many, and one ply back from it
+     landed on HIS move with nobody left to play it, which froze the board on
+     "he is thinking" until you started a new game. Undoing his first move when
+     you have black did the same. So it goes back until it is your turn, and if
+     there is no game left to go back through, it asks him to open again. */
   document.getElementById("undo").onclick = function(){
     if (!G || !G.hist.length) return;
-    var back = G.over ? 1 : 2;
-    while (back-- > 0 && G.hist.length){
+    var yours = function(){ return R.chessParse(G.fen).w === (G.you === "w"); };
+    do {
       G.fen = G.hist.pop();
       G.san.pop();
-      G.reps.pop();
-    }
-    if (!G.reps.length) G.reps.push(R.chessKey(R.chessParse(G.fen)));
+    } while (G.hist.length && !yours());
+    G.reps = repsFrom();
     G.over = false; G.overText = ""; G.pick = null; G.lastFrom = G.lastTo = null;
+    /* whatever he is chewing on is an answer to a board that no longer exists */
+    G.turn++;
+    endDrag();
+    thinkEl.textContent = "";
     paint();
+    if (!yours()) setTimeout(botMove, 180);
   };
 })();
 </script>

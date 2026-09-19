@@ -4242,7 +4242,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
           continue;
         }
       } else if (action === "unoffer") {
-        if (cs.draw === seat) cs.draw = -1;
+        // Both halves of taking an offer off the board: the player who made it
+        // withdrawing, and the player it was made to declining. The client only
+        // ever sends this as a decline, and gating it on `cs.draw === seat` made
+        // that a no-op — the offer stayed standing on both screens until the
+        // next move happened to clear it, and "decline" did nothing at all.
+        // Either seat may clear it, and a seat is all that reaches here.
+        cs.draw = -1;
         const next: Duel = { ...d, chess: cs };
         if (await commitDuel(entry, next, [])) {
           return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
@@ -4525,22 +4531,42 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   }
 
   // ---------- admin: wipe the chat log ----------
-  // Drops every retained event — messages and the reactions on them alike.
+  // Drops every retained event — messages and the reactions on them alike —
+  // and the two indexes hanging off them, which is what a single moderator
+  // delete has always done and what this used to leave behind.
+  //
+  // The log alone was not the message. ["msg", id] is what a message actually
+  // said, and a reply quotes by id with the server filling the words in from
+  // there: with it left standing, anybody still holding an id could post a
+  // fresh line carrying a wiped message's author and text back into the room,
+  // word for word, and could still react to something nobody could see. So
+  // the quote index goes with the log, and ["rx"] — who has reacted to what —
+  // goes with it too rather than being left pointing at messages that no
+  // longer exist.
+  //
   // The ["seq"] counter deliberately survives: it is what every connected
   // client is holding as its cursor, and winding it back would make the next
   // messages reuse seq numbers those clients have already passed, so they would
   // never see them. Leaving it be means an open chat simply goes quiet until
-  // someone speaks again. Accounts, balances and shop items are untouched.
+  // someone speaks again. Accounts, balances, DMs and shop items are untouched.
   if (req.method === "POST" && path === "/admin/clearchat") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
     if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
-    let cleared = 0;
+    let cleared = 0, quotes = 0, reactions = 0;
     for await (const e of kv.list({ prefix: ["ev"] })) {
       await kv.delete(e.key);
       cleared++;
     }
-    return json({ ok: true, cleared });
+    for await (const e of kv.list({ prefix: ["msg"] })) {
+      await kv.delete(e.key);
+      quotes++;
+    }
+    for await (const e of kv.list({ prefix: ["rx"] })) {
+      await kv.delete(e.key);
+      reactions++;
+    }
+    return json({ ok: true, cleared, quotes, reactions });
   }
 
   // ---------- admin: read / flip the web veil ----------
@@ -6010,7 +6036,12 @@ if(window.__ADMIN_KEY){
 var balances=document.getElementById("balances"),shop=document.getElementById("shop"),chatlog=document.getElementById("chatlog");
 var pendingCache=null,usersCache=null,balancesCache=null,pendingErr=null,usersErr=null,balancesErr=null;
 var balancesDefault=10;   /* the house loan cap, as the server reports it */
-try{var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}catch(e){}
+/* A key remembered from last time, for a panel opened without the door in
+   front of it. It only ever FILLS AN EMPTY box: the gate above has already
+   put the key that just proved itself there, and a stale one left over from
+   before the key was rotated must not be allowed to overwrite it — every
+   pane would come back "forbidden" on a key the door had just accepted. */
+try{if(!keyEl.value){var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}}catch(e){}
 function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();refreshVeil();}
 document.getElementById("load").onclick=loadAll;
 document.getElementById("dumpChat").onclick=dumpChat;
@@ -6177,7 +6208,7 @@ function renderPending(){
     var go=document.createElement("button");go.className="no";go.textContent="send him to tung";
     go.style.marginLeft="auto";
     go.onclick=function(){
-      if(!confirm("send "+a.username+" to tung?\n\nthey are rejected and banned, and the site goes blank for them. only approving them again undoes it."))return;
+      if(!confirm("send "+a.username+" to tung?\\n\\nthey are rejected and banned, and the site goes blank for them. only approving them again undoes it."))return;
       decide(a.id,"banish");
     };
     row.appendChild(ok);row.appendChild(no);row.appendChild(go);el.appendChild(row);

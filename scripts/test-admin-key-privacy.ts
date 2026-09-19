@@ -57,6 +57,44 @@ must(wrong.status === 403, "a wrong key must be refused: " + wrong.status);
 must(!(await wrong.text()).includes("pane-users"), "and told nothing");
 
 // ---------------------------------------------------------------------------
+// the panel it hands over has to actually run
+//
+// It is ONE inline script, so a syntax error anywhere in it is a syntax error
+// everywhere: the shell renders, the key box sits there, the panes keep their
+// placeholder text and not one button does anything. Nothing else here would
+// notice — every check in this file is about an HTTP response, and a page that
+// throws on parse still answers 200 with the right markup in it.
+//
+// It has happened: ADMIN_HTML is a template literal, so a `\n` written into a
+// confirm() string is a REAL newline by the time it reaches the browser, and a
+// real newline inside a JS string literal ends the script. It has to be `\\n`.
+// Parsing it is the whole test; `new Function` compiles without running.
+{
+  const script = panelHtml.match(/<script>([\s\S]*)<\/script>/);
+  must(!!script, "the panel must ship its script");
+  try {
+    new Function(script![1]);
+  } catch (e) {
+    throw new Error(
+      "the panel's script does not parse, so nothing on the page works: " +
+        (e instanceof Error ? e.message : String(e)) +
+        " \u2014 look for a lone \\n in a string inside the ADMIN_HTML template literal",
+    );
+  }
+  // and the key the door just proved must be the key the panel uses. A key
+  // remembered from last time only ever fills an EMPTY box: overwriting the
+  // one the gate handed over meant every pane came back "forbidden" on a key
+  // the door had just accepted, and the panel then wrote the stale one
+  // straight back to localStorage.
+  const remember = panelHtml.indexOf('localStorage.getItem("shrine-admin-key")');
+  must(remember > 0, "the panel still remembers a key between visits");
+  must(/if\(!keyEl\.value\)\{var qk=/.test(panelHtml),
+    "a remembered key must not overwrite the one the gate handed over");
+  must(panelHtml.indexOf("window.__ADMIN_KEY") < remember,
+    "the gate's handover has to happen before anything else touches the box");
+}
+
+// ---------------------------------------------------------------------------
 // every admin read takes the header, and still takes the query for the scripts
 for (const route of ["/admin/pending", "/admin/users", "/admin/balances", "/admin/chat", "/admin/veil", "/admin/shop", "/admin/themes"]) {
   const viaHeader = await fetch(API + route, { headers: { "x-admin-key": ADMIN } });
@@ -107,5 +145,6 @@ console.log(
   "admin key: a GET never yields the panel and an old keyed bookmark is redirected to the " +
     "bare path; the panel arrives from a POST and every one of its reads carries the key in a " +
     "header, so it reaches no address bar, no history entry and no access log — while the " +
-    "query parameter still works from a terminal",
+    "query parameter still works from a terminal. The panel it hands over parses, and the key " +
+    "the door just proved is the one it uses",
 );

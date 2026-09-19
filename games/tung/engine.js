@@ -189,14 +189,23 @@
      --------------------------------------------------------------------- */
   function stockfish(note) {
     var w = null, ready = false, waiting = null, dead = false;
+    /* whether a `go` is outstanding, and the request that is to follow it. Two
+       searches at once is not a conversation UCI has: the second `go` arrives
+       mid-search and the `bestmove` that comes back answers whichever position
+       it feels like. A take-back is exactly how that happens — the board moves
+       while he is thinking — so a new question stops the old search and waits
+       for it to land rather than talking over it. */
+    var busy = false, queued = null;
     var fallback = ownHead(3, 0);
 
     function giveUp(why) {
       if (dead) return;
       dead = true;
+      busy = false;
       try { if (w) w.terminate(); } catch (e) {}
       w = null;
       note(why + " — playing tung's own head instead.");
+      if (queued) { waiting = queued; queued = null; }
       if (waiting) { var f = waiting; waiting = null; fallback.pick(f.fen, f.done); }
     }
 
@@ -223,6 +232,10 @@
         if (line.indexOf("bestmove") === 0) {
           var uci = line.split(/\s+/)[1];
           var cb = w.__cb; w.__cb = null;
+          busy = false;
+          /* a question was asked while this one was still being answered, so
+             this answer is about a board nobody is looking at any more */
+          if (queued) { var nx = queued; queued = null; ask(nx.fen, nx.done); return; }
           if (cb) cb(uci && uci !== "(none)" ? uci : null);
         }
       };
@@ -232,6 +245,14 @@
     }
 
     function ask(fen, done) {
+      if (busy) {
+        /* cut the running search short and let this one go when its bestmove
+           comes back; UCI's own way of saying "never mind, the board moved" */
+        queued = { fen: fen, done: done };
+        w.postMessage("stop");
+        return;
+      }
+      busy = true;
       w.__cb = done;
       w.postMessage("position fen " + fen);
       w.postMessage("go movetime 700");
@@ -243,7 +264,10 @@
         if (!ready) { waiting = { fen: fen, done: done }; return; }
         ask(fen, done);
       },
-      stop: function () { dead = true; try { if (w) w.terminate(); } catch (e) {} w = null; }
+      stop: function () {
+        dead = true; busy = false; queued = null; waiting = null;
+        try { if (w) w.terminate(); } catch (e) {} w = null;
+      }
     };
   }
 
