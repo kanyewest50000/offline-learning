@@ -617,8 +617,18 @@
       '.chboard{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);' +
       'width:min(72vh,440px);aspect-ratio:1;touch-action:none;user-select:none;' +
       'border:2px solid #3a2410;border-radius:4px;overflow:hidden;flex:0 0 auto}' +
+      /* An 8x8 grid of pointer cursors says everything on the board is worth
+         clicking, when on most of it nothing happens at all. The cursor only
+         offers something where there IS something: a piece you could pick up
+         (.pick, which chessPaint puts only on squares the server listed a move
+         from — so never on their turn and never on their pieces), a square the
+         piece in hand could go to (.go/.take), and the closed hand while one is
+         actually being carried. Everywhere else is an ordinary arrow. */
       '.chsq{position:relative;padding:0;border:0;border-radius:0;display:flex;align-items:center;' +
-      'justify-content:center;cursor:pointer}' +
+      'justify-content:center;cursor:default}' +
+      '.chsq.pick{cursor:grab}' +
+      '.chsq.go,.chsq.take{cursor:pointer}' +
+      '.chboard.held,.chboard.held .chsq{cursor:grabbing}' +
       '.chsq.lt{background:#e8d3ae}' + '.chsq.dk{background:#a97a4c}' +
       /* One glyph set for both sides — the solid one — coloured and outlined,
          which is how a real board draws them. The outline glyphs for white
@@ -645,6 +655,10 @@
       '.chsq.lt .chrk,.chsq.lt .chfl{color:#a97a4c}' +
       '.chsq.dk .chrk,.chsq.dk .chfl{color:#e8d3ae}' +
       '.chside{flex:1 1 190px;min-width:180px;max-width:280px;display:flex;flex-direction:column;gap:9px}' +
+      /* the draw offer and the two buttons are built once as empty slots so the
+         order down the panel is fixed; display:contents keeps an empty one from
+         spending one of the column's 9px gaps on nothing */
+      '.chslot{display:contents}' +
       '.chwho{display:flex;align-items:center;gap:8px}' +
       '.chdot{width:11px;height:11px;border-radius:50%;border:1px solid #3a2410;flex:0 0 auto}' +
       '.chdot.w{background:#fffaf0}' + '.chdot.b{background:#241505}' +
@@ -697,6 +711,36 @@
       'color:#f2c063;font-size:17px;font-weight:800;cursor:pointer;line-height:1}' +
       '.pkslide{flex:1;min-width:0;accent-color:#c8823c;height:26px}' +
       '.pkbetgo{display:flex;gap:7px}' +
+      /* ---- the raise panel, on a screen with room across rather than down ----
+         Stacked it is five rows and about 230px: four times the height of the
+         action bar it replaces, under a table that already fills a laptop
+         window. So pressing RAISE pushed the one button the panel exists for
+         off the bottom of the screen, and confirming a raise meant going to
+         look for it with a clock running. A phone column has nowhere to put
+         those rows except under each other. A desktop window has width going
+         spare, so across they go: the amount and its minimum down the left, the
+         shortcuts and the slider in the middle, BACK and BET full-height down
+         the right. Two rows, about ninety pixels — near enough what the bar it
+         replaces took, so opening it barely moves the table at all.
+
+         This sits AFTER the rules it overrides on purpose. @media adds no
+         specificity of its own, so the desktop block further up loses to any
+         base rule of the same weight that is written below it. */
+      '@media (min-width:700px){' +
+      '.pkbet{display:grid;max-width:780px;' +
+      'grid-template-columns:minmax(190px,1fr) minmax(220px,1.25fr) 168px;' +
+      'grid-template-areas:"val pre go" "min sld go";' +
+      'align-items:center;column-gap:12px;row-gap:7px}' +
+      '.pkbetval{grid-area:val;padding:5px 11px}' +
+      '.pkminrow{grid-area:min}' +
+      '.pkpre-row{grid-area:pre}' +
+      '.pkslidrow{grid-area:sld}' +
+      /* the two that matter take the whole height of the block, which is a far
+         easier thing to put a pointer on than a 52px strip */
+      '.pkbetgo{grid-area:go;align-self:stretch}' +
+      '.pkbetgo .pkact{min-height:0}' +
+      '.pkstep{height:32px}' + '.pkslide{height:24px}' +
+      '}' +
       /* the pre-action: a tick box, because it sets what will happen rather
          than doing anything now, and a mark beside it that says so */
       '.pkprerow{display:flex;align-items:center;justify-content:center;gap:8px}' +

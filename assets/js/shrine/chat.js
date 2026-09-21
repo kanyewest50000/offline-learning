@@ -689,7 +689,13 @@
     'if(DM===conv){' +
     'if(r.error==="you_blocked")dmSetShut(true,true);' +
     'else if(r.error==="closed")dmSetShut(true,false);' +
-    'else convsub.textContent=r.error==="slow down"?"slow down \u2014 too many messages."' +
+    /* the conversation cap: a first line to somebody new is the one thing a
+       DM can do that costs the shrine anything lasting, so there is a ceiling
+       on how many conversations one member may have going. Saying which it
+       is beats "that did not send" — nothing is wrong with the line, and
+       nothing about trying again will help. */
+    'else if(r.error==="too_many")convsub.textContent="too many conversations open \u2014 this would be a new one."' +
+    ';else convsub.textContent=r.error==="slow down"?"slow down \u2014 too many messages."' +
     ':"that did not send.";}}' +
     'dmListRefresh();' +
     '}).catch(function(){if(row&&row.parentNode)row.parentNode.removeChild(row);' +

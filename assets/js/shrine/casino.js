@@ -1910,7 +1910,7 @@
      (pitTick), both owned by PIT and both torn down by clearTimer(), which every
      navigation already calls. */
   var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null,reveal:[],
-    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null,pkAuto:false,pkAutoBusy:false,pkUp:null,pkUpAt:0,pkRaise:false,pkAmt:0,pkKeys:null,pkKeyBound:null};
+    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null,pkAuto:false,pkAutoBusy:false,pkUp:null,pkUpAt:0,pkRaise:false,pkShow:false,pkAmt:0,pkKeys:null,pkKeyBound:null};
   /* the clash: the beat between a round resolving and the next one starting */
   var CL_IN_MS=520, CL_HIT_MS=600, CL_SAY_MS=1000, CL_HOLD_MS=2050;
   /* How a cut is dealt. There is nothing to play in this game — both cards are
@@ -2029,102 +2029,71 @@
   function sqName(idx){ /* idx is 0 = a8 */
     return "abcdefgh".charAt(idx%8)+String(8-Math.floor(idx/8));
   }
+  /* ---- built once, repainted in place ----
+     A move used to be a whole new screen. The poll saw a different FEN, the
+     shape gate in pitRender() failed, and the entire casino view came down and
+     went back up — back button, header, names, pot, clock, board and panel. On
+     the receiving end that reads as the board flashing every time the other
+     person moves, because that is exactly what it is; thirty-two fresh <img>
+     elements on top of it, each of which has to come back out of cache and
+     decode before its square stops being empty.
+
+     So the skeleton is built once per game and nothing after that rebuilds it.
+     chessPaint() walks the sixty-four squares and changes only what differs,
+     and the piece that MOVED is carried across as the element it already was
+     rather than a new one, so its image never reloads. pitRender() sends a
+     position-only change straight to chessPaint() instead of re-mounting.
+
+     The handlers are bound to the board once and now outlive the position that
+     was on it when they were attached, so they read the live one out of 'ui'
+     rather than off the arguments they were built with. */
   function chessBoard(body,d,note){
     var c=d.chess;if(!c)return;
     pcProbe();
     var flip=c.youAre==="b";
-    var cells=fenBoard(c.fen);
-    var legal=c.legal||[];
     var wrap=el("div","chwrap");
     var boardEl=el("div","chboard");
-    var picked=PIT.chFrom||null;
-    /* where the picked piece could go, so the squares can be dotted */
-    var targets={};
-    if(picked){
-      for(var i=0;i<legal.length;i++){
-        if(legal[i].slice(0,2)===picked)targets[legal[i].slice(2,4)]=1;
-      }
-    }
-    /* the king in check gets lit, the way it is on any board worth using */
-    var chkSq=null;
-    if(!c.result&&c.check){
-      var want=c.toAct==="w"?"K":"k";
-      for(var ck=0;ck<64;ck++)if(cells[ck]===want){chkSq=sqName(ck);break;}
-    }
+    var squares={},base={};
     var order=[];
     for(var q=0;q<64;q++)order.push(flip?63-q:q);
     order.forEach(function(idx){
       var name=sqName(idx);
       var file=idx%8,rank=Math.floor(idx/8);
       var dark=((file+rank)%2)===1;
-      var sq=el("div","chsq"+(dark?" dk":" lt"));
+      var cls="chsq"+(dark?" dk":" lt");
+      var sq=el("div",cls);
       sq.setAttribute("data-sq",name);
-      if(c.lastFrom===name||c.lastTo===name)sq.className+=" last";
-      if(chkSq===name)sq.className+=" chk";
-      if(picked===name)sq.className+=" from";
-      if(targets[name])sq.className+=cells[idx]?" take":" go";
-      var piece=cells[idx];
-      if(piece){
-        var pe=pcEl(piece);
-        if(PIT.chDrag===name)pe.style.visibility="hidden";
-        sq.appendChild(pe);
-      }
-      /* the coordinates, on the edges only, the way a board is printed */
+      /* the coordinates, on the edges only, the way a board is printed. They
+         belong to the square rather than to whatever is standing on it, so they
+         go down once here and are never touched again. */
       if((flip?file===7:file===0))sq.appendChild(el("span","chrk",String(8-rank)));
       if((flip?rank===0:rank===7))sq.appendChild(el("span","chfl","abcdefgh".charAt(file)));
+      squares[name]=sq;base[name]=cls;
       boardEl.appendChild(sq);
     });
-    chessHand(boardEl,d,c,cells,legal,targets,note);
     wrap.appendChild(boardEl);
 
     /* the side panel: who is who, the clock, the moves, and the two buttons
-       that end a game without a mate on the board */
+       that end a game without a mate on the board. The two that come and go get
+       an empty slot each rather than being appended when they turn up, so the
+       order down the panel is settled at build time. The .chslot wrapper is
+       display:contents, so a slot with nothing in it is not a gap. */
     var side=el("div","chside");
     var top=el("div","chwho");
     top.appendChild(el("span","chdot "+(c.youAre==="w"?"b":"w")));
-    top.appendChild(el("span","chname",(c.youAre==="w"?c.black:c.white)||"…"));
+    var topName=el("span","chname","…");
+    top.appendChild(topName);
     var topClock=el("div","chclock","");
     top.appendChild(topClock);
     side.appendChild(top);
     var st=el("div","chstate","");
-    if(c.result){
-      st.textContent=c.result==="d"?("draw — "+c.reason)
-        :((c.result===c.youAre?"you win":"you lose")+" — "+c.reason);
-      st.className="chstate over";
-    }else{
-      st.textContent=(c.yourTurn?"your move":"their move")+(c.check?" — check":"");
-      if(c.check)st.className="chstate check";
-    }
     side.appendChild(st);
     var mv=el("div","chmoves");
-    for(var i=0;i<(c.san||[]).length;i+=2){
-      var line=el("div","chmvrow");
-      line.appendChild(el("span","chmvn",String(i/2+1)+"."));
-      line.appendChild(el("span","chmv",c.san[i]||""));
-      line.appendChild(el("span","chmv",c.san[i+1]||""));
-      mv.appendChild(line);
-    }
     side.appendChild(mv);
-    if(!c.result){
-      if(c.drawFrom&&c.drawFrom!==c.youAre){
-        var off=el("div","choffer");
-        off.appendChild(el("span","",(c.youAre==="w"?c.black:c.white)+" offers a draw"));
-        var take=el("button","cbtn go","accept");
-        take.onclick=function(){chessAct(d,"draw",note);};
-        var no=el("button","cbtn","decline");
-        no.onclick=function(){chessAct(d,"unoffer",note);};
-        off.appendChild(take);off.appendChild(no);
-        side.appendChild(off);
-      }
-      var acts=el("div","chacts");
-      var dr=el("button","cbtn",c.drawFrom===c.youAre?"draw offered":"offer draw");
-      dr.disabled=c.drawFrom===c.youAre;
-      dr.onclick=function(){chessAct(d,"draw",note);};
-      var rs=el("button","cbtn","resign");
-      rs.onclick=function(){if(confirm("resign this game?"))chessAct(d,"resign",note);};
-      acts.appendChild(dr);acts.appendChild(rs);
-      side.appendChild(acts);
-    }
+    var offerSlot=el("div","chslot");
+    side.appendChild(offerSlot);
+    var actsSlot=el("div","chslot");
+    side.appendChild(actsSlot);
     /* your own name and clock at the foot of the panel, the way a board is laid
        out everywhere: theirs at the top, yours at the bottom */
     var mine=el("div","chwho");
@@ -2133,19 +2102,173 @@
     var botClock=el("div","chclock","");
     mine.appendChild(botClock);
     side.appendChild(mine);
-    PIT.chClocks={top:topClock,bot:botClock,view:c};
-    chPaintClocks();
     wrap.appendChild(side);
     body.appendChild(wrap);
+
+    PIT.chUI={
+      id:d.id,board:boardEl,squares:squares,base:base,
+      topName:topName,st:st,mv:mv,offer:offerSlot,acts:actsSlot,sanN:0,
+      d:d,c:c,cells:[],legal:[],note:note
+    };
+    PIT.chClocks={top:topClock,bot:botClock,view:c};
+    chessHand(boardEl,PIT.chUI);
+    chessPaint(d,note);
+  }
+  /* everything a move changes, and nothing it does not */
+  function chessPaint(d,note){
+    var ui=PIT.chUI;if(!ui)return;
+    var c=d.chess;if(!c)return;
+    var cells=fenBoard(c.fen);
+    var legal=c.legal||[];
+    /* the handlers read all of this, so it is replaced before anything is drawn
+       rather than after */
+    ui.d=d;ui.c=c;ui.cells=cells;ui.legal=legal;
+    if(note)ui.note=note;
+    if(PIT.chClocks)PIT.chClocks.view=c;
+
+    var picked=PIT.chFrom||null;
+    var i,n,sq,nm;
+    /* where the picked piece could go, so the squares can be dotted — and which
+       squares hold something that can be picked up at all, which is the only
+       place the cursor has any business offering to pick anything up. The
+       server sends 'legal' only to whoever is to move, so on their turn this is
+       empty and the whole board is an ordinary arrow. */
+    var targets={},grabs={};
+    for(i=0;i<legal.length;i++){
+      grabs[legal[i].slice(0,2)]=1;
+      if(picked&&legal[i].slice(0,2)===picked)targets[legal[i].slice(2,4)]=1;
+    }
+    /* the king in check gets lit, the way it is on any board worth using */
+    var chkSq=null;
+    if(!c.result&&c.check){
+      var want=c.toAct==="w"?"K":"k";
+      for(var ck=0;ck<64;ck++)if(cells[ck]===want){chkSq=sqName(ck);break;}
+    }
+
+    /* ---- the pieces ----
+       A square whose piece has not changed is left completely alone. One that
+       has gives its element up to a pool BEFORE anything is put down, so the
+       piece that moved lands on its new square as the very element it already
+       was — image included, already decoded — instead of a fresh <img> that has
+       to be fetched back out of cache first. */
+    var pool={},fill=[],old,have,wantPc;
+    for(n=0;n<64;n++){
+      nm=sqName(n);
+      sq=ui.squares[nm];if(!sq)continue;
+      wantPc=cells[n]||"";
+      old=sq.querySelector(".chp");
+      /* the attribute is worth trusting only while there is something standing
+         there to trust it about, and "?" can never match a piece — so a square
+         that disagrees with itself is simply redrawn */
+      have=old?(sq.getAttribute("data-pc")||"?"):"";
+      if(have===wantPc)continue;
+      if(old&&old.parentNode){
+        old.parentNode.removeChild(old);
+        if(!pool[have])pool[have]=[];
+        pool[have].push(old);
+      }
+      sq.setAttribute("data-pc",wantPc);
+      if(wantPc)fill.push([sq,wantPc,nm]);
+    }
+    for(n=0;n<fill.length;n++){
+      var pc=fill[n][1];
+      var pe=(pool[pc]&&pool[pc].length)?pool[pc].pop():pcEl(pc);
+      pe.style.visibility=(PIT.chDrag===fill[n][2])?"hidden":"";
+      fill[n][0].appendChild(pe);
+    }
+
+    /* ---- and the squares under them ---- */
+    for(n=0;n<64;n++){
+      nm=sqName(n);
+      sq=ui.squares[nm];if(!sq)continue;
+      var cls=ui.base[nm];
+      if(c.lastFrom===nm||c.lastTo===nm)cls+=" last";
+      if(chkSq===nm)cls+=" chk";
+      if(picked===nm)cls+=" from";
+      if(grabs[nm])cls+=" pick";
+      if(targets[nm])cls+=cells[n]?" take":" go";
+      if(sq.className!==cls)sq.className=cls;
+    }
+
+    /* ---- the panel ---- */
+    ui.topName.textContent=(c.youAre==="w"?c.black:c.white)||"…";
+    var stTxt,stCls="chstate";
+    if(c.result){
+      stTxt=c.result==="d"?("draw — "+c.reason)
+        :((c.result===c.youAre?"you win":"you lose")+" — "+c.reason);
+      stCls="chstate over";
+    }else{
+      stTxt=(c.yourTurn?"your move":"their move")+(c.check?" — check":"");
+      if(c.check)stCls="chstate check";
+    }
+    if(ui.st.textContent!==stTxt)ui.st.textContent=stTxt;
+    if(ui.st.className!==stCls)ui.st.className=stCls;
+
+    /* The scoresheet only ever grows, so rows are appended rather than the list
+       being thrown away and written out again — which also threw away where it
+       was scrolled to, on the one part of this panel anybody scrolls. A long
+       game now follows its own last move instead of sitting at move one. */
+    var san=c.san||[];
+    if(san.length<ui.sanN){ui.mv.innerHTML="";ui.sanN=0;}
+    var grew=san.length>ui.sanN;
+    while(ui.sanN<san.length){
+      i=ui.sanN;
+      if(i%2===0){
+        var line=el("div","chmvrow");
+        line.appendChild(el("span","chmvn",String(i/2+1)+"."));
+        line.appendChild(el("span","chmv",san[i]||""));
+        line.appendChild(el("span","chmv",""));
+        ui.mv.appendChild(line);
+      }else{
+        var row=ui.mv.lastChild;
+        if(row&&row.childNodes[2])row.childNodes[2].textContent=san[i]||"";
+      }
+      ui.sanN++;
+    }
+    if(grew)ui.mv.scrollTop=ui.mv.scrollHeight;
+
+    /* the two slots. Small enough to write out each time, and they only ever
+       change on a move, so nothing is being rebuilt under a hand reaching for
+       it — an unchanged position never reaches this function at all. */
+    ui.offer.innerHTML="";ui.acts.innerHTML="";
+    if(!c.result){
+      if(c.drawFrom&&c.drawFrom!==c.youAre){
+        var off=el("div","choffer");
+        off.appendChild(el("span","",(c.youAre==="w"?c.black:c.white)+" offers a draw"));
+        var take=el("button","cbtn go","accept");
+        take.onclick=function(){chessAct(ui.d,"draw",ui.note);};
+        var no=el("button","cbtn","decline");
+        no.onclick=function(){chessAct(ui.d,"unoffer",ui.note);};
+        off.appendChild(take);off.appendChild(no);
+        ui.offer.appendChild(off);
+      }
+      var acts=el("div","chacts");
+      var dr=el("button","cbtn",c.drawFrom===c.youAre?"draw offered":"offer draw");
+      dr.disabled=c.drawFrom===c.youAre;
+      dr.onclick=function(){chessAct(ui.d,"draw",ui.note);};
+      var rs=el("button","cbtn","resign");
+      rs.onclick=function(){if(confirm("resign this game?"))chessAct(ui.d,"resign",ui.note);};
+      acts.appendChild(dr);acts.appendChild(rs);
+      ui.acts.appendChild(acts);
+    }
+    chPaintClocks();
   }
   /* ---- picking a piece up, both ways ----
      Drag it, or click the square and click where it goes \u2014 which is what
      lichess and chess.com both do, and the difference between them is only
      whether the pointer moved before it came back up. Pointer events rather
      than mouse ones, so a finger works the same as a cursor. */
-  function chessHand(boardEl,d,c,cells,legal,targets,note){
-    if(!c.yourTurn||c.result)return;
+  /* Bound to the board ONCE, and the board now outlives every position that is
+     ever on it — so nothing in here may close over the arguments it was built
+     with. Everything it needs it reads out of the live "ui" record, which
+     chessPaint() replaces wholesale before it draws anything. Closing over
+     "legal" here was how a board that stopped being rebuilt would have kept
+     offering last move's moves. */
+  function chessHand(boardEl,ui){
     var drag=null;
+    /* whether there is anything to pick up at all, asked afresh on every press
+       rather than once when the handlers went on */
+    var live=function(){return !!(ui.c&&ui.c.yourTurn&&!ui.c.result);};
     var squareAt=function(x,y){
       var e=document.elementFromPoint(x,y);
       while(e&&e!==boardEl){
@@ -2156,15 +2279,16 @@
     };
     var sqEl=function(n){return boardEl.querySelector('.chsq[data-sq="'+n+'"]');};
     var movesFrom=function(n){
-      var out={};
-      for(var i=0;i<legal.length;i++)if(legal[i].slice(0,2)===n)out[legal[i].slice(2,4)]=1;
+      var out={},lg=ui.legal||[];
+      for(var i=0;i<lg.length;i++)if(lg[i].slice(0,2)===n)out[lg[i].slice(2,4)]=1;
       return out;
     };
-    /* The board is rebuilt from scratch on every render, so a render in the
-       middle of a drag throws away the element the pointer was captured on and
-       the drop never arrives. Picking a piece up therefore paints the hints
-       straight onto the squares that are already there, and nothing re-renders
-       until the move is sent or the piece is put back down. */
+    /* A render in the middle of a drag would throw away the element the pointer
+       was captured on and the drop would never arrive — which is why the render
+       guard stands a poll down while a piece is in hand. Picking one up
+       therefore paints the hints straight onto the squares that are already
+       there, and nothing re-renders until the move is sent or it is put back
+       down. */
     var hint=function(from,tg){
       var i,all=boardEl.querySelectorAll(".chsq");
       for(i=0;i<all.length;i++)all[i].classList.remove("from","go","take","over");
@@ -2178,24 +2302,27 @@
       }
     };
     var occupied=function(n){
+      var cells=ui.cells||[];
       for(var i=0;i<64;i++)if(sqName(i)===n)return !!cells[i];
       return false;
     };
     var send=function(from,to){
-      var uci=from+to;
+      var uci=from+to,lg=ui.legal||[];
       /* a pawn reaching the last rank has to say what it becomes; the server
          refuses the move without it */
-      if(legal.indexOf(uci)<0&&legal.indexOf(uci+"q")>=0)chessPromote(d,uci,note);
-      else if(legal.indexOf(uci)>=0)chessMove(d,uci,note);
+      if(lg.indexOf(uci)<0&&lg.indexOf(uci+"q")>=0)chessPromote(ui.d,uci,ui.note);
+      else if(lg.indexOf(uci)>=0)chessMove(ui.d,uci,ui.note);
       else{PIT.chFrom=null;hint(null,{});}
     };
     var drop=function(){
       if(!drag)return;
       if(drag.el&&drag.el.parentNode)drag.el.parentNode.removeChild(drag.el);
       if(drag.hidden)drag.hidden.style.visibility="";
+      boardEl.classList.remove("held");
       drag=null;PIT.chDrag=null;
     };
     boardEl.addEventListener("pointerdown",function(ev){
+      if(!live())return;
       var name=squareAt(ev.clientX,ev.clientY);
       if(!name)return;
       ev.preventDefault();
@@ -2209,7 +2336,7 @@
       hint(name,tg);
       var idx=-1;
       for(var i=0;i<64;i++)if(sqName(i)===name){idx=i;break;}
-      var piece=idx>=0?cells[idx]:"";
+      var piece=idx>=0?(ui.cells||[])[idx]:"";
       if(!piece)return;
       var box=boardEl.getBoundingClientRect(),size=box.width/8;
       var g=el("div","chdrag");
@@ -2223,6 +2350,8 @@
       /* the render guard reads this: while a piece is in hand the poll must not
          rebuild the board and take the pointer capture with it */
       PIT.chDrag=name;
+      /* and the cursor says the piece is being carried, not just hovered */
+      boardEl.classList.add("held");
       g.style.transform="translate("+(ev.clientX-size/2)+"px,"+(ev.clientY-size/2)+"px)";
       try{boardEl.setPointerCapture(ev.pointerId);}catch(e){}
     });
@@ -2273,26 +2402,41 @@
     else
       {isKing=pc.textContent==="\u265A";isPawn=pc.textContent==="\u265F";}
     var file=function(n){return n.charCodeAt(0)-97;};
+    /* What a square is holding is written on the square, because chessPaint()
+       reads it to work out which squares actually changed \u2014 and this moves
+       pieces about behind its back. Every hand that takes a piece off a square
+       or puts one down here says so, or the next repaint would be diffing
+       against a board that no longer exists. */
+    var mark=function(sq,pcName){sq.setAttribute("data-pc",pcName||"");};
     /* A square holds more than its piece: the ones down the edges carry the
        rank and file they are printed with. Empty it with innerHTML and the
        coordinates go too, and stay gone until the server's reply redraws the
        board — so only the piece is ever taken off. */
-    var put=function(sq,piece){
+    var put=function(sq,piece,pcName){
       var had=sq.querySelector(".chp");
       if(had&&had.parentNode)had.parentNode.removeChild(had);
       sq.appendChild(piece);
+      mark(sq,pcName);
     };
+    var moving=f.getAttribute("data-pc")||"";
     /* the rook goes with the king */
     if(isKing&&Math.abs(file(to)-file(from))===2){
       var rank=from.charAt(1);
       var rf=file(to)>file(from)?"h":"a", rt=file(to)>file(from)?"f":"d";
       var r0=sqEl(rf+rank),r1=sqEl(rt+rank);
-      if(r0&&r1){var rk=r0.querySelector(".chp");if(rk)put(r1,rk);}
+      if(r0&&r1){
+        var rk=r0.querySelector(".chp");
+        if(rk){put(r1,rk,r0.getAttribute("data-pc")||"");mark(r0,"");}
+      }
     }
     /* a pawn that goes diagonally onto an empty square took one in passing */
     if(isPawn&&file(to)!==file(from)&&!t.querySelector(".chp")){
       var gone=sqEl(to.charAt(0)+from.charAt(1));
-      if(gone){var g=gone.querySelector(".chp");if(g&&g.parentNode)g.parentNode.removeChild(g);}
+      if(gone){
+        var g=gone.querySelector(".chp");
+        if(g&&g.parentNode)g.parentNode.removeChild(g);
+        mark(gone,"");
+      }
     }
     /* A promotion puts a NEW piece down, so the pawn has to be picked up by
        hand — appendChild moves the piece it is given, which is what takes an
@@ -2300,7 +2444,9 @@
        this the pawn sat on the seventh rank beside its own new queen for the
        length of the round trip. */
     if(promo&&pc.parentNode)pc.parentNode.removeChild(pc);
-    put(t,promo?pcEl(mover==="w"?promo.toUpperCase():promo.toLowerCase()):pc);
+    var landed=promo?(mover==="w"?promo.toUpperCase():promo.toLowerCase()):moving;
+    put(t,promo?pcEl(landed):pc,landed);
+    mark(f,"");
     /* light the move and take the hints down, so it reads as played */
     var all=boardEl.querySelectorAll(".chsq");
     for(var i=0;i<all.length;i++)all[i].classList.remove("from","go","take","over","last");
@@ -2367,7 +2513,7 @@
     /* leaving the table forgets which cards have already been dealt in, so
        coming back deals the hand in fresh rather than showing it half-landed */
     PIT.pkSeen=null;PIT.pkHand=null;PIT.pkAuto=false;PIT.pkAutoBusy=false;PIT.pkUp=null;PIT.pkUpAt=0;
-    PIT.pkRaise=false;PIT.pkAmt=0;PIT.pkKeys=null;PIT.chFrom=null;PIT.chDrag=null;PIT.chSent=false;PIT.chClocks=null;
+    PIT.pkRaise=false;PIT.pkShow=false;PIT.pkAmt=0;PIT.pkKeys=null;PIT.chFrom=null;PIT.chDrag=null;PIT.chSent=false;PIT.chClocks=null;
     if(PIT.pkKeyBound){document.removeEventListener("keydown",PIT.pkKeyBound);PIT.pkKeyBound=null;}
     /* if a clash was mid-flight its callback will never land, so the render
        gate has to be lifted here or every later paint would be swallowed */
@@ -2452,7 +2598,7 @@
     if(!p){body.appendChild(el("p","pitsub","dealing…"));return;}
     if(PIT.pkHand!==p.hand){PIT.pkHand=p.hand;PIT.pkSeen={};PIT.pkAuto=false;PIT.pkAmt=0;}
     /* the raise panel belongs to one decision; it cannot outlive your turn */
-    if(!p.yourTurn){PIT.pkRaise=false;}
+    if(!p.yourTurn){PIT.pkRaise=false;PIT.pkShow=false;}
     PIT.pkKeys=null;
 
     /* the blinds, and how long they stay these blinds */
@@ -2626,7 +2772,7 @@
         bar.appendChild(act(p.canCheck?"CALL":("CALL "+chips(Math.min(p.toCall,p.maxTo))),"C","call",
           function(){send(bar,"call");},!p.canCheck));
         bar.appendChild(act("RAISE","R","raise",function(){
-          PIT.pkRaise=true;PIT.pkAmt=Math.max(p.raiseTo,Math.min(PIT.pkAmt||p.raiseTo,p.maxTo));
+          PIT.pkRaise=true;PIT.pkShow=true;PIT.pkAmt=Math.max(p.raiseTo,Math.min(PIT.pkAmt||p.raiseTo,p.maxTo));
           PIT.shape="";pitRender(PIT.last);
         },canRaise));
         bar.appendChild(act("CHECK","K","check",function(){send(bar,"check");},p.canCheck));
@@ -2641,7 +2787,7 @@
           if(k==="c"&&!p.canCheck)send(bar,"call");
           else if(k==="k"&&p.canCheck)send(bar,"check");
           else if(k==="f")send(bar,"fold");
-          else if(k==="r"&&canRaise){PIT.pkRaise=true;PIT.pkAmt=p.raiseTo;PIT.shape="";pitRender(PIT.last);}
+          else if(k==="r"&&canRaise){PIT.pkRaise=true;PIT.pkShow=true;PIT.pkAmt=p.raiseTo;PIT.shape="";pitRender(PIT.last);}
           else return;
           ev.preventDefault();
         };
@@ -2747,6 +2893,20 @@
         panel.appendChild(presets);panel.appendChild(srow);panel.appendChild(go);
         body.appendChild(panel);
         paint();
+        /* The point of this panel is the button that ends it, and the table
+           above it is tall enough that on a laptop window the panel can open
+           with BET under the fold \u2014 which turns confirming a raise into a
+           scroll hunt while a clock is running. The desktop layout is short
+           enough that it usually fits; this is what makes "usually" into
+           "always", and only on the press that opened it, so a repaint while a
+           number is being chosen never yanks the page about. block:"nearest"
+           scrolls the least it can, so on a window where it already fits
+           nothing moves at all. */
+        if(PIT.pkShow){
+          PIT.pkShow=false;
+          try{go.scrollIntoView({block:"nearest"});}
+          catch(e){try{go.scrollIntoView(false);}catch(e2){}}
+        }
         PIT.pkKeys=function(ev){
           if(ev.target&&/^(INPUT|TEXTAREA)$/.test(ev.target.tagName))return;
           var k=String(ev.key||"");
@@ -3011,9 +3171,29 @@
        the board out from under the hand reaching for a piece */
     var ch=d.chess;
     var chShape=ch?[ch.fen,ch.result,ch.reason,ch.drawFrom,ch.yourTurn?1:0,PIT.chFrom||"",PIT.chDrag||""].join("~"):"";
-    var shape=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,d.tungs,who,pkShape,chShape].join("|");
+    /* everything the SCREEN is made of, with the chess position deliberately
+       left out of it — see the fast path below */
+    var frame=[d.state,d.round,d.yourMove,d.youConfirmed,d.theyConfirmed,d.theyMoved,d.winner,(d.paid||[]).length,d.reason,d.guest,d.filled,d.canCall,d.tung,d.tungs,who,pkShape].join("|");
+    var shape=frame+"|"+chShape;
     if(shape===PIT.shape){pitPaintClock();return;}
-    PIT.shape=shape;
+    /* ---- a move is not a new screen ----
+       Everything else here answers a change by rebuilding the view from the top
+       down, which for chess meant the whole page — back button, header, names,
+       pot, clock, board and panel — coming down and going back up every time
+       the other person moved. That is the flash: not the position changing, the
+       screen being replaced in order to change it. So when the ONLY thing that
+       differs is the position, the board already on the screen is repainted in
+       place and the rest of the page is never touched.
+       PIT.shape being empty is how the rest of this file asks for a real
+       rebuild (a piece set changing under it, a refused move), so an empty one
+       never takes this path. */
+    if(ch&&d.game==="chess"&&d.state==="live"&&PIT.shape&&frame===PIT.frame
+      &&PIT.chUI&&PIT.chUI.id===d.id&&PIT.chUI.board&&PIT.chUI.board.isConnected){
+      PIT.shape=shape;
+      chessPaint(d,PIT.chUI.note);
+      return;
+    }
+    PIT.shape=shape;PIT.frame=frame;
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
     var v=mount(cfg.name,gameIcon("pit-"+d.game));VIEW="pit";paintRound();
     var back=v.parentNode.querySelector(".casback");

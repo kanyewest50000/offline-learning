@@ -1119,6 +1119,40 @@ function chatBlock(u: any): { blocked: boolean; reason?: string; until?: number 
 // --- direct messages ---------------------------------------------------------
 const DM_TTL = 30 * 24 * 60 * 60 * 1000;   // a conversation ages out after a month of silence
 const DM_PAGE = 300;                        // most lines one read of a conversation returns
+// ---- what a DM is allowed to cost -------------------------------------------
+// Everything here is a KV read or a KV write somebody is paying for, and every
+// one of these routes carries a session token — which means it skips the
+// anonymous 90-a-minute IP cap entirely. So until these caps existed, ONE
+// approved account could ask for any of it as fast as it could open sockets.
+//
+// The shape of the abuse matters more than the volume. A conversation costs
+// nothing much on its own; what is expensive is how MANY of them one account
+// can bring into being, because every row it creates is a row every later read
+// of that rail has to walk, for a month. Writing one line to every member of
+// the shrine is a handful of requests and leaves behind a rail that costs
+// hundreds of reads to open, on both sides, forever after. That is the thing
+// being shut here: the fan-out, not the conversation.
+//
+// So: every list read is bounded, every route has a clock on it, and STARTING
+// a conversation — the one operation with a lasting cost — is capped and
+// timed far harder than replying in one that is already open. A real member
+// never comes near any of it; a script trying to mint rails runs into all of
+// them at once.
+const DM_RAIL = Number(Deno.env.get("DM_RAIL") || 300);          // most conversations one read of a rail walks
+const DM_CONV_MAX = Number(Deno.env.get("DM_CONV_MAX") || 80);   // conversations one account may OPEN
+const DM_HOUR_MAX = Number(Deno.env.get("DM_HOUR_MAX") || 400);  // lines one account may send in an hour
+const DM_DUMP = 1000;                       // most lines one admin dump of a conversation returns
+
+// How many conversations this account is already in — counted no further than
+// it has to be, because the answer is only ever compared against a cap. The
+// list stops at `n`, so this is n reads at the very worst and usually far
+// fewer. Only ever called on the one path that needs it: opening a NEW
+// conversation, which is rare for a person and constant for a script.
+async function dmConvCount(uid: string, n: number): Promise<number> {
+  let c = 0;
+  for await (const _e of kv.list({ prefix: ["dmconv", uid] }, { limit: n })) c++;
+  return c;
+}
 type DmMsg = { seq: number; from: string; text: string; ts: number };
 type DmConv = { name: string; last: string; ts: number; seq: number; read: number };
 
@@ -3663,11 +3697,22 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const bs = chatBlock(u);
     if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    // The rail is the most expensive read in the whole DM story: one KV read
+    // per conversation, and then another per conversation for the block below.
+    // The client asks for it every twelve seconds; this is roughly twelve times
+    // that, and a refused one is simply dropped by the client and asked for
+    // again on the next tick, so nobody ever sees it happen.
+    if (!allow("dmls:" + u.id, 10, 10_000)) return tooMany(10);
     const convs: {
       id: string; name: string; last: string; ts: number; unread: number;
       closed: boolean; byYou: boolean;
     }[] = [];
-    for await (const e of kv.list<DmConv>({ prefix: ["dmconv", u.id] })) {
+    // Bounded, so that one read of a rail costs what one read of a rail costs
+    // however many rows are behind it. DM_CONV_MAX is what stops an account
+    // MAKING rows; this is what stops an account having rows made AT it — a
+    // hundred members all opening a conversation with the same person is a
+    // hundred rows on that person's rail and nothing they agreed to.
+    for await (const e of kv.list<DmConv>({ prefix: ["dmconv", u.id] }, { limit: DM_RAIL })) {
       const v = e.value;
       if (!v) continue;
       convs.push({
@@ -3699,6 +3744,21 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const bs = chatBlock(u);
     if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    // The poll, before anything is looked up: naming the other end costs up to
+    // three reads on its own, so the clock goes in front of it rather than
+    // behind. The client asks every 2.5 seconds with a conversation open, which
+    // is a quarter of this, and a refused poll retries in four seconds without
+    // showing anything — so this is invisible to a person and a wall to a loop.
+    if (!allow("dmw:" + u.id, 20, 10_000)) return tooMany(5);
+    // Floored, because `since` indexes a KV key and a fractional one is not a
+    // seq — it is a way of asking for the same page again under a new name.
+    const since = Math.max(0, Math.floor(Number(url.searchParams.get("since")) || 0));
+    // A poll that carries a cursor reads the handful of lines past it and is
+    // nearly free. A poll that carries NO cursor replays the conversation —
+    // up to DM_PAGE reads and a few hundred KB out — and that is the one worth
+    // counting. The client does it once, when a conversation is opened; this
+    // allows a conversation opened every three seconds for a minute.
+    if (since === 0 && !allow("dmcold:" + u.id, 20, 60_000)) return tooMany(20);
     const other = await dmOther(url.searchParams.get("with"));
     if (!other) return json({ error: "not_found" }, 404);
     if (other.id === u.id) return json({ error: "yourself" }, 400);
@@ -3721,8 +3781,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         closed: true, ...(mine ? { byYou: true } : {}),
       });
     }
+    // and the cross-isolate half of the same cap. The in-memory buckets above
+    // are per isolate, so a caller spread across several of them gets several;
+    // one KV read and one KV write is a bargain against the three hundred a
+    // replay can cost, which is exactly the trade allowGlobal() exists for.
+    // It is spent HERE, past every refusal above, so a 404 or a shut
+    // conversation never costs a write.
+    if (since === 0 && !await allowGlobal("dmcold:" + u.id, 40, 60_000)) return tooMany(60);
     const conv = convOf(u.id, other.id);
-    const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
     const msgs: { seq: number; text: string; ts: number; mine: boolean }[] = [];
     let top = since;
     for await (
@@ -3750,6 +3816,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!u) return json({ error: "unauthorized" }, 401);
     const bs = chatBlock(u);
     if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    // Setting a block is a KV WRITE, and flipping one back and forth is a KV
+    // write every time — the one DM route where the cost is not reads. Blocking
+    // somebody is a thing a person does once and thinks about first, so this is
+    // deliberately the tightest clock of the four, and it sits in front of the
+    // lookup because naming the other end costs reads of its own.
+    if (!allow("dmblk:" + u.id, 10, 60_000)) return tooMany(60);
+    if (!await allowGlobal("dmblk:" + u.id, 20, 10 * 60_000)) return tooMany(600);
     const other = await dmOther(b.to);
     if (!other) return json({ error: "not_found" }, 404);
     if (other.id === u.id) return json({ error: "yourself" }, 400);
@@ -3769,6 +3842,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!text) return json({ error: "empty" }, 400);
     if (!allow("dm:" + u.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
     if (!await allowGlobal("dm:" + u.id, MSG_MAX, MSG_WINDOW_MS)) return tooMany(Math.ceil(MSG_WINDOW_MS / 1000));
+    // The flood cap above is about bursts, and on its own it is also a licence:
+    // three lines every six seconds, kept up, is thirty a minute and forty-odd
+    // thousand a day — seven KV operations each — from one account, quietly,
+    // where nobody in the room would ever see it. This is the long window that
+    // burst caps do not have. DM_HOUR_MAX is already far more
+    // than anybody writes; it is a quarter of what the burst cap alone allows.
+    if (!await allowGlobal("dmhr:" + u.id, DM_HOUR_MAX, 60 * 60_000)) return tooMany(600);
     const other = await dmOther(b.to);
     if (!other) return json({ error: "not_found" }, 404);
     if (other.id === u.id) return json({ error: "yourself" }, 400);
@@ -3781,6 +3861,33 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const sbl = await dmBlockOf(u.id, other.id);
     if (dmBlocked(sbl)) {
       return json({ error: sbl[dmSide(u.id, other.id)] ? "you_blocked" : "closed" }, 403);
+    }
+    // ---- opening a NEW conversation ----------------------------------------
+    // Replying in a conversation that already exists writes one line and moves
+    // two rows that were there anyway. Opening a new one puts two rows on two
+    // rails for a month, and every read of either rail pays for them from then
+    // on — which is why "hello" to every member of the shrine is not thirty
+    // messages, it is thirty rails made permanently more expensive, on top of
+    // thirty inboxes nobody asked for. So the expensive case is told apart
+    // from the cheap one HERE, by one read, and only it pays:
+    //
+    //   the clock  — five new conversations a minute, ten in ten minutes
+    //                across isolates, against a flood cap that would otherwise
+    //                allow thirty fresh ones a minute forever;
+    //   the cap    — DM_CONV_MAX of them, ever. Counted only at this point and
+    //                only as far as the cap, so it is never paid for by
+    //                somebody talking to people they already talk to.
+    //
+    // A member with a normal number of conversations never meets either. The
+    // ceiling is deliberately a refusal rather than a queue: there is nothing
+    // sensible to do with the line, and saying so is cheaper than keeping it.
+    const opened = await kv.get<DmConv>(["dmconv", u.id, other.id]);
+    if (!opened.value) {
+      if (!allow("dmnew:" + u.id, 5, 60_000)) return tooMany(60);
+      if (!await allowGlobal("dmnew:" + u.id, 10, 10 * 60_000)) return tooMany(600);
+      if (await dmConvCount(u.id, DM_CONV_MAX) >= DM_CONV_MAX) {
+        return json({ error: "too_many", max: DM_CONV_MAX }, 403);
+      }
     }
     const msg = await dmAppend(u, other, text);
     if (!msg) return json({ error: "busy" }, 503);
@@ -4528,6 +4635,103 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const messages = await listChatMessages();
     return json({ messages, count: messages.length });
+  }
+
+  // ---------- admin: read a conversation ----------
+  //
+  // Two routes rather than one, because a dump is two questions: who has this
+  // member ever talked to, and what did the two of them say. Asking the first
+  // is what fills the second dropdown in the panel, so the admin picks from
+  // conversations that actually exist rather than guessing at pairs and
+  // getting an empty answer back.
+  //
+  // Both are POSTs, not GETs, purely so that nothing — not the key, not a
+  // member id — ever rides in a URL where an access log would keep it. Every
+  // write in this panel already works that way; a read of somebody's private
+  // messages has at least as good a reason to.
+  //
+  // This is a read and only a read. It moves no read mark, writes no row and
+  // leaves no trace in either member's client: dumping a conversation must not
+  // be able to mark it read under the people in it, which is exactly what
+  // reusing /dm/with would have done.
+  //
+  // What it costs is bounded like everything else on these keys: DM_RAIL
+  // conversations, DM_DUMP lines.
+  if (req.method === "POST" && path === "/admin/dm/peers") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.id, 32);
+    if (!id) return json({ error: "not found" }, 404);
+    // deno-lint-ignore no-explicit-any
+    const me = await kv.get<any>(["app", id]);
+    if (!me.value) return json({ error: "not found" }, 404);
+    const peers: { id: string; name: string; last: string; ts: number; seq: number }[] = [];
+    for await (const e of kv.list<DmConv>({ prefix: ["dmconv", id] }, { limit: DM_RAIL })) {
+      const v = e.value;
+      if (!v) continue;
+      peers.push({
+        id: String(e.key[2]), name: v.name, last: v.last,
+        ts: Number(v.ts) || 0, seq: Number(v.seq) || 0,
+      });
+    }
+    // The name on the row is whatever the other end was called when the last
+    // line was written, so a rename since then would leave the dropdown naming
+    // somebody who no longer exists. The account is the truth; the row is a
+    // cache of it. An id with no account left behind it keeps the cached name,
+    // marked, rather than dropping out of the list — the conversation is still
+    // there to read, and "who was this" is the reason to read it.
+    await Promise.all(peers.map(async (pr) => {
+      // deno-lint-ignore no-explicit-any
+      const a = await kv.get<any>(["app", pr.id]);
+      if (a.value && a.value.username) pr.name = a.value.username;
+      else pr.name = (pr.name || pr.id) + " (gone)";
+    }));
+    peers.sort((x, y) => y.ts - x.ts);
+    return json({ ok: true, id, name: me.value.username, peers });
+  }
+
+  if (req.method === "POST" && path === "/admin/dm/thread") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const one = clip(b.user, 32), two = clip(b.peer, 32);
+    if (!one || !two) return json({ error: "not found" }, 404);
+    if (one === two) return json({ error: "same member" }, 400);
+    const [oneApp, twoApp] = await Promise.all([
+      // deno-lint-ignore no-explicit-any
+      kv.get<any>(["app", one]),
+      // deno-lint-ignore no-explicit-any
+      kv.get<any>(["app", two]),
+    ]);
+    const pair = convOf(one, two);
+    // Newest first out of KV, then flipped, so that a conversation longer than
+    // the cap gives back its END rather than its beginning. A truncated dump
+    // that stops a thousand lines ago is not the half anybody wants.
+    const msgs: { seq: number; from: string; text: string; ts: number }[] = [];
+    for await (
+      const e of kv.list<DmMsg>({ prefix: ["dmev", pair] }, { limit: DM_DUMP, reverse: true })
+    ) {
+      const v = e.value;
+      if (!v) continue;
+      msgs.push({ seq: v.seq, from: v.from, text: v.text, ts: v.ts });
+    }
+    msgs.reverse();
+    const bl = await dmBlockOf(one, two);
+    return json({
+      ok: true,
+      a: { id: one, name: oneApp.value?.username || one, gone: !oneApp.value },
+      b: { id: two, name: twoApp.value?.username || two, gone: !twoApp.value },
+      msgs,
+      count: msgs.length,
+      truncated: msgs.length >= DM_DUMP,
+      // who shut it, in the one place where saying so is the whole point.
+      // The members themselves are never told this — see /dm/with.
+      blockedBy: [
+        ...(bl.lo ? [one < two ? one : two] : []),
+        ...(bl.hi ? [one < two ? two : one] : []),
+      ],
+    });
   }
 
   // ---------- admin: wipe the chat log ----------
@@ -5921,8 +6125,13 @@ aside.nav{width:230px;flex-shrink:0;background:#241505;border-right:1px solid #3
 .pane h2{margin:0 0 4px;font-size:18px}
 .hint{color:#c8823c;font-size:13px;margin:0 0 14px}
 .keybar{display:flex;gap:8px;margin-bottom:16px}
-input,textarea{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit;box-sizing:border-box}
+input,textarea,select{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit;box-sizing:border-box}
 textarea{min-height:72px;resize:vertical;width:100%}
+select{min-width:160px;cursor:pointer}
+.dmpick{margin-bottom:14px}
+.tmsg.dmfrom{align-self:flex-start;background:#241505;border:1px solid #3a2410}
+.tmsg.dmto{align-self:flex-end;background:#c8823c;color:#1d1206}
+#dmtext{margin-top:12px;min-height:180px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 .search{width:100%;flex:none;box-sizing:border-box;margin:0 0 14px}
 button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:pointer}
 .load{background:#c8823c;color:#1d1206}
@@ -5957,6 +6166,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn" data-pane="balances">Casino balances <span class="count" id="count-balances"></span></button>
 <button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
 <button type="button" class="navbtn" data-pane="chat">Chat log <span class="count" id="count-chat"></span></button>
+<button type="button" class="navbtn" data-pane="dms">Direct messages <span class="count" id="count-dms"></span></button>
 <button type="button" class="navbtn" data-pane="postas">Post as&hellip;</button>
 <button type="button" class="navbtn" data-pane="veil">Web veil <span class="count" id="count-veil"></span></button>
 <button type="button" class="navbtn" data-pane="danger">Wipe data</button>
@@ -5996,6 +6206,16 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 <p class="hint">The last 500 retained chat lines. Not loaded with the other lists — dump only when you need it. Clearing wipes every retained message and reaction; accounts, balances and shop items are untouched.</p>
 <div class="row" style="margin-bottom:14px"><button class="load" id="dumpChat">dump last 500</button><button class="no" id="clearChat">clear chat log</button></div>
 <div id="chatlog"><div class="empty">not loaded. click dump last 500.</div></div>
+</section>
+<section class="pane" id="pane-dms">
+<h2>Direct messages</h2>
+<p class="hint">Pick a member, and the second list fills with everybody they actually have a conversation with &mdash; so there is no guessing at pairs and getting an empty answer back. Dumping one is a read and nothing else: no read mark moves, and neither member sees anything happen in their client. Conversations age out after a month of silence, and a long one is shown from its newest end.</p>
+<div class="row dmpick">
+<select id="dmWho"><option value="">load first, then pick a member&hellip;</option></select>
+<select id="dmPeer"><option value="">&hellip;then who they talked to</option></select>
+<button class="load" id="dmDump">dump</button>
+</div>
+<div id="dmout"><div class="empty">nothing dumped yet.</div></div>
 </section>
 <section class="pane" id="pane-postas">
 <h2>Post as&hellip;</h2>
@@ -6250,6 +6470,7 @@ function refreshUsers(){
 }
 function renderUsers(){
   setCount("users", usersCache?usersCache.length:"");
+  dmFillUsers();   /* the DM pane picks its member out of this same list */
   if(usersErr){users.innerHTML='<div class="empty">'+usersErr+' — check your key.</div>';return;}
   if(!usersCache){users.innerHTML='<div class="empty">load to see approved users.</div>';return;}
   var q=qOf("search-users");
@@ -6599,4 +6820,114 @@ document.getElementById("addItem").onclick=function(){
     shop.appendChild(itemCard(null));
   });
 };
+/* ---------------------------------------------------------------------------
+   Direct messages.
+
+   Two dropdowns, and the second is filled from the first rather than from the
+   member list: the pairs that exist are a much shorter list than every pair
+   that could, and picking out of it means a dump always has something in it.
+
+   Both calls are POSTs. Every read in this panel goes through aget() so the
+   key travels in a header instead of a query string, and these would need a
+   member id in the query on top of that; a body keeps the pair out of the
+   address bar and out of any log in between for the same reason the key is
+   kept out of them.
+
+   Message text is written with textContent and a text node, never innerHTML.
+   It is the one thing on this page that members wrote themselves. */
+var dmWho=document.getElementById("dmWho"),dmPeer=document.getElementById("dmPeer"),dmout=document.getElementById("dmout");
+/* a real newline, built rather than written. This whole page is a template
+   literal on the server, so a backslash-n typed into the source is already a
+   line break by the time it arrives here, and a line break inside a string
+   literal is where the script stops parsing. */
+var NL=String.fromCharCode(10);
+function apost(path,body){
+  body.key=keyEl.value.trim();
+  return fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json();});
+}
+function dmOption(sel,value,label){
+  var o=document.createElement("option");o.value=value;o.textContent=label;sel.appendChild(o);return o;
+}
+function dmFillUsers(){
+  if(!dmWho)return;
+  var prev=dmWho.value;
+  dmWho.innerHTML="";
+  dmOption(dmWho,"",usersCache?"pick a member\u2026":"load first, then pick a member\u2026");
+  (usersCache||[]).forEach(function(u){dmOption(dmWho,u.id,u.username);});
+  if(prev)dmWho.value=prev;
+}
+function dmSetPeers(msg){
+  if(!dmPeer)return;
+  dmPeer.innerHTML="";
+  dmOption(dmPeer,"",msg);
+}
+function dmLoadPeers(){
+  setCount("dms","");
+  var id=dmWho.value;
+  if(!id){dmSetPeers("\u2026then who they talked to");return;}
+  if(!keyEl.value.trim()){dmSetPeers("enter your admin key first");return;}
+  dmSetPeers("looking\u2026");
+  apost("/admin/dm/peers",{id:id}).then(function(d){
+    if(d.error){dmSetPeers(d.error);return;}
+    var ps=d.peers||[];
+    setCount("dms",ps.length);
+    if(!ps.length){dmSetPeers("no conversations for "+d.name);return;}
+    dmSetPeers(ps.length===1?"1 conversation \u2014 pick it":ps.length+" conversations \u2014 pick one");
+    ps.forEach(function(pp){
+      var when=pp.ts?" \u00b7 "+new Date(pp.ts).toLocaleString():"";
+      dmOption(dmPeer,pp.id,pp.name+" \u2014 "+pp.seq+(pp.seq===1?" line":" lines")+when);
+    });
+  }).catch(function(){dmSetPeers("network error.");});
+}
+function dmWhoseName(d,from){return from===d.a.id?d.a.name:d.b.name;}
+function dmPaintThread(d){
+  dmout.innerHTML="";
+  var head=document.createElement("div");head.className="app";
+  var h=document.createElement("h3");h.textContent=d.a.name+" \u2194 "+d.b.name;head.appendChild(h);
+  var bits=d.count+(d.count===1?" line":" lines");
+  if(d.truncated)bits+=" \u2014 the newest kept, older ones not shown";
+  if(d.blockedBy&&d.blockedBy.length){
+    bits+=" \u00b7 blocked by "+d.blockedBy.map(function(id){return dmWhoseName(d,id);}).join(" and ");
+  }
+  var s=document.createElement("small");s.textContent=bits;head.appendChild(s);
+  dmout.appendChild(head);
+  if(!d.count){
+    var e=document.createElement("div");e.className="empty";
+    e.textContent="nothing is left in this conversation \u2014 lines age out after a month of silence.";
+    dmout.appendChild(e);return;
+  }
+  var thread=document.createElement("div");thread.className="thread";
+  d.msgs.forEach(function(m){
+    var row=document.createElement("div");
+    row.className="tmsg "+(m.from===d.a.id?"dmfrom":"dmto");
+    var w=document.createElement("span");w.className="twhen";
+    w.textContent=dmWhoseName(d,m.from)+" \u00b7 "+new Date(m.ts).toLocaleString();
+    row.appendChild(w);
+    row.appendChild(document.createTextNode(m.text||""));
+    thread.appendChild(row);
+  });
+  dmout.appendChild(thread);
+  var lab=document.createElement("p");lab.className="hint";lab.style.margin="14px 0 0";
+  lab.textContent="the same thing as plain text \u2014 select all and copy:";
+  dmout.appendChild(lab);
+  var ta=document.createElement("textarea");ta.id="dmtext";ta.readOnly=true;
+  ta.value=d.msgs.map(function(m){
+    return "["+new Date(m.ts).toISOString()+"] "+dmWhoseName(d,m.from)+": "+(m.text||"");
+  }).join(NL);
+  dmout.appendChild(ta);
+}
+function dmDumpThread(){
+  if(!keyEl.value.trim()){alert("enter your admin key first");return;}
+  var a=dmWho.value,b=dmPeer.value;
+  if(!a){alert("pick a member first");return;}
+  if(!b){alert("pick somebody they have talked to");return;}
+  dmout.innerHTML='<div class="empty">loading...</div>';
+  apost("/admin/dm/thread",{user:a,peer:b}).then(function(d){
+    if(d.error){dmout.innerHTML='<div class="empty">'+d.error+' \u2014 check your key.</div>';return;}
+    dmPaintThread(d);
+  }).catch(function(){dmout.innerHTML='<div class="empty">network error.</div>';});
+}
+if(dmWho)dmWho.onchange=function(){dmSetPeers("looking\u2026");dmLoadPeers();};
+if(dmPeer)dmPeer.onchange=function(){if(dmWho.value&&dmPeer.value)dmDumpThread();};
+document.getElementById("dmDump").onclick=dmDumpThread;
 </script></body></html>`;

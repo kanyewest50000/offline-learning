@@ -243,6 +243,82 @@ trying both), the badge, the rail's ordering, both halves of the ban, and the
 block: both directions shut, the other end told nothing but "closed", the two
 sides independent, and the conversation whole again when it is lifted.
 
+### what a DM is allowed to cost
+
+Every one of these four routes carries a session token, and a request with a
+token on it skips the anonymous ninety-a-minute IP cap entirely — that is what
+the cap is for, so that a school NAT full of approved members is not one
+identity. It also meant, until this, that `/dm/list`, `/dm/with` and
+`/dm/block` had no clock on them at all: one approved account could ask for any
+of them as fast as it could open sockets, and every ask was KV reads somebody
+pays for. Only `/dm/send` was capped, and only against bursts.
+
+The shape of the abuse matters more than the volume. A conversation is cheap;
+what is expensive is how MANY of them one account can bring into being. Writing
+"hi" to every member of the shrine is a handful of requests, and what it leaves
+behind is a row on two rails per member, for a month, that every later read of
+either rail has to walk. The fan-out is the attack, not the messages. So:
+
+* **Every list read is bounded.** `/dm/list` walks at most `DM_RAIL` (300)
+  conversations, so one read of a rail costs what one read of a rail costs
+  however many rows are behind it. That is the half that protects somebody
+  with rows made *at* them, which they never agreed to.
+* **Opening a conversation is told apart from replying in one**, by a single
+  read, and only opening one pays: five new conversations a minute, ten in ten
+  minutes across isolates, and `DM_CONV_MAX` (80) of them ever. Replying in a
+  conversation that already exists meets none of it, which is what everybody
+  actually does all day. At the ceiling the composer says so — "too many
+  conversations open — this would be a new one" — rather than "that did not
+  send", because nothing is wrong with the line and trying again will not help.
+* **The polls have clocks.** `/dm/with` allows twenty in ten seconds against a
+  client that asks every 2.5s, and `/dm/list` ten in ten seconds against one
+  that asks every twelve. A refused poll is dropped and retried by the client
+  without showing anything, so a person never learns either exists.
+* **A cold read is counted separately.** A poll carrying a cursor reads the
+  handful of lines past it. A poll carrying none replays the conversation — up
+  to `DM_PAGE` reads and a few hundred KB out — so that one gets its own
+  allowance, twenty a minute per isolate and forty across them. The cross-
+  isolate half is the one place a KV read and write are worth spending, because
+  they are bought against three hundred.
+* **Blocking is the tightest of the four**, because it is the only one that
+  writes: ten a minute, twenty in ten minutes. Blocking somebody is a thing a
+  person does once and thinks about first.
+* **And a long window on sending.** Three lines every six seconds is a burst
+  cap, and kept up it is also a licence: thirty a minute, forty-odd thousand a
+  day, seven KV operations each, from one account, where nobody in the room
+  would ever see it. `DM_HOUR_MAX` (400 an hour) is the window a burst cap does
+  not have — a quarter of what the burst cap alone allows, and far more than
+  anybody writes.
+
+`DM_RAIL`, `DM_CONV_MAX` and `DM_HOUR_MAX` are all env-overridable, so the
+ceilings can move without a code change if the shrine ever outgrows them.
+
+### reading a conversation from /admin
+
+**Direct messages** in the admin panel is two dropdowns. The first is every
+approved member, taken from the list the panel has already loaded rather than
+fetched again. Picking one fills the second from the conversations that
+actually exist for them — `POST /admin/dm/peers` — so there is no guessing at
+pairs and getting an empty answer back; each row names the other end, how many
+lines are in it and when the last one was. Picking that dumps the conversation
+(`POST /admin/dm/thread`), two-sided, oldest at the top, with a plain-text copy
+of the whole thing underneath for pasting somewhere else.
+
+Both are POSTs rather than GETs, for the same reason the key is: a body is not
+an address bar, a history entry or an access log, and a member id has as good a
+claim to stay out of those as the key does. Neither is fetched by **load** —
+like the chat dump, somebody's private messages are pulled deliberately or not
+at all.
+
+It is a read and strictly a read. It moves no read mark, writes no row, and
+shows up in neither member's client — which is exactly what reusing `/dm/with`
+would have failed to do, since reading a conversation is what marks it read.
+The dump says which end blocked it, if either did, because the admin panel is
+the one place where saying so is the point; the members themselves are still
+never told. What it costs is bounded like everything else on these keys:
+`DM_RAIL` conversations, `DM_DUMP` (1000) lines, and a conversation longer than
+that gives back its newest end rather than its oldest.
+
 ## the pit
 
 Four tables in the casino where the opponent is another member rather than the
