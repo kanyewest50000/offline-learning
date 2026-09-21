@@ -50,7 +50,11 @@ must(casinoJs.includes("function shopLoad()"), "unfinished redemptions are paint
 must(casinoJs.includes("ask:\"\""), "the pay overlay must pass an empty ask so no field is created");
 new Function("SHRINE_API", casinoJs);
 
-must(server.includes("input,textarea{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit;box-sizing:border-box}"), "admin fields must style input and textarea the same");
+// One rule for every field on the admin page, so a box is a box wherever it is.
+// `select` joined the two when the Direct messages pane brought dropdowns to
+// the panel; what matters is still that they share a declaration rather than
+// drifting apart into three that nearly agree.
+must(server.includes("input,textarea,select{flex:1;padding:10px 12px;border-radius:8px;border:1px solid #3a2410;background:#160d04;color:#f5efe0;font-size:14px;font-family:inherit;box-sizing:border-box}"), "admin fields must style input, textarea and select the same");
 must(server.includes("textarea{min-height:72px;resize:vertical;width:100%}"), "admin textarea needs its own height, not the native widget look");
 must(server.includes('var output=document.createElement("textarea");output.className="uname"'), "shop editor output stays a textarea");
 must(!server.includes('output.style.cssText="resize:vertical;font-family:inherit"'), "output must not rely on a one-off inline style");

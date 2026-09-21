@@ -292,6 +292,10 @@ either rail has to walk. The fan-out is the attack, not the messages. So:
 
 `DM_RAIL`, `DM_CONV_MAX` and `DM_HOUR_MAX` are all env-overridable, so the
 ceilings can move without a code change if the shrine ever outgrows them.
+`scripts/test-dm-limits.ts` walks it: an ordinary rail poll is never refused and
+forty at once are, replying in a conversation that exists is never charged what
+opening a new one costs, and opening them one after another runs into both the
+clock and the ceiling.
 
 ### reading a conversation from /admin
 
@@ -310,8 +314,9 @@ claim to stay out of those as the key does. Neither is fetched by **load** —
 like the chat dump, somebody's private messages are pulled deliberately or not
 at all.
 
-It is a read and strictly a read. It moves no read mark, writes no row, and
-shows up in neither member's client — which is exactly what reusing `/dm/with`
+It is a read and strictly a read — `scripts/test-dm-limits.ts` dumps a
+conversation with a line sitting unopened in it and checks the badge afterwards.
+It moves no read mark, writes no row, and shows up in neither member's client — which is exactly what reusing `/dm/with`
 would have failed to do, since reading a conversation is what marks it read.
 The dump says which end blocked it, if either did, because the admin panel is
 the one place where saying so is the point; the members themselves are still
@@ -534,6 +539,41 @@ alongside it, unmodified, loaded as a separate program the page talks to over
 UCI — the same arrangement every browser chess front end uses. Keep
 `Copying.txt` next to it if you fork this.
 
+#### the board is drawn once
+
+A move used to be a whole new screen. The duel poll saw a different FEN, the
+shape gate in `pitRender()` failed, and the entire casino view came down and
+went back up — back button, header, names, pot, clock, board and panel — along
+with thirty-two fresh `<img>` elements, each of which had to come back out of
+cache and decode before its square stopped being empty. From the other seat that
+reads as the board flashing every time your opponent moves, because that is
+exactly what it is: not the position changing, the screen being replaced in
+order to change it.
+
+The screen and the position it carries are now fingerprinted apart. A change to
+the position alone goes to `chessPaint()`, which walks the sixty-four squares
+and touches only what differs: an unmoved piece keeps the element it already
+had, and the piece that DID move is carried across to its new square as that
+same element, image and all, rather than being made again. The printed rank and
+file down the edges belong to the square and are never redrawn. Everything else
+— a game ending, a table changing state — still rebuilds, because then the
+screen really is a different screen.
+
+The catch that comes with it: the handlers are bound to the board once and now
+outlive every position that stands on it, so none of them may close over the
+arguments they were built with. They read the live record instead, which the
+repaint replaces before it draws anything. A board that stopped being rebuilt
+while its handlers still held last move's legal list would offer moves that are
+not there any more, which is a worse bug than the flash.
+
+The cursor follows the same rule the board does. An 8×8 grid of pointers claims
+every square is worth pressing when most of them do nothing at all, so: an open
+hand where there is a piece the server listed a move from — never on their turn,
+because the legal list is only ever sent to whoever is to move, and never on
+their pieces — a pointer where the piece in hand can land, a closed hand while
+one is being carried, and an ordinary arrow everywhere else.
+`scripts/test-chess-board.ts` holds all of it.
+
 ### poker
 
 The fourth table, and the only one that does not resolve in a single stroke.
@@ -584,6 +624,42 @@ of winners and announces a pot taken outright as a split. Chips a player left
 behind when they folded are a different thing: those were matched, so they are
 won, and the push-back is measured against them.
 
+**The number in the middle is not the running total.** What is going into the
+pot on this street is already on the screen — drawn in chips in front of the
+people who pushed it out — so counting it in the middle as well is the same
+money twice, and a total that jumps on every call is not something anybody can
+read a decision off. The middle shows the pot as it stood when the street began
+and moves when the chips are actually swept in: after the flop, the turn, the
+river. That is what "the pot" means at a real table, and preflop it means the
+blinds are in front of the blinds rather than in the middle. The running total
+rides alongside it and is what the ½ / ¾ / POT shortcuts reckon against, because
+a pot-sized raise is a raise into the pot as it will be, not as it was.
+
+**An all-in is a hand to watch, including the last one.** When the last chip
+goes in with board to come, the rest of it is dealt a street at a time on a
+clock with both hands face up, rather than resolving inside the request that
+called the bet. That much was always true of every hand but one: the hand that
+ends the tournament used to finish the duel in the same beat it paid the pot, so
+the result screen replaced the board before either player had read the river
+that put somebody out — on the one hand of the whole game most worth looking at.
+The last hand now holds on the table like any other, for `POKER_END_MS` (three
+seconds, shorter than an ordinary showdown because there is no next hand waiting
+behind it), and only then does the table come down.
+
+**Confirming a raise is not a scroll hunt.** Stacked, the raise panel is five
+rows and about 230px — four times the action bar it replaces — which under a
+table that already fills a laptop window pushed BET off the bottom of the
+screen. A phone column has nowhere to put those rows except under each other; a
+desktop window has width going spare, so above the poker breakpoint it lays out
+across instead: amount and minimum down the left, shortcuts and slider in the
+middle, BACK and BET full-height down the right. Two rows and about a hundred
+pixels, near enough what the bar took. The press that opens it also brings the
+confirm button into view, which costs nothing on a window where it already
+fits. `scripts/test-poker-raise.ts` holds the layout — and holds the trap that
+made the first attempt at it do nothing: `@media` carries no specificity, so a
+desktop block written above the base rules it means to override loses to every
+one of them while looking perfectly correct in the source.
+
 Nothing runs on a timer here either. A player who says nothing checks if it is
 free and folds if it is not, and the next hand deals itself, both off the same
 lazy deadline every other table uses. `scripts/test-poker.ts` plays 2-, 3-, 4-
@@ -594,7 +670,10 @@ reached a showdown, because one that never does has proved nothing about the
 hand rankings however green it looks. Alongside that it runs the real
 `pokerFinishHand()` out of `server.ts` — not a copy of what it does — over the
 four settlements that have to come out differently: an uncalled bet, a board
-that plays, dead money from a folded player, and an ordinary called pot.
+that plays, dead money from a folded player, and an ordinary called pot. It also
+walks an all-in through its runout street by street and then waits out the hold
+on the table it ended on, and watches the middle of the table hold still through
+a street and move when the chips are swept in.
 
 ## working on it
 

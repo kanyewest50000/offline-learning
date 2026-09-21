@@ -2632,7 +2632,16 @@
     stage.appendChild(felt);
 
     var mid=el("div","pkmid");
-    mid.appendChild(el("div","pkpot",chips(p.pot)));
+    /* The middle shows the pot as it stood when this street began, not the
+       running total. What is going in right now is already on the screen —
+       drawn in front of whoever pushed it out — so putting it in the middle as
+       well is the same money twice, and a number that jumps on every call is
+       not one anybody can read a decision off. It moves when the chips are
+       actually swept in: after the flop, the turn, the river.
+       The shortcut buttons below still count the whole pot, because a pot-sized
+       raise means the pot as it will be, not as it was. p.pot is that number
+       and is deliberately left alone. */
+    mid.appendChild(el("div","pkpot",chips(typeof p.potMid==="number"?p.potMid:p.pot)));
     var board=el("div","pkboard");
     /* the stagger counts the cards ARRIVING, not their place on the board, so
        a turn or a river lands on its own beat instead of waiting out the gap
@@ -3161,7 +3170,7 @@
        rebuild the screen, or the buttons move out from under the hand reaching
        for them, which is the whole reason this gate exists. */
     var pk=d.poker;
-    var pkShape=pk?[pk.hand,pk.street,pk.toAct,pk.pot,pk.call,pk.level,pk.showing?1:0,
+    var pkShape=pk?[pk.hand,pk.street,pk.toAct,pk.pot,pk.potMid,pk.call,pk.level,pk.showing?1:0,
       (pk.board||[]).join(""),(pk.yourCards||[]).join(""),
       (pk.seats||[]).map(function(s){
         return s.chips+"."+s.inStreet+"."+(s.folded?1:0)+(s.allIn?1:0)+(s.out?1:0)+"."+(s.cards||[]).join("");

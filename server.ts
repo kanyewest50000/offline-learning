@@ -1904,12 +1904,28 @@ async function sweepDuel(entry: Deno.KvEntryMaybe<Duel>): Promise<Deno.KvEntryMa
       // player with chips is finished.
       const ps: PokerState = JSON.parse(JSON.stringify(d.poker)) as PokerState;
       const people = seatedPlayers(d);
-      // either the finished hand has been up long enough and the next one is
-      // dealt, or the player to act has run their clock down
-      if (ps.next > 0) pokerDealNext(ps, people.map((p) => p.name));
-      else if (ps.runout > 0) pokerRunout(ps, people.map((p) => p.name));
-      else pokerAutoAct(ps, people.map((p) => p.name));
+      // A tournament that is already over is not dealt another hand: its last
+      // one is sitting on the table being looked at, and this tick is what
+      // takes the table down once it has been up long enough.
+      if (!pokerOver(ps)) {
+        // either the finished hand has been up long enough and the next one is
+        // dealt, or the player to act has run their clock down
+        if (ps.next > 0) pokerDealNext(ps, people.map((p) => p.name));
+        else if (ps.runout > 0) pokerRunout(ps, people.map((p) => p.name));
+        else pokerAutoAct(ps, people.map((p) => p.name));
+      }
       if (pokerOver(ps)) {
+        // …and if it only just ended, in this very tick, the hand it ended on
+        // goes up first. The board that did it is the whole point of having
+        // watched; finishing here would replace it with a result screen before
+        // either of them had read it. pokerDeadline() is already ps.next, so
+        // the tick that takes it down is the next one along.
+        if (ps.next > Date.now()) {
+          const held: Duel = { ...d, poker: ps, deadline: ps.next };
+          if (await commitDuel(cur, held, [])) return await kv.get<Duel>(["duel", d.id]);
+          cur = await kv.get<Duel>(["duel", d.id]);
+          continue;
+        }
         const left = pokerAlive(ps);
         const winner = left.length === 1 ? people[left[0]] : null;
         out = finishDuel({ ...d, poker: ps }, winner ? winner.id : null, "play");
@@ -2498,6 +2514,13 @@ const POKER_ACT_MS = Number(Deno.env.get("POKER_ACT_MS") || 15 * 1000);
 const POKER_SHOW_MS = Number(Deno.env.get("POKER_SHOW_MS") || 6 * 1000);
 // How long each street of an all-in runout sits before the next one lands.
 const POKER_RUNOUT_MS = Number(Deno.env.get("POKER_RUNOUT_MS") || 1400);
+// And how long the hand that ENDS the tournament stays up before the table is
+// taken down. The duel used to be finished in the same beat that paid the last
+// pot, so the result screen replaced the board before either player had read
+// the river that put somebody out — on the one hand of the whole game most
+// worth looking at. Shorter than an ordinary showdown because there is no next
+// hand waiting behind it, only the walk to the result.
+const POKER_END_MS = Number(Deno.env.get("POKER_END_MS") || 3 * 1000);
 const POKER_LEVEL_MS = Number(Deno.env.get("POKER_LEVEL_MS") || 3 * 60 * 1000);
 // Small and big, one row per level. Level 7 is 250/500 and starts at eighteen
 // minutes; the rows past it exist so a stubborn heads-up cannot outlast the
@@ -2867,8 +2890,14 @@ function pokerFinishHand(ps: PokerState, names: string[]): void {
   // that got there first is not buried by the hand it just won
   for (const s of ps.seats) if (!s.out && s.chips <= 0) { s.out = true; s.folded = true; }
   ps.toAct = -1;
-  // the hand stays up until this passes, so what just happened can be read
-  ps.next = Date.now() + POKER_SHOW_MS;
+  // the hand stays up until this passes, so what just happened can be read —
+  // the last one included, which is what stops the table being swapped for a
+  // result screen the instant the pot is paid
+  // (pokerAlive() rather than pokerOver(), which says the same thing one line
+  // lower down: scripts/test-poker.ts lifts this function and everything above
+  // pokerDealNext() out of here and runs it on its own, and pokerOver() is
+  // written below that cut.)
+  ps.next = Date.now() + (pokerAlive(ps).length <= 1 ? POKER_END_MS : POKER_SHOW_MS);
 }
 
 // Clear the finished hand away and deal the next one. Kept apart from
@@ -3049,6 +3078,18 @@ function pokerView(d: Duel, uid: string | null) {
     street: ps.street,
     board: ps.board,
     pot: pokerPot(ps),
+    // What the MIDDLE of the table shows, which is not the same number. The
+    // chips going in on this street are already drawn where they are — in
+    // front of the people who pushed them out — so counting them in the middle
+    // as well is the same money on screen twice, and a total that twitches on
+    // every call is not something anybody can read a decision off. This moves
+    // when a street closes and the chips are actually swept in: after the flop,
+    // the turn, the river. That is what "the pot" means at a real table.
+    //
+    // `pot` above stays the true running total, because the maths still wants
+    // it: a pot-sized raise is a pot-sized raise, and the shortcut buttons
+    // count what is out there rather than what has been swept up.
+    potMid: Math.max(0, pokerPot(ps) - ps.seats.reduce((a, s) => a + s.inStreet, 0)),
     call: ps.call,
     minRaise: ps.minRaise,
     button: ps.button,
@@ -4436,9 +4477,15 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (err) return json({ error: err, duel: duelView(d, u.id) }, 400);
       let next: Duel = { ...d, poker: ps, deadline: pokerDeadline(ps) };
       let credits: { id: string; amount: number }[] = [];
-      if (pokerOver(ps)) {
-        // one player holds every chip. The buy-ins come out of escrow to them,
-        // and the chips themselves stop existing with the table.
+      // One player holds every chip — but the hand that did it is still on the
+      // table, and taking the table down inside the request that called the
+      // last bet is what used to swap the board for a result screen before
+      // anybody had seen it. The hold is the same one every other hand gets;
+      // sweepDuel() is what ends the duel when it is up, and the deadline
+      // above is already that moment.
+      if (pokerOver(ps) && !(ps.next > Date.now())) {
+        // The buy-ins come out of escrow to them, and the chips themselves
+        // stop existing with the table.
         const left = pokerAlive(ps);
         const winner = left.length === 1 ? people[left[0]] : null;
         const done = finishDuel(next, winner ? winner.id : null, "play");

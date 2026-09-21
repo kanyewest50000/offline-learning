@@ -48,6 +48,7 @@ const SUITS = ["♠","♥","♦","♣"];
 const POKER_LEVELS: [number, number][] = [[25, 50]];
 const POKER_LEVEL_MS = 180000;
 const POKER_SHOW_MS = 6000;
+const POKER_END_MS = 3000;
 type PokerSeat = { cards: string[]; chips: number; inStreet: number; inHand: number;
   folded: boolean; allIn: boolean; out: boolean; acted: boolean };
 // deno-lint-ignore no-explicit-any
@@ -558,9 +559,92 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
   must(streets.size >= 2, "the board arrived all at once: only saw street " + [...streets].join(","));
   must(done!.board.length === 5, "a runout must deal the whole board, got " + done!.board.length);
   must(done!.show.length === 2, "both hands must be shown down, got " + done!.show.length);
+
+  // ---- and the table is not whipped away the moment the pot is paid --------
+  // Both of them are all in, so this hand ends the tournament — and the duel
+  // used to be finished in the very beat that awarded the pot, which replaced
+  // the board with the result screen before either player had read the river
+  // that put somebody out. The last hand gets the same pause every other hand
+  // gets; only when it is up does the table come down.
+  const shownAt = Date.now();
+  const duelNow = async () => (await call("/duel/state?token=" + a.token + "&id=" + id)).duel;
+  const atShowdown = await duelNow();
+  must(atShowdown.state === "live" && !atShowdown.settled,
+    "the tournament must not be finished in the beat that pays the last pot: " + atShowdown.state);
+
+  let ended = null, endedAt = 0;
+  for (let i = 0; i < 150; i++) {
+    await nap(200);
+    const dv = await duelNow();
+    if (dv.state === "done") { ended = dv; endedAt = Date.now(); break; }
+    must(dv.poker && dv.poker.board.length === 5,
+      "the whole board must stay readable while the hand is held up");
+    must(dv.poker.show && dv.poker.show.length === 2, "…and so must both hands");
+  }
+  must(ended, "the tournament never finished after its last hand");
+  const held = endedAt - shownAt;
+  must(held >= 2000, "the last hand must stay up long enough to read — held only " + held + "ms");
+  must(held < 20000, "…but it must not sit there forever: " + held + "ms");
+  must(ended!.poker && ended!.poker.board.length === 5,
+    "the finished duel still carries the board that decided it");
+  must(!!ended!.winner || (ended!.paid || []).length > 0, "somebody has to have taken it");
   console.log(
-    "  all-in: dealt out over " + streets.size + " streets with both hands face up, " +
-      "then shown down — not resolved in the call",
+    "  all-in: dealt out over " + streets.size + " streets with both hands face up, then shown " +
+      "down — not resolved in the call — and the table it ended on stays up " + held +
+      "ms before the duel is finished",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The number in the middle of the table
+//
+// Two different pots, and they are not interchangeable. `pot` is the running
+// total, which is what a pot-sized raise is reckoned against. `potMid` is what
+// the middle SHOWS: the pot as it stood when this street began. The chips going
+// in right now are already drawn in front of the people who pushed them out, so
+// counting them in the middle as well is the same money on screen twice, and a
+// total that jumps on every call is not one anybody can read a decision off.
+{
+  const a = await member("pkm", 50), b = await member("pkm", 50);
+  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN, seats: 2 });
+  const id = made.duel.id;
+  await post("/duel/join", { token: b.token, id });
+  await post("/duel/confirm", { token: a.token, id });
+  await post("/duel/confirm", { token: b.token, id });
+  const players = [a, b];
+  const look = async () => (await call("/duel/state?token=" + a.token + "&id=" + id)).duel.poker;
+  const act = async (p: { toAct: number }, action: string, amount = 0) =>
+    await post("/duel/poker", { token: players[p.toAct].token, id, action, amount });
+
+  let p = await look();
+  must(typeof p.potMid === "number", "the table must send the pot its middle shows");
+  must(p.pot > 0, "the blinds are out, so the running total is not zero");
+  must(p.potMid === 0, "…but nothing has been swept in yet: " + p.potMid);
+
+  await act(p, "call");
+  p = await look();
+  must(p.potMid === 0, "a call preflop still does not move the middle: " + p.potMid);
+  if (p.toAct >= 0) { await act(p, "check"); p = await look(); }
+  must(p.street === 1 && p.board.length === 3, "the flop must be out, got street " + p.street);
+  must(p.potMid === p.pot, "between streets the two agree: " + p.potMid + " vs " + p.pot);
+  const onFlop = p.potMid;
+  must(onFlop > 0, "and the middle has finally taken in the preflop money");
+
+  const bettor = p.toAct;
+  await act(p, "raise", onFlop + 20);
+  p = await look();
+  must(p.pot > onFlop, "the running total takes a bet straight away: " + p.pot);
+  must(p.potMid === onFlop, "the middle does not move while it is still going in: " + p.potMid);
+  must(p.seats[bettor].inStreet > 0, "…because it is drawn in front of the bettor instead");
+
+  await act(p, "call");
+  p = await look();
+  must(p.street === 2 && p.board.length === 4, "the turn must be out");
+  must(p.potMid === p.pot, "and now the middle carries the whole street: " + p.potMid + " vs " + p.pot);
+  must(p.potMid > onFlop, "…which is more than it was before the betting");
+  console.log(
+    "  the pot: the middle holds still through a street and moves when the chips are swept in, " +
+      "while the running total a raise is reckoned against rides alongside it",
   );
 }
 
