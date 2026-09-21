@@ -296,6 +296,27 @@ async function member(tag: string, bal: number): Promise<Player> {
 }
 
 const BUY_IN = 5;
+// every chair a poker table has, which is no longer something a host chooses
+const SEAT_MAX = 5;
+
+// Open a poker table and get two people dealt in at it. The table has five
+// chairs whoever asks for it, so a heads-up game is the HOST closing it at two
+// rather than the table filling up — /duel/start is that decision, and it hands
+// over to the same handshake a full table does.
+async function headsUp(a: Player, b: Player): Promise<string> {
+  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN });
+  must(made.ok, "could not open a table: " + JSON.stringify(made).slice(0, 160));
+  const id = made.duel.id as string;
+  must(made.duel.seats === SEAT_MAX, "a poker table opens with every chair: " + made.duel.seats);
+  const sat = await post("/duel/join", { token: b.token, id });
+  must(sat.ok, b.name + " could not sit down: " + JSON.stringify(sat).slice(0, 160));
+  const go = await post("/duel/start", { token: a.token, id });
+  must(go.ok, "the host could not deal it heads-up: " + JSON.stringify(go).slice(0, 160));
+  must(go.duel.state === "confirm", "dealing hands over to the handshake: " + go.duel.state);
+  must((await post("/duel/confirm", { token: a.token, id })).ok, a.name + " could not confirm");
+  must((await post("/duel/confirm", { token: b.token, id })).ok, b.name + " could not confirm");
+  return id;
+}
 type Seen = { showdowns: number; rivers: number; sidePots: number; raises: number };
 type Mine = { canCheck: boolean; toCall: number; raiseTo: number; maxTo: number };
 
@@ -327,13 +348,24 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
   for (let i = 0; i < seats; i++) players.push(await member("pk", 50));
   const before = players.map(() => 50);
 
-  const made = await post("/duel/create", { token: players[0].token, game: "poker", bet: BUY_IN, seats });
-  must(made.ok, "could not open a " + seats + "-seat table: " + JSON.stringify(made).slice(0, 160));
+  // A poker table is a lobby: it opens with every chair it has, whoever turns
+  // up sits down, and the host deals with however many that came to. So the
+  // number of players is decided HERE, by how many of them sit, rather than
+  // asked for up front — and the table is closed by the host saying so.
+  const made = await post("/duel/create", { token: players[0].token, game: "poker", bet: BUY_IN });
+  must(made.ok, "could not open a table: " + JSON.stringify(made).slice(0, 160));
   const id = made.duel.id;
-  must(made.duel.seats === seats, "table wanted " + seats + " seats, got " + made.duel.seats);
+  must(made.duel.seats === SEAT_MAX, "a poker table opens with every chair: " + made.duel.seats);
   for (let i = 1; i < seats; i++) {
     const j = await post("/duel/join", { token: players[i].token, id });
     must(j.ok, players[i].name + " could not sit: " + JSON.stringify(j).slice(0, 160));
+  }
+  // a table that filled every chair has already closed itself; one the host
+  // stopped short of full has to be dealt
+  if (seats < SEAT_MAX) {
+    const go = await post("/duel/start", { token: players[0].token, id });
+    must(go.ok, "the host could not deal " + seats + "-handed: " + JSON.stringify(go).slice(0, 160));
+    must(go.duel.state === "confirm", "dealing hands over to the handshake: " + go.duel.state);
   }
   for (const p of players) {
     const c = await post("/duel/confirm", { token: p.token, id });
@@ -435,11 +467,7 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
 // the table refuses what it should, before any of it is played for real
 {
   const a = await member("pkx", 50), b = await member("pkx", 50), c = await member("pkx", 50);
-  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN, seats: 2 });
-  const id = made.duel.id;
-  await post("/duel/join", { token: b.token, id });
-  await post("/duel/confirm", { token: a.token, id });
-  await post("/duel/confirm", { token: b.token, id });
+  const id = await headsUp(a, b);
 
   const st = await call("/duel/state?token=" + a.token + "&id=" + id);
   const pk = st.duel.poker;
@@ -477,11 +505,7 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
 // position to the wrong player for the whole tournament.
 {
   const a = await member("pko", 50), b = await member("pko", 50);
-  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN, seats: 2 });
-  const id = made.duel.id;
-  await post("/duel/join", { token: b.token, id });
-  await post("/duel/confirm", { token: a.token, id });
-  await post("/duel/confirm", { token: b.token, id });
+  const id = await headsUp(a, b);
 
   const look = async () => (await call("/duel/state?token=" + a.token + "&id=" + id)).duel.poker;
   let p = await look();
@@ -517,11 +541,7 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
 // throws away the only part of an all-in anybody cares about.
 {
   const a = await member("pkr", 50), b = await member("pkr", 50);
-  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN, seats: 2 });
-  const id = made.duel.id;
-  await post("/duel/join", { token: b.token, id });
-  await post("/duel/confirm", { token: a.token, id });
-  await post("/duel/confirm", { token: b.token, id });
+  const id = await headsUp(a, b);
   const players = [a, b];
   const look = async (who = a) => (await call("/duel/state?token=" + who.token + "&id=" + id)).duel.poker;
 
@@ -606,11 +626,7 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
 // total that jumps on every call is not one anybody can read a decision off.
 {
   const a = await member("pkm", 50), b = await member("pkm", 50);
-  const made = await post("/duel/create", { token: a.token, game: "poker", bet: BUY_IN, seats: 2 });
-  const id = made.duel.id;
-  await post("/duel/join", { token: b.token, id });
-  await post("/duel/confirm", { token: a.token, id });
-  await post("/duel/confirm", { token: b.token, id });
+  const id = await headsUp(a, b);
   const players = [a, b];
   const look = async () => (await call("/duel/state?token=" + a.token + "&id=" + id)).duel.poker;
   const act = async (p: { toAct: number }, action: string, amount = 0) =>
@@ -645,6 +661,90 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
   console.log(
     "  the pot: the middle holds still through a street and moves when the chips are swept in, " +
       "while the running total a raise is reckoned against rides alongside it",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The table is a lobby
+//
+// It used to be a fixed-size thing: the host said how many were playing when
+// they put it up, and it waited for exactly that many. Which was a guess either
+// way round — open it for five and a table nobody else found sat there for ten
+// minutes and refunded itself; open it for two and the third person to turn up
+// could not sit down. Two is a game, five is a game, and which one you get
+// depends on who happens to be about.
+//
+// So it opens with every chair it has, anybody may take one, and the host deals
+// with whoever is there. What must NOT go with that: the handshake. Starting is
+// choosing who is at the table, not skipping the agreeing to it — everyone
+// seated still says yes or every stake goes home.
+{
+  const h = await member("pkl", 50), g = await member("pkl", 50), x = await member("pkl", 50);
+
+  // the number asked for is not read at all
+  const made = await post("/duel/create", { token: h.token, game: "poker", bet: BUY_IN, seats: 2 });
+  must(made.ok, "could not open a table: " + JSON.stringify(made).slice(0, 160));
+  const id = made.duel.id;
+  must(made.duel.seats === SEAT_MAX, "a poker table opens with every chair it has: " + made.duel.seats);
+  must(made.duel.hostStarts === true, "…and says it is closed by a decision");
+  must(made.duel.canStart === false, "…which cannot be taken with nobody at it");
+
+  // and the pit says which kind of table it is, because it changes whether
+  // sitting down means waiting for four more people or for one press
+  const list = await call("/duel/list?token=" + h.token);
+  const row = (list.open || []).find((t: { id: string }) => t.id === id);
+  must(row && row.hostStarts === true, "the pit list must say the host deals this one");
+
+  must(!(await post("/duel/start", { token: h.token, id })).ok, "one player is not a game");
+  must((await post("/duel/join", { token: g.token, id })).ok, "could not sit down");
+  const two = (await call("/duel/state?token=" + h.token + "&id=" + id)).duel;
+  must(two.state === "open", "two of five is not full, so it is still open: " + two.state);
+  must(two.canStart === true, "…and now there is something for the host to decide");
+  must(!(await post("/duel/start", { token: g.token, id })).ok, "only the host deals");
+
+  const go = await post("/duel/start", { token: h.token, id });
+  must(go.ok, "the host could not deal: " + JSON.stringify(go).slice(0, 160));
+  must(go.duel.state === "confirm", "dealing hands over to the handshake: " + go.duel.state);
+  // the roster is settled the moment it is dealt
+  must(!(await post("/duel/join", { token: x.token, id })).ok,
+    "nobody may sit down at a table that has been dealt");
+  must((await post("/duel/confirm", { token: h.token, id })).ok, "host could not confirm");
+  must((await post("/duel/confirm", { token: g.token, id })).ok, "guest could not confirm");
+  const live = (await call("/duel/state?token=" + h.token + "&id=" + id)).duel;
+  must(live.state === "live", "two yeses out of two must start it: " + live.state);
+  must(live.poker.seats.length === 2, "heads-up, at a five-chair table: " + live.poker.seats.length);
+  must(live.pot === BUY_IN * 2, "and the pot is what the two of them put in: " + live.pot);
+
+  // a table that DOES fill still closes itself — there is nothing left to
+  // decide once every chair is taken
+  const p5: Player[] = [];
+  for (let i = 0; i < SEAT_MAX; i++) p5.push(await member("pkf", 50));
+  const full = await post("/duel/create", { token: p5[0].token, game: "poker", bet: BUY_IN });
+  const fid = full.duel.id;
+  for (let i = 1; i < SEAT_MAX; i++) {
+    must((await post("/duel/join", { token: p5[i].token, id: fid })).ok, "could not sit at the full table");
+  }
+  const shut = (await call("/duel/state?token=" + p5[0].token + "&id=" + fid)).duel;
+  must(shut.state === "confirm", "a full table still closes itself: " + shut.state);
+  must(shut.canStart === false, "…with nothing left for the host to decide");
+  for (const p of p5) await post("/duel/confirm", { token: p.token, id: fid });
+  const five = (await call("/duel/state?token=" + p5[0].token + "&id=" + fid)).duel;
+  must(five.poker.seats.length === SEAT_MAX, "five-handed: " + five.poker.seats.length);
+
+  // and the tables that DO name a number still name it, and still wait
+  const c = await member("pkc", 50);
+  const cut = await post("/duel/create", { token: c.token, game: "cut", bet: BUY_IN, seats: 3 });
+  must(cut.duel.seats === 3, "a cut still seats what it was asked for: " + cut.duel.seats);
+  must(cut.duel.hostStarts === false, "…and still waits to fill");
+  must(!(await post("/duel/start", { token: c.token, id: cut.duel.id })).ok,
+    "…and cannot be dealt short of it");
+  await post("/duel/cancel", { token: c.token, id: cut.duel.id });
+
+  console.log(
+    "  the lobby: the table opens with all " + SEAT_MAX + " chairs whatever was asked for, anybody " +
+      "sits, only the host deals and not with fewer than two; dealing settles the roster and " +
+      "still goes through the handshake; a table that fills closes itself; and the cut still " +
+      "names its number and waits for it",
   );
 }
 

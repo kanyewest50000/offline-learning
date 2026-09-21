@@ -1515,6 +1515,19 @@ const MULTI_SEAT = new Set(["cut", "comp", "poker"]);
 // four; poker takes a fifth because a five-handed table is the one everybody
 // means by a home game.
 const SEAT_MAX: Record<string, number> = { cut: 4, comp: 4, poker: 5 };
+// And the tables that are closed by a DECISION rather than by the last chair
+// filling. A cut or a round of Competitive Gambling is a fixed-size thing: you
+// say how many are playing when you put it up and it waits for exactly that
+// many. Poker is not — two is a game, five is a game, and which one you get
+// depends on who happens to be about. Asking the host to name the number in
+// advance meant guessing: guess high and a table nobody else found sat there
+// for ten minutes and refunded itself, guess low and the fourth person to
+// arrive could not sit down.
+//
+// So a poker table opens with every chair it could ever have, anybody may take
+// one, and the host deals when they are ready. The seat count stops being
+// something to choose and goes back to being what it is: a ceiling.
+const HOST_STARTS = new Set(["poker"]);
 // Tung cuts a card. He does not throw a hand of Tung, Wood, Fire and he does
 // not spend three minutes on the floor, so The Cut is the one table he sits at.
 const CAN_CALL_TUNG = new Set(["cut"]);
@@ -1612,6 +1625,14 @@ function duelView(d: Duel, uid: string | null) {
     // until the table is full and the deal starts
     canCall: d.state === "open" && CAN_CALL_TUNG.has(d.game) &&
       people.length < seats && youAreHost,
+    // This table waits for a decision rather than for a chair — which changes
+    // what every screen about it should say, so it is a fact about the table
+    // and not something the client works out from the game's name.
+    hostStarts: HOST_STARTS.has(d.game),
+    // and whether that decision can be taken yet. Two is the floor, because
+    // one player is not a game.
+    canStart: d.state === "open" && HOST_STARTS.has(d.game) && youAreHost &&
+      people.length >= 2,
     winner: d.winner,
     paid,
     // what this player took out of the pot: the lot, a share of it, or nothing
@@ -4076,6 +4097,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       open.push({
         id: d.id, game: d.game, gameName: DUEL_GAMES[d.game]?.name || d.game,
         bet: d.bet, seats: duelSeats(d), filled: seatedPlayers(d).length,
+        // worth knowing before you sit down: whether you are waiting for the
+        // last chair to fill or for one person to decide
+        hostStarts: HOST_STARTS.has(d.game),
         host: d.host.name, mine: d.host.id === u.id, ts: d.ts, deadline: d.deadline,
         // chess only: what you are sitting down to. Two people who agreed on a
         // stake can still want very different games, and "3 | 2" is the whole
@@ -4136,7 +4160,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const id = rid(10);
     const want = Number(b.seats);
     const max = SEAT_MAX[game] ?? 2;
-    const seats = MULTI_SEAT.has(game) && want >= 3 && want <= max ? want : 2;
+    // A table the host closes is not a table waiting to fill, so the number
+    // asked for is not read at all: it opens with every chair it has and the
+    // host decides how many of them are playing.
+    const seats = HOST_STARTS.has(game)
+      ? max
+      : (MULTI_SEAT.has(game) && want >= 3 && want <= max ? want : 2);
     const duel: Duel = {
       id, game, bet, seats, host: duelSide(u), guest: null, extra: [], state: "open", ts: now,
       deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, paid: [], reason: "", rounds: [],
@@ -4174,6 +4203,48 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       return json({ error: "someone is at the table", duel: again.value ? duelView(again.value, u.id) : null }, 409);
     }
     return json({ ok: true, refunded: d.bet, balance: round2((await getCas(u.id)).bal) });
+  }
+
+  // ---------- deal with whoever is here ----------
+  // The host's own call, on a table that waits for a decision rather than for
+  // a chair. A poker table nobody else found used to sit open for ten minutes
+  // and then refund itself; now it is a heads-up game the moment the host says
+  // so. Two is the floor — one player is not a game — and five is still the
+  // ceiling, because that is how many chairs it has.
+  //
+  // It hands over to exactly the same handshake a full table does: everybody
+  // seated has to say yes inside the confirm window or every stake goes home.
+  // Starting is choosing WHO is at the table, not skipping the agreeing to it.
+  //
+  // Retried rather than refused on a lost race, because the thing most likely
+  // to have changed underneath is somebody else sitting down — and a table
+  // with one more player at it is still a table the host wants to deal.
+  if (req.method === "POST" && path === "/duel/start") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await casUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const entry = await loadDuel(clip(b.id, 32));
+      const d = entry.value;
+      if (!d) return json({ error: "gone" }, 404);
+      if (d.host.id !== u.id) return json({ error: "not yours" }, 403);
+      if (d.settled) return json({ error: "over", duel: duelView(d, u.id) }, 409);
+      if (!HOST_STARTS.has(d.game)) {
+        return json({ error: "that table starts when it fills" }, 400);
+      }
+      if (d.state !== "open") return json({ error: "not now", duel: duelView(d, u.id) }, 409);
+      if (seatedPlayers(d).length < 2) {
+        return json({ error: "nobody has sat down yet", duel: duelView(d, u.id) }, 409);
+      }
+      const next: Duel = { ...d, state: "confirm", deadline: Date.now() + DUEL_CONFIRM_MS };
+      const res = await kv.atomic()
+        .check(entry)
+        .set(["duel", d.id], next, { expireIn: DUEL_TTL })
+        .commit();
+      if (res.ok) return json({ ok: true, duel: duelView(next, u.id) });
+    }
+    return json({ error: "busy" }, 409);
   }
 
   // ---------- sit down at someone else's table ----------
@@ -4292,7 +4363,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (!mine) return json({ error: "not your duel" }, 403);
       mine.confirmed = true;
       const people = seatedPlayers(next);
-      const allIn = people.length >= duelSeats(next) && people.every((p) => p.confirmed);
+      // Everyone AT the table, rather than every chair the table HAS. A table
+      // only reaches this state with its roster already settled — filled to the
+      // last chair, or closed by its host at whatever it had — and from here
+      // nobody else may sit down, so an empty chair is not somebody to wait
+      // for. Counting chairs instead would leave a three-handed poker table
+      // that its host dealt sitting in the handshake until it timed out.
+      const allIn = people.length >= 2 && people.every((p) => p.confirmed);
       let credits: { id: string; amount: number }[] = [];
       if (allIn && d.game === "cut") {
         // no moves to make: the deck is cut the instant the last yes lands, in

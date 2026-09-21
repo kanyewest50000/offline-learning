@@ -358,11 +358,28 @@ clothes, and it changes exactly one thing, which is the money. His stake is the
 house's, so the pot pays the house's 0.1% edge, the same as the wheel. Between
 players there is no rake and never will be. The table says which it is.
 
-The Cut and Competitive Gambling both seat two, three or four, and poker goes to
-five; Tung, Wood, Fire is a hand against one opponent — its rounds, its score
-and its forfeit rule are all written for a pair — so it stays two however many a
-client asks for. A table waits, and can still be taken down, until its last
-chair is filled.
+The Cut and Competitive Gambling both seat two, three or four and say which when
+they go up; Tung, Wood, Fire is a hand against one opponent — its rounds, its
+score and its forfeit rule are all written for a pair — so it stays two however
+many a client asks for. Those tables wait, and can still be taken down, until
+the last chair is filled.
+
+**Poker's table is a lobby instead.** It used to name a number like the rest,
+and that was a guess either way round: open it for five and a table nobody else
+found sat there for ten minutes and refunded itself, open it for two and the
+third person to turn up could not sit down. Two is a game, five is a game, and
+which one you get depends on who happens to be about. So there is no seat
+picker: the table opens with all five chairs, anybody may take one, and the host
+deals when they are ready — from two up. A table that does fill every chair
+still closes itself, because at that point there is nothing left to decide.
+
+What does not go with that is the handshake. Dealing settles *who* is at the
+table, not whether they agreed to it: the roster is fixed the moment the host
+presses it, nobody else may sit down, and everyone seated still has to say yes
+inside the confirm window or every stake goes home exactly as before. The one
+server-side consequence worth naming is that the last yes is now counted against
+the people at the table rather than the chairs the table has — counting chairs
+would leave a three-handed game sitting in the handshake until it timed out.
 
 Finishing level at the top is not a void: the players on the biggest pile split
 what is on the table. Each share is the gap between two floored running totals,

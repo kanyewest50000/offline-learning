@@ -1984,7 +1984,7 @@
       sub:"two, three or four of you, the whole floor, played in wood. it is not sahurs and never becomes sahurs \u2014 it is handed out for the round and swept when it ends, while your sahurs sit in the pot the whole time. run the wood out with nothing left on a table and you are done, and the round ends the moment there is nobody left to play against. finish level at the top and the pot is split."},
     poker:{name:"Poker",moves:[],
       blurb:"everyone buys in for the same stake. everyone gets the same chips. it ends when one of you has all of them.",
-      sub:"two to five seats, no limit hold'em. the chips are dealt by the table and are worth nothing off it \u2014 your sahurs sit in the pot the whole time and go to whoever is last standing. the blinds go up every three minutes and do not stop going up, so it finishes."},
+      sub:"no limit hold'em, two to five of you. put a table up and anybody can sit down at it \u2014 you deal when you are ready, so you are never left waiting on a fifth who is not coming. the chips are dealt by the table and are worth nothing off it: your sahurs sit in the pot the whole time and go to whoever is last standing. the blinds go up every three minutes and do not stop going up, so it finishes."},
     chess:{name:"Chess",moves:[],
       blurb:"a board, two of you, and the rules. play it for nothing, or put sahurs on it.",
       sub:"the server holds the position and checks every move against it, so an illegal one never lands. each of you has your own clock, running only while it is your move \u2014 run it out and you lose, unless the other one has nothing left to mate with."}
@@ -3040,12 +3040,16 @@
     v.appendChild(el("p","pitsub",cfg.sub));
 
     var bet=betField("1");
-    /* the two games that can seat more than two. tung, wood, fire is a hand
-       against ONE opponent, so it never offers the choice. */
-    /* poker goes to five, because five-handed is what a home game means */
+    /* The two games that wait for a fixed number. Tung, Wood, Fire is a hand
+       against ONE opponent, so it never offers the choice — and poker no
+       longer does either: its table opens with all five chairs, anybody may
+       take one, and the host deals when they are ready. Naming the number in
+       advance was a guess either way round: guess high and a table nobody else
+       found sat there for ten minutes and refunded itself; guess low and the
+       fourth person to turn up could not sit down. */
     var seatsSel=(game==="cut"||game==="comp")
       ?selectOf([["2","2"],["3","3"],["4","4"]],"2")
-      :(game==="poker"?selectOf([["2","2 — heads up"],["3","3"],["4","4"],["5","5"]],"2"):null);
+      :null;
     /* chess is the one table that can be played for nothing, so it gets the
        choice, and the stake box is only worth showing once there is a stake */
     var freeSel=game==="chess"?selectOf([["0","free \u2014 nothing on it"],["1","for sahurs"]],"0"):null;
@@ -3118,7 +3122,13 @@
         g.appendChild(el("h4",null,t.mine?"your table":t.host));
         var lf=pitLeft(t.deadline);
         var seats=t.seats||2, filled=t.filled||1;
-        var wait=(seats>2?(filled+" / "+seats+" seated"):(t.mine?"waiting for someone":"waiting"))
+        /* A table the host closes is not waiting for a number, so quoting one
+           would send people away from a game that is about to start: "1 / 5"
+           reads as four people short when it is really one press from dealing
+           heads-up. */
+        var wait=(t.hostStarts
+          ?(filled+" at the table, room for "+seats+" — the host deals when ready")
+          :(seats>2?(filled+" / "+seats+" seated"):(t.mine?"waiting for someone":"waiting")))
           +" — "+pitClockText(lf)+" left";
         /* what you are actually sitting down to. Worth saying before you do:
            three minutes and an hour are not the same game. */
@@ -3293,18 +3303,52 @@
       /* The table page while it is still filling. A 2-seat table only lives
          here with the host alone; a 3- or 4-seat Cut stays here until the
          last chair is taken. This is the only page that can take it down. */
-      var filled=d.filled||1, need=Math.max(0,(d.seats||2)-filled);
+      var filled=d.filled||1, seatsN=(d.seats||2), need=Math.max(0,seatsN-filled);
       var onFull=d.game==="comp"
         ? "the round starts once the table is full and everyone says yes."
         : "the deck is cut once the table is full and everyone says yes.";
       if(d.youAreHost){
-        body.appendChild(el("p","pitsay",filled<=1?"your table is up.":(filled+" of "+(d.seats||2)+" seated.")));
-        body.appendChild(el("p","pitsub",need===0
-          ?"the table is full."
-          :(need===1
-            ?(filled<=1?"waiting for somebody to sit down. nobody has yet, so you can take it back."
-              :"waiting for one more. you can still take it down.")
-            :"waiting for "+need+" more. you can still take it down.")));
+        /* A table that waits for a DECISION reads nothing like one waiting for
+           a chair. There is no number outstanding and nothing to be waiting
+           for: there is a table with people at it and a host who has not dealt
+           yet. Saying "waiting for three more" under a five-chair poker table
+           with two people at it is the old model still talking. */
+        if(d.hostStarts){
+          body.appendChild(el("p","pitsay",filled<=1
+            ?"your table is up."
+            :(filled+" at the table \u2014 deal when you like.")));
+          body.appendChild(el("p","pitsub",filled<=1
+            ?("nobody has sat down yet. anybody can, up to "+seatsN+" \u2014 and you deal when you are ready, so you are not waiting for a full table.")
+            :("room for "+seatsN+" in all. deal now, or leave it up and see who else turns up.")));
+          var go=el("button","cbtn go",filled<=1
+            ?"nobody to deal to yet"
+            :("deal \u2014 "+filled+" playing"));
+          go.disabled=!d.canStart;
+          go.onclick=function(){
+            if(!d.canStart)return;
+            go.disabled=true;
+            jpost("/duel/start",{id:d.id}).then(function(rr){if(refused(rr)){refusedGate();return;}
+              go.disabled=false;
+              if(!rr||rr.error){
+                bad(note,rr&&rr.error==="nobody has sat down yet"
+                  ?"nobody is at the table yet."
+                  :((rr&&rr.error)||"could not deal."));
+                if(rr&&rr.duel){pitSkew(rr.duel);pitRender(rr.duel);}
+                return;
+              }
+              pitSkew(rr.duel);pitRender(rr.duel);
+            }).catch(function(){go.disabled=false;bad(note,"network error");});
+          };
+          body.appendChild(go);
+        }else{
+          body.appendChild(el("p","pitsay",filled<=1?"your table is up.":(filled+" of "+seatsN+" seated.")));
+          body.appendChild(el("p","pitsub",need===0
+            ?"the table is full."
+            :(need===1
+              ?(filled<=1?"waiting for somebody to sit down. nobody has yet, so you can take it back."
+                :"waiting for one more. you can still take it down.")
+              :"waiting for "+need+" more. you can still take it down.")));
+        }
         var kill=el("button","cbtn stop","take it down \u2014 "+money(d.bet)+" sahurs back");
         kill.onclick=function(){
           kill.disabled=true;
@@ -3340,16 +3384,25 @@
           :"taking it down sends every stake home. if it never fills, the same thing happens on its own."));
       }else{
         body.appendChild(el("p","pitsay","you are seated."));
-        body.appendChild(el("p","pitsub",(need===1?"waiting for one more. ":"waiting for "+need+" more. ")+onFull));
-        body.appendChild(el("p","pitsub","your stake is held. it comes back if the host takes the table down or the table never fills."));
+        if(d.hostStarts){
+          body.appendChild(el("p","pitsub",filled+" at the table so far, room for "+seatsN+". the host deals when they are ready \u2014 it does not have to fill up first. then everyone says yes and the first hand goes out."));
+          body.appendChild(el("p","pitsub","your stake is held. it comes back if the host takes the table down, or if it is never dealt."));
+        }else{
+          body.appendChild(el("p","pitsub",(need===1?"waiting for one more. ":"waiting for "+need+" more. ")+onFull));
+          body.appendChild(el("p","pitsub","your stake is held. it comes back if the host takes the table down or the table never fills."));
+        }
       }
     }else if(d.state==="confirm"){
-      var many=(d.seats||2)>2;
       var ready=(d.players||[]).filter(function(p){return p.confirmed;}).length;
-      var total=(d.players&&d.players.length)||(d.seats||2);
+      /* the people at the table, not the chairs it has: a poker table dealt
+         three-handed has five chairs and three players, and it is the three
+         that everything here is about */
+      var total=(d.players&&d.players.length)||d.filled||(d.seats||2);
+      var many=total>2;
       body.appendChild(el("p","pitsay",d.youConfirmed
         ?(many?"you are in. waiting on the others.":"you are in. waiting on them.")
-        :(many?"the table is full. say yes before the clock runs out.":"they are waiting. say yes before the clock runs out.")));
+        :(d.hostStarts?"the table is set. say yes before the clock runs out."
+          :(many?"the table is full. say yes before the clock runs out.":"they are waiting. say yes before the clock runs out."))));
       body.appendChild(el("p","pitsub",many
         ?(ready+" of "+total+" have confirmed.")
         :(d.theyConfirmed?"they have confirmed.":"they have not confirmed yet.")));
@@ -3452,7 +3505,7 @@
         body.appendChild(cards);
         cutSay=el("div","clashsay cut","");body.appendChild(cutSay);
       }
-      var many=(d.seats||2)>2;
+      var many=(d.filled||(d.players&&d.players.length)||(d.seats||2))>2;
       /* a round that was actually played is read off its stacks; the pit's
          other exits (never joined, never confirmed) still read as themselves */
       var ranOut=d.reason==="bust";
@@ -3489,7 +3542,9 @@
       var again=el("button","cbtn go","back to the pit");
       again.onclick=function(){pitStop();viewPit(d.game);};
       body.appendChild(again);
-      var potx=d.seats||d.filled||2;
+      /* what a win actually multiplied the stake by is how many people were AT
+         the table, which is no longer the same as how many chairs it had */
+      var potx=d.filled||(d.players&&d.players.length)||d.seats||2;
       if(!dealing){
         /* a share of a split is what landed in the balance, so it is what the
            toast says — quoting the whole pot would be a lie on a tie */
