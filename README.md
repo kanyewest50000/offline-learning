@@ -401,6 +401,23 @@ wherever they are standing, because the round does: the table's own page shows
 it open, and out on the floor it is a drawer under the round bar. A chat ban
 closes it, the way it closes the shrine's chat, while leaving the tables open.
 
+For those three minutes **the table's own page is the lobby**, and the back
+button says so. The round is played out on the floor — you leave the table's
+page, pick a house game off the floor menu sitting on it, and the round follows
+you onto whatever you pick — so walking back out of that game has to land where
+you came from. It did not: every view in the casino is mounted by one function
+that hardwired "← back to lobby" to the casino floor, which put you a level
+further out than you had started, with the round you were in the middle of
+reduced to a bar along the top and the way back to it a different button in a
+different place. While a round is running that button reads "← back to the
+round" and goes to its page. The round's own page is the one exception and stays
+one, because standing on it the way out really is the floor — a page that *is*
+the round cannot offer to take you to the round. It is one rule in one place
+rather than a line per view, so a table added later cannot quietly get the old
+behaviour, and it is repainted as the round starts and ends rather than written
+once at mount, so a round finishing under an open game takes its own offer back
+off the button. `scripts/test-round-back.ts` holds all of it.
+
 Wood is not sahurs and never becomes sahurs. It is handed out by the round,
 spent against the house inside it, and swept when the round ends; the only thing
 that crosses back is the pot, which is the real stakes and was escrowed

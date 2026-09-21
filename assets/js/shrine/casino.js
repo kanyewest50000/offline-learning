@@ -211,6 +211,50 @@
   /* the two strips that ride above whatever screen is open */
   function paintBars(){paintBroke();paintRound();}
 
+  /* ---- where "back" goes ----
+     A round of Competitive Gambling is played out ON THE FLOOR: you leave the
+     table's own page, pick a house game, and the round follows you onto it.
+     Which means that for those three minutes the table's page IS the lobby —
+     it carries the whole floor menu, both stacks and the table talk — and
+     walking out of a game landed you on the casino floor instead. One level
+     further out than you came from, with the round you are in the middle of
+     reduced to a bar along the top, and the way back to it a different button
+     in a different place.
+
+     So while a round is running, that is where the back button goes, and it
+     says so. The pit's own pages set this again for themselves straight after
+     mount(): standing ON the round's page, the way out really is the floor.
+
+     _out is how a button remembers it was given a destination of its own, so
+     that a round starting or ending under it only ever relabels the ones that
+     did not. */
+  function roundTable(){
+    if(!ROUND.live)return false;
+    var v=ROUND.live;
+    clearTimer();
+    pitEnter(v);
+    return true;
+  }
+  function paintBack(btn,out){
+    if(!btn)return;
+    btn._out=out||null;
+    if(out){btn.textContent="\u2190 back to lobby";btn.onclick=out;return;}
+    if(ROUND.live){
+      btn.textContent="\u2190 back to the round";
+      /* the round can end between the paint and the press */
+      btn.onclick=function(){if(!roundTable())window.__casinoOpen();};
+      return;
+    }
+    btn.textContent="\u2190 back to lobby";
+    btn.onclick=function(){window.__casinoOpen();};
+  }
+  /* a round starting or ending has to move the button under whoever is looking
+     at it, or it keeps offering a way back to a table that is over */
+  function refreshBack(){
+    var b=screen.querySelector(".casback");
+    if(b&&!b._out)paintBack(b,null);
+  }
+
   /* ---- a round of Competitive Gambling, from anywhere in the casino ----
      A round is the one thing in here that is not a screen. The player is not
      sat at the pit's table for those three minutes, they are out on the floor
@@ -225,6 +269,8 @@
     if(ROUND.poll){clearInterval(ROUND.poll);ROUND.poll=null;}
     if(ROUND.tick){clearInterval(ROUND.tick);ROUND.tick=null;}
     ROUND.live=null;ROUND.hold=false;hideRound();
+    /* including the way back to it, wherever they are standing */
+    refreshBack();
     /* the server has already deleted it; nothing of it stays on this screen */
     talkReset();
   }
@@ -263,13 +309,14 @@
     };
     e.appendChild(talk);
     var go=el("button","cbtn sec","the table");
-    go.onclick=function(){if(ROUND.live){var v=ROUND.live;clearTimer();pitEnter(v);}};
+    go.onclick=function(){roundTable();};
     e.appendChild(go);
     e.appendChild(drawer);
     e._talkBtn=talk;e._drawer=drawer;
     return e;
   }
   function paintRound(){
+    refreshBack();
     if(!ROUND.live){hideRound();return;}
     var w=screen.querySelector(".caswrap");
     /* the table's own page says all of this bigger, so the bar stands down there */
@@ -854,8 +901,8 @@
   function mount(title,icon,paced){
     VIEW="game";
     var w=column();
-    var back=el("button","casback","← back to lobby");
-    back.onclick=function(){window.__casinoOpen();};
+    var back=el("button","casback","");
+    paintBack(back,null);
     w.appendChild(back);
     var v=el("div","casview");
     var h=el("h3");
@@ -3206,11 +3253,13 @@
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
     var v=mount(cfg.name,gameIcon("pit-"+d.game));VIEW="pit";paintRound();
     var back=v.parentNode.querySelector(".casback");
-    /* mid-round the casino floor IS the game, so the way out of this page is
-       the floor rather than the pit's own list of tables */
-    if(back)back.onclick=(d.game==="comp"&&d.state==="live")
+    /* mid-round the casino floor IS the game, so the way out of THIS page is
+       the floor rather than the pit's own list of tables. Given to paintBack()
+       rather than set on the button, so that a round running underneath does
+       not relabel a page that is already the round's own. */
+    paintBack(back,(d.game==="comp"&&d.state==="live")
       ?function(){clearTimer();window.__casinoOpen();}
-      :function(){pitStop();viewPit(d.game);};
+      :function(){pitStop();viewPit(d.game);});
 
     /* A live poker table already has everybody's name on it, in their chair,
        with their stack under it \u2014 so a row of names above it is the same
@@ -3512,7 +3561,7 @@
     var cfg=PIT_GAMES[d.game]||PIT_GAMES.tung;
     var v=mount(cfg.name,gameIcon("pit-"+d.game));VIEW="pit";paintRound();
     var back=v.parentNode.querySelector(".casback");
-    if(back)back.onclick=function(){pitStop();viewPit(d.game);};
+    paintBack(back,function(){pitStop();viewPit(d.game);});
     var head=el("div","pitvs");
     head.appendChild(el("span","pn",d.you||"you"));
     head.appendChild(el("span","pvs","vs"));
