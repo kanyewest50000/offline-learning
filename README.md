@@ -222,13 +222,32 @@ leave you writing at somebody who cannot answer, which is not what the word
 means. Two flags rather than one "blocked by", because both ends can block at
 once and one of them relenting must not quietly lift the other's.
 
-Only the end that set it is told so — that is the difference between a button
-that says unblock and nothing you can do about it. The other end is told the
-conversation is closed, in exactly the shape a chat ban closes one, and is
-never told it was a block or whose. In a conversation with two people in it,
-"blocked, and not by you" names the blocker, so it is not a thing that can be
-said. Lifting it hands the conversation back whole; the lines refused while it
-stood were never written.
+Both ends are told whose block it is. The end that set it sees "you blocked X"
+and an unblock button; the end that was blocked sees **"you have been blocked by
+X"** — under the name, in the middle of the empty conversation, and in the
+composer it has switched off — and their rail row says "blocked you". It used to
+say only "closed", which left somebody writing into a door that would never
+open with no way to know why. `/dm/with` and `/dm/list` carry `byYou` and
+`byThem`; a refused `/dm/send` answers `you_blocked` or `blocked_you`. A block
+is a DM matter and nothing else: both of them still see each other in the room
+exactly as before. Lifting it hands the conversation back whole — an open window
+on the other end reopens on its own — and the lines refused while it stood were
+never written.
+
+### taking a line back
+
+A member can delete their own lines, in the room and in a DM, from the same bin
+a moderator has (two clicks, so one stray tap cannot do it). In the room it is
+`POST /delete`, which a moderator can use on any line and anybody else only on
+their own: whose a line is lives in the server-side quote index as the author's
+id, never in the event the room replays, so a rename cannot hand somebody
+another member's old lines. In a DM it is `POST /dm/delete {with, seq}`, only
+ever on your own line. The line is deleted and a small marker takes the next
+seq in its place, so the other end's open window drops it on its next ordinary
+poll without any poll paying an extra read to find out. The preview on both
+rails moves to the newest line still standing, and the unread badge never
+counts what was taken back (the reader's row keeps the seqs to skip until they
+read past them). `scripts/test-own-delete.ts`.
 
 The chat ban covers all of it, in both directions. Somebody shut out of the room
 can neither send a DM nor be sent one: their own three routes answer `chatban`
@@ -240,8 +259,9 @@ hands the conversation back exactly as it was — a ban is not a purge, and the
 lines refused while it was on were never written. `scripts/test-dm.ts` walks
 delivery to one member and nobody else (by name or by id, with a third member
 trying both), the badge, the rail's ordering, both halves of the ban, and the
-block: both directions shut, the other end told nothing but "closed", the two
-sides independent, and the conversation whole again when it is lifted.
+block: both directions shut, the blocked end told who blocked them, the room
+untouched by it, the two sides independent, and the conversation whole again
+when it is lifted.
 
 ### what a DM is allowed to cost
 
@@ -1125,8 +1145,9 @@ and the room handed back when the ban is lifted.
 **Moderators** are the third switch on the same card, and the only one that
 hands power out rather than taking it away. A moderator gets a bin next to the
 react and reply buttons on every chat message and can delete any of them;
-`POST /delete` refuses everybody else, including somebody whose flag was taken
-back and somebody barred from the room. A delete is not a hidden flag on the
+everybody else gets it only on their own lines, and `POST /delete` refuses them
+anybody else's — including somebody whose flag was taken back — and refuses
+somebody barred from the room outright. A delete is not a hidden flag on the
 line — the `["ev", seq]` entry stops existing, so a fresh open never replays it,
 the `["msg", id]` quote index goes with it, so the line can no longer be quoted
 or reacted to, and a `del` event tells every client already holding it on screen
@@ -1136,6 +1157,29 @@ nowhere else — no event, no reaction, no profile and no room dump carries it, 
 nobody in the chat can work out who the moderators are.
 `scripts/test-moderation.ts` walks both halves: the bin works and only for
 moderators, and every route another member can read is checked for the flag.
+
+**Deleting a user** takes everything they said with them: their lines in the
+room and the quote index behind them, their reactions, quotes of them inside
+other people's replies, and both sides of every DM they were in — tung's
+included. Nobody else's words go with it, and open windows drop the lines in one
+`del` event that lists them, not one event per line. **Clear all applications**
+does the same for everybody.
+
+Accounts deleted before that rule left all of it behind, and the panel listed
+their conversations as "(gone)". Those are cleared two ways, neither of which
+puts anything on a poll: whenever something is already looking at one and has
+paid for the read that noticed — the DM dump's list of who somebody talked to,
+tung's inbox, or a member trying to open one from their rail — that
+conversation is deleted on the spot instead of being shown; and **clear what
+deleted accounts left behind** on the Manage users pane does one pass over the
+rails, the reaction rows and the quote index, looks each id up once, and clears
+everything belonging to ids with no account behind them. Room lines from before
+lines recorded their author's id are matched by name, and only by a name a
+deleted account's conversations still remember and no living account holds;
+anything older than that ages out of the room on its own within two weeks.
+`scripts/test-user-purge.ts` deletes an account and checks all of it, then
+(given the database path) recreates leftovers the old way and checks each way
+they are cleared.
 
 The chat polls `/events` every 4 seconds while the tab is visible, and not at
 all while it is hidden. **Every** poll works that way now, which it did not used

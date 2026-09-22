@@ -282,9 +282,9 @@ must(!JSON.stringify(backOpen.body.msgs).includes("let me out"), "the line refus
 // A block is one member shutting one conversation, and it shuts it BOTH ways:
 // a block that only stopped them writing would leave you writing at somebody
 // who cannot answer. The end that set it is told so, because theirs is a door
-// they can open. The other end is told only that the conversation is closed —
-// never that it was a block, and never by whom, because in a conversation with
-// two people in it "blocked, and not by you" names the blocker.
+// they can open — and the end that was blocked is told too, by name: "you have
+// been blocked by X", rather than a dead composer and a guess. It is a DM
+// matter only; the room shows both of them to each other exactly as before.
 // ===========================================================================
 const blk = (token: string, to: string, on: boolean) =>
   post("/dm/block", { token, to, blocked: on });
@@ -310,8 +310,8 @@ const pWrite = await dm(P.token, Q.id, "still cross");
 must(pWrite.status === 403 && pWrite.body.error === "you_blocked",
   "the blocker is told it was them: " + JSON.stringify(pWrite.body));
 const qWrite = await dm(Q.token, P.id, "what did i do");
-must(qWrite.status === 403 && qWrite.body.error === "closed",
-  "a block must stop the other end too, without naming itself: " + JSON.stringify(qWrite.body));
+must(qWrite.status === 403 && qWrite.body.error === "blocked_you" && qWrite.body.name === P.name,
+  "a block must stop the other end too, and say whose it is: " + JSON.stringify(qWrite.body));
 
 // neither of them can read it
 const pSees = await convWith(P.token, Q.id);
@@ -319,17 +319,31 @@ must(pSees.body.closed === true && pSees.body.byYou === true, "the blocker sees 
 must((pSees.body.msgs as unknown[]).length === 0, "a shut conversation shows nothing");
 const qSees = await convWith(Q.token, P.id);
 must(qSees.body.closed === true, "the other end sees it closed");
-must(qSees.body.byYou === undefined, "…and is NOT told whose block it was: " + JSON.stringify(qSees.body));
-must(!JSON.stringify(qSees.body).includes("block"), "the word must not reach them at all: " + JSON.stringify(qSees.body));
+must(qSees.body.byYou === undefined, "…not as their own block: " + JSON.stringify(qSees.body));
+must(qSees.body.byThem === true, "…but as P's, so the page can say who: " + JSON.stringify(qSees.body));
+must((qSees.body.with as { name?: string })?.name === P.name, "…and the name to say is P's");
+must(pSees.body.byThem === undefined, "P was not blocked by anybody: " + JSON.stringify(pSees.body));
 must(!JSON.stringify(qSees.body).includes("falling out"), "a shut conversation shows no history");
+
+// and it is a DM matter only: the room still carries both of them, both ways
+const saidP = "p says something in the room " + Math.random().toString(36).slice(2, 6);
+const saidQ = "q answers in the room " + Math.random().toString(36).slice(2, 6);
+must((await post("/send", { token: P.token, text: saidP })).body?.ok === true, "P could not speak in the room");
+must((await post("/send", { token: Q.token, text: saidQ })).body?.ok === true, "Q could not speak in the room");
+for (const [who, tok] of [["P", P.token], ["Q", Q.token]] as const) {
+  const room = JSON.stringify((await j("/events?since=0&token=" + encodeURIComponent(tok))).body);
+  must(room.includes(saidP) && room.includes(saidQ), who + " must still see both of them in the room");
+}
 
 // a blocked conversation is not a source of unread
 const pRow = (await convs(P.token)).find((c) => c.id === Q.id) as Conv & { closed?: boolean; byYou?: boolean };
 must(pRow?.closed === true && pRow?.byYou === true, "the blocker's rail says it was theirs");
 must(pRow?.unread === 0, "nothing waits in a conversation that is shut");
-const qRow = (await convs(Q.token)).find((c) => c.id === P.id) as Conv & { closed?: boolean; byYou?: boolean };
+const qRow = (await convs(Q.token)).find((c) => c.id === P.id) as Conv & { closed?: boolean; byYou?: boolean; byThem?: boolean };
 must(qRow?.closed === true, "the other end's rail shows it closed");
 must(qRow?.byYou !== true, "…but never as theirs");
+must(qRow?.byThem === true, "…and as P's block, so the row can say they were blocked");
+must((pRow as { byThem?: boolean }).byThem === false, "P's own row was not blocked by Q");
 
 // --- the two sides are independent ------------------------------------------
 // Q clearing "their" block must not lift P's, or anybody could undo being
@@ -365,6 +379,12 @@ must(/function dmSetShut\(/.test(shrine), "the client must paint the shut state"
 // the blocked end must not be handed a button that cannot work
 must(/DMSHUT\.on&&!DMSHUT\.mine.*display="none"/.test(shrine),
   "the control must be hidden from the end that did not set it");
+// and the blocked end is told, in words, by whom
+must(shrine.includes('"you have been blocked by "+n+"."'), "the page must say who blocked them");
+must(shrine.includes('r.error==="blocked_you"'), "a refused send must be read as a block");
+must(shrine.includes("dmSetShut(true,!!r.byYou,!!r.byThem)"), "the poll must pass on whose block it is");
+must(shrine.includes('c.byThem?"blocked you"'), "the rail row must say it too");
+must(shrine.includes('d.className="dmnotice"'), "and the empty conversation must say it where it can be seen");
 
 console.log(
   "DMs: a line reaches one other member and nobody else (by name or by id, and a third " +
@@ -373,6 +393,7 @@ console.log(
     "directions — they cannot send, nobody can send to them, the other side reads as closed " +
     "rather than gone, the casino stays open throughout, and lifting it hands the " +
     "conversation back intact. A block shuts one conversation the same way in both " +
-    "directions, tells the end that set it and nothing but 'closed' to the other, " +
+    "directions, tells the end that set it and tells the other end who blocked them, " +
+    "leaves the room showing both of them to each other, " +
     "keeps the two sides independent, and gives the conversation back whole when lifted",
 );

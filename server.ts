@@ -17,7 +17,8 @@
 //   GET  /events?since=&token=                            -> {events, cursor}
 //   POST /send          {token, id, text, reply}          -> {ok, ts}
 //   POST /react         {token, id, e, op, eid}           -> {ok}
-//   POST /delete        {token, id}                       -> {ok, id}  (moderators)
+//   POST /delete        {token, id}                       -> {ok, id}  (your own line, or any line for a moderator)
+//   POST /dm/delete     {token, with, seq}                -> {ok, seq} (your own DM line)
 //   GET  /cas/resume?token=                               -> {ok, game, ...} an unfinished board
 //   GET  /bank?token=                                     -> {ok, owed, cap, canBorrow, ...}
 //   POST /bank/borrow   {token, amount}                   -> {ok, borrowed, owed, balance}
@@ -28,6 +29,7 @@
 //   GET  /admin/pending?key=                              -> {pending:[...]}
 //   GET  /admin/chat?key=                                 -> {messages:[...]} last HISTORY chat lines
 //   POST /admin/clearchat {key}                           -> {ok, cleared}
+//   POST /admin/purgegone {key}                           -> {ok, accounts, conversations, lines}
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
 //   POST /admin/ban     {key, id, banned}                 -> {ok, banned}      (whole shrine)
 //   POST /admin/chatban {key, id, chatBanned}             -> {ok, chatBanned}  (chat only)
@@ -948,9 +950,22 @@ async function veilLive(): Promise<boolean> {
 // id and the server fills the words in from here — the client is never trusted
 // to say what it is quoting. Reactions look a message up here too, so you
 // cannot react to something that was never posted.
-type MsgRef = { name: string; text: string; from: string | null; seq?: number };
+//
+// `uid` is the account that wrote it. It lives here and only here — the event
+// the room replays carries the name, never the id — and it is what lets a
+// member take back their own line without the name being the proof: names can
+// be changed by the panel and taken again once freed. A line from before it
+// was recorded has no uid, and for that one the name has to do.
+type MsgRef = { name: string; text: string; from: string | null; seq?: number; uid?: string };
 
-async function appendEvent(ev: Record<string, unknown>) {
+// deno-lint-ignore no-explicit-any
+function ownsMessage(ref: MsgRef, user: any): boolean {
+  if (ref.from) return false; // his lines are nobody's to take back
+  if (ref.uid) return ref.uid === user.id;
+  return String(ref.name).toLowerCase() === String(user.username).toLowerCase();
+}
+
+async function appendEvent(ev: Record<string, unknown>, uid?: string) {
   const seq = await nextSeq();
   ev.seq = seq;
   // Display time is the server's, never the sender's. The client may paint an
@@ -964,7 +979,7 @@ async function appendEvent(ev: Record<string, unknown>) {
     // ["ev", seq] entry that carries this message instead of hunting the log.
     await kv.set(
       ["msg", ev.id],
-      { name: ev.name, text: ev.text, from: ev.from ?? null, seq } as MsgRef,
+      { name: ev.name, text: ev.text, from: ev.from ?? null, seq, ...(uid ? { uid } : {}) } as MsgRef,
       { expireIn: TTL_MS },
     );
   }
@@ -1159,8 +1174,20 @@ async function dmConvCount(uid: string, n: number): Promise<number> {
   for await (const _e of kv.list({ prefix: ["dmconv", uid] }, { limit: n })) c++;
   return c;
 }
-type DmMsg = { seq: number; from: string; text: string; ts: number };
-type DmConv = { name: string; last: string; ts: number; seq: number; read: number };
+// `del` marks a retraction rather than a line: "the line at this seq is gone".
+// It rides the conversation's own stream so that a window already showing
+// that line drops it on its next poll, at no cost to any poll — see
+// dmRetract(). It is never drawn and never counted as something said.
+type DmMsg = { seq: number; from: string; text: string; ts: number; del?: number };
+// `hid` is the seqs above `read` that are not something to read — a line its
+// author took back, and the marker that says so. Unread is everything past the
+// read mark less those; reading past them drops them. Almost always absent.
+type DmConv = { name: string; last: string; ts: number; seq: number; read: number; hid?: number[] };
+function dmUnread(v: DmConv): number {
+  const read = Number(v.read) || 0;
+  const hid = (v.hid || []).filter((s) => s > read).length;
+  return Math.max(0, (Number(v.seq) || 0) - read - hid);
+}
 
 // The pair IS the key, sorted so both sides name the same conversation. That is
 // what makes access a matter of arithmetic rather than a check somebody can
@@ -1216,6 +1243,11 @@ async function dmOther(who: unknown): Promise<any | null> {
 // not what anybody means by the word — and it would let the pair's history keep
 // growing out of one side. So: neither writes, neither reads, and the rail says
 // so rather than pretending the conversation was never there.
+//
+// And the end that was blocked is TOLD, by name: "you have been blocked by X".
+// It used to read only "closed", which left somebody writing into a door that
+// would never open with no way to know why. A block is a DM matter and nothing
+// more — both of them still see each other in the room exactly as before.
 type DmBlock = { lo: boolean; hi: boolean };
 // which flag is whose, decided the same way convOf() decides the key
 function dmSide(me: string, them: string): "lo" | "hi" { return me < them ? "lo" : "hi"; }
@@ -1248,8 +1280,12 @@ async function dmMarkRead(uid: string, other: string, upto: number): Promise<voi
     const e = await kv.get<DmConv>(["dmconv", uid, other]);
     const v = e.value;
     if (!v || (Number(v.read) || 0) >= upto) return;
+    const hid = (v.hid || []).filter((s) => s > upto);
+    const next: DmConv = { ...v, read: upto };
+    if (hid.length) next.hid = hid;
+    else delete next.hid;
     const res = await kv.atomic().check(e)
-      .set(["dmconv", uid, other], { ...v, read: upto }, { expireIn: DM_TTL })
+      .set(["dmconv", uid, other], next, { expireIn: DM_TTL })
       .commit();
     if (res.ok) return;
   }
@@ -1280,11 +1316,209 @@ async function dmAppend(from: any, to: any, text: string): Promise<DmMsg | null>
       .set(["dmconv", to.id, from.id], {
         name: from.username, last: preview, ts: msg.ts, seq,
         read: Number(theirsE.value?.read) || 0,
+        ...(theirsE.value?.hid?.length ? { hid: theirsE.value.hid } : {}),
       }, { expireIn: DM_TTL })
       .commit();
     if (res.ok) return msg;
   }
   return null;
+}
+
+// Take back one of your own lines. The line itself is deleted, and a marker
+// takes the next seq in its place, so the other end's open window — which
+// only ever asks for what is past the seq it has — learns about it on its next
+// ordinary poll. Keeping a separate list of deletions instead would put one
+// more read on every poll of every open conversation, forever.
+//
+// Both rails are moved in the same commit. The preview becomes the newest
+// line still standing, and neither the marker nor the line it names is left
+// counting as unread: both go on the reader's `hid`, which the badge
+// subtracts, so taking a line back cannot leave a badge counting nothing.
+// deno-lint-ignore no-explicit-any
+async function dmRetract(me: any, other: any, target: number): Promise<"ok" | "gone" | "forbidden" | "busy"> {
+  const conv = convOf(me.id, other.id);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const line = await kv.get<DmMsg>(["dmev", conv, target]);
+    if (!line.value || line.value.del) return "gone";
+    if (line.value.from !== me.id) return "forbidden";
+    const seqE = await kv.get<number>(["dmseq", conv]);
+    const mineE = await kv.get<DmConv>(["dmconv", me.id, other.id]);
+    const theirsE = await kv.get<DmConv>(["dmconv", other.id, me.id]);
+    const seq = (Number(seqE.value) || 0) + 1;
+    // the newest line that will still be standing, for the preview
+    let last = "";
+    for await (
+      const e of kv.list<DmMsg>({ prefix: ["dmev", conv] }, { reverse: true, limit: 25 })
+    ) {
+      const v = e.value;
+      if (!v || v.del || v.seq === target) continue;
+      last = String(v.text || "").slice(0, 120);
+      break;
+    }
+    const mark: DmMsg = { seq, from: me.id, text: "", ts: Date.now(), del: target };
+    const op = kv.atomic()
+      .check(line).check(seqE).check(mineE).check(theirsE)
+      .delete(["dmev", conv, target])
+      .set(["dmseq", conv], seq, { expireIn: DM_TTL })
+      .set(["dmev", conv, seq], mark, { expireIn: DM_TTL });
+    if (mineE.value) {
+      const mine: DmConv = { ...mineE.value, last, seq, read: seq };
+      delete mine.hid; // everything up to here is read on this side
+      op.set(["dmconv", me.id, other.id], mine, { expireIn: DM_TTL });
+    }
+    if (theirsE.value) {
+      const was = Number(theirsE.value.read) || 0;
+      // bounded: a long run of deletions they never opened only ever makes
+      // the badge read a little high, never grows the row without end
+      const hid = (theirsE.value.hid || []).filter((s) => s > was)
+        .concat(target > was ? [target, seq] : [seq]).slice(-200);
+      op.set(["dmconv", other.id, me.id], { ...theirsE.value, last, seq, hid }, { expireIn: DM_TTL });
+    }
+    if ((await op.commit()).ok) return "ok";
+  }
+  return "busy";
+}
+
+// ---- what is left of an account that no longer exists ----------------------
+//
+// Deleting an account used to take the account and its money and leave every
+// word it had written: its lines in the room, its reactions, and both halves
+// of every conversation it was in, which the panel then listed as "(gone)".
+// These take all of that with it.
+//
+// None of it runs on a poll. It runs when an account is deleted, when every
+// application is cleared, from the panel's one-off clean-up, and — for a
+// single conversation — at the moments something is already looking at a
+// "(gone)" row and has paid for the read that noticed.
+
+// Deletes in small commits, so no single one can run into a size limit.
+async function kvDeleteAll(keys: Deno.KvKey[]): Promise<void> {
+  for (let i = 0; i < keys.length; i += 10) {
+    const op = kv.atomic();
+    for (const k of keys.slice(i, i + 10)) op.delete(k);
+    await op.commit();
+  }
+}
+
+// One conversation, both sides of it: every line, its counter, its block and
+// the row on each rail.
+async function purgeConversation(a: string, b: string): Promise<void> {
+  const conv = convOf(a, b);
+  const keys: Deno.KvKey[] = [];
+  for await (const e of kv.list({ prefix: ["dmev", conv] })) keys.push(e.key);
+  keys.push(["dmseq", conv], ["dmblock", conv], ["dmconv", a, b], ["dmconv", b, a]);
+  await kvDeleteAll(keys);
+}
+
+// Every conversation with an end in `dead`, found from the rails rather than
+// from the dead account's own: a reader's row outlives the writer's, because
+// reading refreshes its clock, so the dead end's rail can be missing rows the
+// living ends still show.
+async function purgeDmsOf(dead: Set<string>): Promise<number> {
+  const pairs = new Map<string, [string, string]>();
+  for await (const e of kv.list({ prefix: ["dmconv"] })) {
+    const owner = String(e.key[1]), other = String(e.key[2]);
+    if (dead.has(owner) || dead.has(other)) pairs.set(convOf(owner, other), [owner, other]);
+  }
+  for (const [a, b] of pairs.values()) await purgeConversation(a, b);
+  return pairs.size;
+}
+
+// Their lines in the room, the quote index behind them, their reactions, and
+// quotes of their words inside other people's replies. A line knows its
+// author's id through the quote index (`uid`); one written before that was
+// recorded is matched by name, and only against names given here, which are
+// names no living account holds.
+async function purgeRoomOf(dead: Set<string>, deadNames: Set<string>): Promise<number> {
+  const ownedBy = (ref: { uid?: string; name?: unknown; from?: unknown }) =>
+    ref.uid ? dead.has(ref.uid) : !ref.from && deadNames.has(String(ref.name ?? "").toLowerCase());
+  const uidOf = new Map<string, string>();
+  const gone = new Set<string>();
+  const shown: string[] = []; // the ones in the window, which a client can be showing
+  const drop: Deno.KvKey[] = [];
+  for await (const e of kv.list<MsgRef>({ prefix: ["msg"] })) {
+    const v = e.value;
+    if (!v) continue;
+    if (v.uid) uidOf.set(String(e.key[1]), v.uid);
+    if (ownedBy(v)) {
+      gone.add(String(e.key[1]));
+      drop.push(e.key);
+    }
+  }
+  // deno-lint-ignore no-explicit-any
+  const rewrite: { key: Deno.KvKey; value: any; ts: number }[] = [];
+  // deno-lint-ignore no-explicit-any
+  for await (const e of kv.list<any>({ prefix: ["ev"] })) {
+    const v = e.value;
+    if (!v) continue;
+    if (v.type === "msg") {
+      const uid = uidOf.get(String(v.id));
+      if (gone.has(String(v.id)) || ownedBy({ uid, name: v.name, from: v.from })) {
+        gone.add(String(v.id));
+        shown.push(String(v.id));
+        drop.push(e.key);
+        continue;
+      }
+      if (v.reply && (gone.has(String(v.reply.id)) || deadNames.has(String(v.reply.name ?? "").toLowerCase()))) {
+        rewrite.push({ key: e.key, value: { ...v, reply: null }, ts: Number(v.ts) || Date.now() });
+      }
+    } else if (v.type === "react" && deadNames.has(String(v.name ?? "").toLowerCase())) {
+      drop.push(e.key);
+    }
+  }
+  for (const id of dead) {
+    for await (const e of kv.list({ prefix: ["rx", id] })) drop.push(e.key);
+  }
+  await kvDeleteAll(drop);
+  // a reply keeps its own words and loses the quote, and keeps the clock it
+  // already had rather than starting a fresh two weeks
+  for (const r of rewrite) {
+    const left = TTL_MS - (Date.now() - r.ts);
+    if (left > 60_000) await kv.set(r.key, r.value, { expireIn: left });
+  }
+  // one event for all of it, so every open window drops the lines at once
+  // without the log filling up with a delete per line. Only lines still in the
+  // log can be on anybody's screen, and the log is capped, so this is too.
+  if (shown.length) await appendEvent({ type: "del", id: shown[0], ids: shown });
+  return gone.size;
+}
+
+// Everything left behind by accounts that are already gone. The ids come off
+// the rails and the reaction rows, the only places a dead id is still written
+// down; each distinct one is looked up once. Names for the older room lines
+// come off the rails too — the name a conversation last knew them by — and
+// only when no living account holds that name now.
+async function purgeGone(): Promise<{ accounts: number; conversations: number; lines: number }> {
+  const seen = new Map<string, string>(); // id -> last name the rails knew
+  for await (const e of kv.list<DmConv>({ prefix: ["dmconv"] })) {
+    const owner = String(e.key[1]), other = String(e.key[2]);
+    if (owner !== TUNG_DM_ID && !seen.has(owner)) seen.set(owner, "");
+    if (other !== TUNG_DM_ID) seen.set(other, String(e.value?.name || seen.get(other) || ""));
+  }
+  for await (const e of kv.list({ prefix: ["rx"] })) {
+    const id = String(e.key[1]);
+    if (!seen.has(id)) seen.set(id, "");
+  }
+  for await (const e of kv.list<MsgRef>({ prefix: ["msg"] })) {
+    const id = e.value?.uid;
+    if (id && !seen.has(id)) seen.set(id, "");
+  }
+  const ids = [...seen.keys()];
+  const dead = new Set<string>();
+  for (let i = 0; i < ids.length; i += 10) {
+    const batch = ids.slice(i, i + 10);
+    const got = await kv.getMany(batch.map((id) => ["app", id]));
+    got.forEach((g, k) => { if (!g.value) dead.add(batch[k]); });
+  }
+  const deadNames = new Set<string>();
+  for (const id of dead) {
+    const n = (seen.get(id) || "").toLowerCase();
+    if (n && !(await kv.get(["name", n])).value) deadNames.add(n);
+  }
+  if (!dead.size) return { accounts: 0, conversations: 0, lines: 0 };
+  const conversations = await purgeDmsOf(dead);
+  const lines = await purgeRoomOf(dead, deadNames);
+  return { accounts: dead.size, conversations, lines };
 }
 
 // Rate limits: 90 req/min per IP for *anonymous* traffic, plus per-token
@@ -3919,11 +4153,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const id = clip(b.id, 32) || rid(8);
     const claim = await kv.atomic()
       .check({ key: ["msg", id], versionstamp: null })
-      .set(["msg", id], { name: user.username, text, from: null } as MsgRef, { expireIn: TTL_MS })
+      .set(["msg", id], { name: user.username, text, from: null, uid: user.id } as MsgRef, { expireIn: TTL_MS })
       .commit();
     if (!claim.ok) return json({ error: "duplicate" }, 409);
     const posted: Record<string, unknown> = { type: "msg", id, name: user.username, text, reply };
-    await appendEvent(posted);
+    await appendEvent(posted, user.id);
     // tung occasionally has something to add. only ever after a real message,
     // so the room is never talking to itself.
     await maybeWisdom();
@@ -3971,7 +4205,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!allow("dmls:" + u.id, 10, 10_000)) return tooMany(10);
     const convs: {
       id: string; name: string; last: string; ts: number; unread: number;
-      closed: boolean; byYou: boolean; tung?: boolean;
+      closed: boolean; byYou: boolean; byThem: boolean; tung?: boolean;
     }[] = [];
     // Bounded, so that one read of a rail costs what one read of a rail costs
     // however many rows are behind it. DM_CONV_MAX is what stops an account
@@ -3984,8 +4218,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const id = String(e.key[2]);
       convs.push({
         id, name: v.name, last: v.last, ts: v.ts,
-        unread: Math.max(0, (Number(v.seq) || 0) - (Number(v.read) || 0)),
-        closed: false, byYou: false,
+        unread: dmUnread(v),
+        closed: false, byYou: false, byThem: false,
         // the id, not the cached name: a rename cannot put his mark on a member,
         // and nothing but this id is him
         ...(id === TUNG_DM_ID ? { tung: true } : {}),
@@ -3994,13 +4228,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     convs.sort((a, c) => c.ts - a.ts);
     // One read per conversation, and only for the handful the rail shows. A
     // shut conversation stops counting unread: there is nothing waiting in it
-    // to be read. Same rule as above — the rail says "closed", and says it was
-    // yours only when it was.
+    // to be read. Each end is told which of them shut it — both, if both did.
     await Promise.all(convs.map(async (c) => {
       const b = await dmBlockOf(u.id, c.id);
       if (!dmBlocked(b)) return;
       c.closed = true;
       c.byYou = !!b[dmSide(u.id, c.id)];
+      c.byThem = !!b[dmSide(c.id, u.id)];
       c.unread = 0;
     }));
     return json({ ok: true, convs });
@@ -4030,25 +4264,34 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // allows a conversation opened every three seconds for a minute.
     if (since === 0 && !allow("dmcold:" + u.id, 20, 60_000)) return tooMany(20);
     const other = await dmOther(url.searchParams.get("with"));
-    if (!other) return json({ error: "not_found" }, 404);
+    if (!other) {
+      // Nobody by that name or id. If it is a conversation on this member's
+      // rail, its other end was deleted: those reads were the ones paid to
+      // find out, and the conversation goes now rather than sitting on the
+      // rail as a row that can never be opened.
+      const w = clip(url.searchParams.get("with"), 32);
+      if (w && w !== TUNG_DM_ID && !(await kv.get(["app", w])).value) {
+        if ((await kv.get(["dmconv", u.id, w])).value) await purgeConversation(u.id, w);
+      }
+      return json({ error: "not_found" }, 404);
+    }
     if (other.id === u.id) return json({ error: "yourself" }, 400);
     // A member who has been shut out of the room is not somewhere you can
     // write to, and the conversation reads as closed rather than as missing.
     if (chatBlock(other).blocked) {
       return json({ ok: true, with: dmPeerView(other), msgs: [], seq: 0, closed: true });
     }
-    // Blocked reads exactly like any other closed conversation, with one
-    // addition: if it was YOU who shut it you are told so, because that is the
-    // difference between a button that says "unblock" and nothing you can do.
-    // The other end is told only that it is closed — never that it was blocked,
-    // and never by whom. In a conversation with two people in it, "blocked and
-    // not by you" names the blocker, so it is not a thing that can be said.
+    // Blocked reads as closed, and says whose block it is: `byYou` is the
+    // difference between a button that says "unblock" and nothing you can do,
+    // and `byThem` is what lets the page say "you have been blocked by X"
+    // instead of leaving them to wonder. Both can be true at once.
     const bl = await dmBlockOf(u.id, other.id);
     if (dmBlocked(bl)) {
       const mine = !!bl[dmSide(u.id, other.id)];
+      const theirs = !!bl[dmSide(other.id, u.id)];
       return json({
         ok: true, with: dmPeerView(other), msgs: [], seq: 0,
-        closed: true, ...(mine ? { byYou: true } : {}),
+        closed: true, ...(mine ? { byYou: true } : {}), ...(theirs ? { byThem: true } : {}),
       });
     }
     // and the cross-isolate half of the same cap. The in-memory buckets above
@@ -4059,7 +4302,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // conversation never costs a write.
     if (since === 0 && !await allowGlobal("dmcold:" + u.id, 40, 60_000)) return tooMany(60);
     const conv = convOf(u.id, other.id);
-    const msgs: { seq: number; text: string; ts: number; mine: boolean; from?: "tung" }[] = [];
+    const msgs: { seq: number; text: string; ts: number; mine: boolean; from?: "tung"; del?: number }[] = [];
     let top = since;
     for await (
       const e of kv.list<DmMsg>(
@@ -4070,6 +4313,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const v = e.value;
       if (!v) continue;
       top = Math.max(top, v.seq);
+      // a retraction: the window drops that seq, and draws nothing
+      if (v.del) {
+        msgs.push({ seq: v.seq, text: "", ts: v.ts, mine: v.from === u.id, del: v.del });
+        continue;
+      }
       // from:"tung" is the same stamp the room puts on his lines, and on
       // nothing else. The client styles that and never the name.
       msgs.push({
@@ -4083,7 +4331,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   }
 
   // Block or unblock one member. Yours to set and yours to lift; the other end
-  // is never told which way round it is, only that the conversation is shut.
+  // sees that you blocked them, and sees it lifted when you lift it.
   if (req.method === "POST" && path === "/dm/block") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -4103,7 +4351,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (other.id === u.id) return json({ error: "yourself" }, 400);
     const on = b.blocked !== false;
     const next = await dmSetBlock(u.id, other.id, on);
-    return json({ ok: true, blocked: dmBlocked(next), byYou: !!next[dmSide(u.id, other.id)] });
+    return json({
+      ok: true, blocked: dmBlocked(next),
+      byYou: !!next[dmSide(u.id, other.id)], byThem: !!next[dmSide(other.id, u.id)],
+    });
   }
 
   if (req.method === "POST" && path === "/dm/send") {
@@ -4130,12 +4381,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // the other half of the ban: you cannot write to somebody who has been
     // shut out, any more than they could write to you
     if (chatBlock(other).blocked) return json({ error: "closed" }, 403);
-    // and a block shuts it from either side. Only the end that set it gets a
-    // word for what happened; to the other end it is closed, the same as it
-    // would be for any other reason.
+    // and a block shuts it from either side, and says whose it is: your own
+    // block comes first, because it is the one you can do something about
     const sbl = await dmBlockOf(u.id, other.id);
     if (dmBlocked(sbl)) {
-      return json({ error: sbl[dmSide(u.id, other.id)] ? "you_blocked" : "closed" }, 403);
+      return json({
+        error: sbl[dmSide(u.id, other.id)] ? "you_blocked" : "blocked_you",
+        name: other.username,
+      }, 403);
     }
     // ---- opening a NEW conversation ----------------------------------------
     // Replying in a conversation that already exists writes one line and moves
@@ -4169,6 +4422,32 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, msg: { seq: msg.seq, text: msg.text, ts: msg.ts, mine: true } });
   }
 
+  // Take back one of your own lines in a conversation. Only yours, only while
+  // the conversation is open — a shut one shows nothing to take back.
+  if (req.method === "POST" && path === "/dm/delete") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const u = await authUser(b.token);
+    if (!u) return json({ error: "unauthorized" }, 401);
+    const bs = chatBlock(u);
+    if (bs.blocked) return json({ error: "blocked", reason: bs.reason, until: bs.until }, 403);
+    // a handful of reads and one commit each; a person deletes a line now and
+    // then, a script deleting in a loop is the thing being priced
+    if (!allow("dmdel:" + u.id, 10, 10_000)) return tooMany(10);
+    if (!await allowGlobal("dmdel:" + u.id, 30, 60_000)) return tooMany(60);
+    const target = Math.floor(Number(b.seq));
+    if (!(target > 0)) return json({ error: "bad" }, 400);
+    const other = await dmOther(b.with);
+    if (!other) return json({ error: "not_found" }, 404);
+    if (other.id === u.id) return json({ error: "yourself" }, 400);
+    if (dmBlocked(await dmBlockOf(u.id, other.id))) return json({ error: "closed" }, 403);
+    const res = await dmRetract(u, other, target);
+    if (res === "gone") return json({ error: "gone" }, 404);
+    if (res === "forbidden") return json({ error: "forbidden" }, 403);
+    if (res === "busy") return json({ error: "busy" }, 503);
+    return json({ ok: true, seq: target });
+  }
+
   if (req.method === "POST" && path === "/react") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -4200,29 +4479,37 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ ok: true, state: wants ? 1 : 0 });
   }
 
-  // ---------- delete a message (moderators) ----------
-  // The one power the moderator flag buys. A moderator is an ordinary approved
-  // member everywhere it can be seen: the flag never rides on a chat event, a
-  // reaction or a profile, so nobody in the room can work out who holds it. The
-  // only place it is disclosed is /status and /login, to the account itself, so
-  // its own client knows to draw the bin. Chat bans and timeouts still apply —
-  // somebody barred from the room does not get to reach into it.
+  // ---------- delete a message (its author, or a moderator) ----------
+  // Anybody may take back their own line. Anybody ELSE's is the one power the
+  // moderator flag buys. A moderator is an ordinary approved member everywhere
+  // it can be seen: the flag never rides on a chat event, a reaction or a
+  // profile, so nobody in the room can work out who holds it. The only place
+  // it is disclosed is /status and /login, to the account itself, so its own
+  // client knows to draw the bin on every line rather than only on its own.
+  // Chat bans and timeouts still apply — somebody barred from the room does
+  // not get to reach into it, even to tidy up after themselves.
   if (req.method === "POST" && path === "/delete") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
     // tung's own key works here too, so the room can be cleaned up without
     // first handing the flag to an account.
     const byKey = ADMIN_KEY !== "" && String(b.key ?? "") === ADMIN_KEY;
+    const id = clip(b.id, 32);
     if (!byKey) {
       const user = await authUser(b.token);
       if (!user) return json({ error: "unauthorized" }, 401);
-      if (user.mod !== true) return json({ error: "forbidden" }, 403);
       const dbs = chatBlock(user);
       if (dbs.blocked) return json({ error: "blocked", reason: dbs.reason, until: dbs.until }, 403);
       if (!allow("del:" + user.id, 20, 10_000)) return tooMany(10);
       if (!await allowGlobal("del:" + user.id, 20, 10_000)) return tooMany(10);
+      if (!id) return json({ error: "bad" }, 400);
+      if (user.mod !== true) {
+        // one read, and it is the read the delete makes anyway
+        const ref = await kv.get<MsgRef>(["msg", id]);
+        if (!ref.value) return json({ error: "gone" }, 404);
+        if (!ownsMessage(ref.value, user)) return json({ error: "forbidden" }, 403);
+      }
     }
-    const id = clip(b.id, 32);
     if (!id) return json({ error: "bad" }, 400);
     if (!await deleteMessage(id)) return json({ error: "gone" }, 404);
     return json({ ok: true, id });
@@ -5081,17 +5368,20 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // The name on the row is whatever the other end was called when the last
     // line was written, so a rename since then would leave the dropdown naming
     // somebody who no longer exists. The account is the truth; the row is a
-    // cache of it. An id with no account left behind it keeps the cached name,
-    // marked, rather than dropping out of the list — the conversation is still
-    // there to read, and "who was this" is the reason to read it.
+    // cache of it. An id with no account behind it at all is a deleted
+    // member's leftovers — this used to list them as "(gone)" — and the read
+    // that noticed is the moment to take the conversation away.
+    const goneIds: string[] = [];
     await Promise.all(peers.map(async (pr) => {
       // deno-lint-ignore no-explicit-any
       const a = await kv.get<any>(["app", pr.id]);
       if (a.value && a.value.username) pr.name = a.value.username;
-      else pr.name = (pr.name || pr.id) + " (gone)";
+      else if (pr.id !== TUNG_DM_ID) goneIds.push(pr.id);
     }));
-    peers.sort((x, y) => y.ts - x.ts);
-    return json({ ok: true, id, name: me.value.username, peers });
+    for (const g of goneIds) await purgeConversation(id, g);
+    const live = peers.filter((pr) => !goneIds.includes(pr.id));
+    live.sort((x, y) => y.ts - x.ts);
+    return json({ ok: true, id, name: me.value.username, peers: live });
   }
 
   if (req.method === "POST" && path === "/admin/dm/thread") {
@@ -5107,6 +5397,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // deno-lint-ignore no-explicit-any
       kv.get<any>(["app", two]),
     ]);
+    // a deleted member's half of a conversation is not something to read back;
+    // noticing it is when it goes
+    if ((!oneApp.value && one !== TUNG_DM_ID) || (!twoApp.value && two !== TUNG_DM_ID)) {
+      await purgeConversation(one, two);
+      return json({ error: "gone" }, 404);
+    }
     const pair = convOf(one, two);
     // Newest first out of KV, then flipped, so that a conversation longer than
     // the cap gives back its END rather than its beginning. A truncated dump
@@ -5116,7 +5412,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const e of kv.list<DmMsg>({ prefix: ["dmev", pair] }, { limit: DM_DUMP, reverse: true })
     ) {
       const v = e.value;
-      if (!v) continue;
+      // a retraction marker is not a line; the line it names is already gone
+      if (!v || v.del) continue;
       msgs.push({ seq: v.seq, from: v.from, text: v.text, ts: v.ts });
     }
     msgs.reverse();
@@ -5128,8 +5425,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       msgs,
       count: msgs.length,
       truncated: msgs.length >= DM_DUMP,
-      // who shut it, in the one place where saying so is the whole point.
-      // The members themselves are never told this — see /dm/with.
+      // who shut it. The members are told this too now — see /dm/with.
       blockedBy: [
         ...(bl.lo ? [one < two ? one : two] : []),
         ...(bl.hi ? [one < two ? two : one] : []),
@@ -5165,15 +5461,18 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       convs.push({
         id: String(e.key[2]), name: v.name, last: v.last,
         ts: Number(v.ts) || 0, seq: Number(v.seq) || 0,
-        unread: Math.max(0, (Number(v.seq) || 0) - (Number(v.read) || 0)),
+        unread: dmUnread(v),
         closed: false, byYou: false, byThem: false,
       });
     }
+    // a row whose member no longer exists is a deleted account's leftovers,
+    // and this read is the one that noticed: the conversation goes
+    const goneIds: string[] = [];
     await Promise.all(convs.map(async (pr) => {
       // deno-lint-ignore no-explicit-any
       const a = await kv.get<any>(["app", pr.id]);
       if (a.value && a.value.username) pr.name = a.value.username;
-      else pr.name = (pr.name || pr.id) + " (gone)";
+      else { goneIds.push(pr.id); return; }
       const bl = await dmBlockOf(TUNG_DM_ID, pr.id);
       if (!dmBlocked(bl)) return;
       pr.closed = true;
@@ -5183,8 +5482,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       pr.byThem = !!bl[dmSide(pr.id, TUNG_DM_ID)];
       pr.unread = 0;
     }));
-    convs.sort((x, y) => y.ts - x.ts);
-    return json({ ok: true, convs });
+    for (const g of goneIds) await purgeConversation(TUNG_DM_ID, g);
+    const live = convs.filter((c) => !goneIds.includes(c.id));
+    live.sort((x, y) => y.ts - x.ts);
+    return json({ ok: true, convs: live });
   }
 
   if (req.method === "POST" && path === "/admin/talk/thread") {
@@ -5202,6 +5503,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!row.value && !(app.value && app.value.status === "approved")) {
       return json({ error: "not found" }, 404);
     }
+    // history with nobody behind it any more: a deleted member's, and it goes
+    if (!app.value) {
+      await purgeConversation(TUNG_DM_ID, id);
+      return json({ error: "gone" }, 404);
+    }
     const pair = convOf(TUNG_DM_ID, id);
     const msgs: { seq: number; text: string; ts: number; mine: boolean; from?: "tung" }[] = [];
     let top = 0;
@@ -5211,6 +5517,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const v = e.value;
       if (!v) continue;
       top = Math.max(top, v.seq);
+      if (v.del) continue; // a line they took back, not a line
       msgs.push({
         seq: v.seq, text: v.text, ts: v.ts, mine: v.from === TUNG_DM_ID,
         ...(v.from === TUNG_DM_ID ? { from: "tung" as const } : {}),
@@ -5600,7 +5907,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // ---------- admin: delete a user entirely ----------
   // removes the application record, frees the username, revokes every token
   // pointing at it, and wipes their casino balance / in-progress hands so they
-  // cannot linger on the admin balances pane as "(deleted)".
+  // cannot linger on the admin balances pane as "(deleted)". Then everything
+  // they said goes too: both sides of every DM they were in, their lines and
+  // reactions in the room, and quotes of them in other people's replies.
   if (req.method === "POST" && path === "/admin/delete") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -5625,7 +5934,23 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (e.value === id) atomic.delete(e.key);
     }
     await atomic.commit();
-    return json({ ok: true, deleted: true });
+    // after the account, so nothing can be written back under it in between;
+    // the name is theirs alone until this very commit freed it
+    const dead = new Set([id]);
+    const conversations = await purgeDmsOf(dead);
+    const lines = await purgeRoomOf(dead, new Set([lower]));
+    return json({ ok: true, deleted: true, conversations, lines });
+  }
+
+  // ---------- admin: clear what deleted accounts left behind ----------
+  // For accounts deleted before deleting took their words with it — the
+  // "(gone)" rows. One pass over the rails, the reaction rows and the quote
+  // index, run when the panel asks and not otherwise.
+  if (req.method === "POST" && path === "/admin/purgegone") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    return json({ ok: true, ...(await purgeGone()) });
   }
 
   // ---------- admin: read back a member's login key ----------
@@ -5757,7 +6082,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // Its index is bookkeeping, not entries anybody made, so it is not counted.
     await kv.delete(["pendn"]);
     for await (const e of kv.list({ prefix: ["pendq"] })) await kv.delete(e.key);
-    return json({ ok: true, cleared: n });
+    // every account is gone now, and what they wrote goes with them
+    const left = await purgeGone();
+    return json({ ok: true, cleared: n, conversations: left.conversations, lines: left.lines });
   }
 
   // ======================= TUNG'S CASINO (fun money) =======================
@@ -6801,7 +7128,9 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <h2>Manage users</h2>
 <p class="hint">Approved users: rename, ban, chat-ban, timeout, moderator powers, web-veil access, note, re-review, or delete.
 A <b>ban</b> shuts the whole shrine — chat and casino both. A <b>chat ban</b> shuts only the chat: they cannot read it or post in it, and the casino, the pit, the games, the shop and the veil keep working normally.
-A <b>moderator</b> gets a bin next to react and reply on every chat message and can delete any of them. Nothing marks them out in the room — no badge, no tag — so only this page knows.</p>
+A <b>moderator</b> gets a bin next to react and reply on every chat message and can delete any of them (everybody can delete their own). Nothing marks them out in the room — no badge, no tag — so only this page knows.
+<b>Delete</b> takes everything they said with them: their chat messages and reactions, and both sides of every DM they were in.</p>
+<div class="row" style="margin:0 0 14px"><button class="load" id="purgeGone" type="button">clear what deleted accounts left behind</button><span class="hint" id="purgeGoneOut" style="margin:0">Accounts deleted before that rule left their messages and DMs behind &mdash; the &ldquo;(gone)&rdquo; rows. One pass clears all of it; opening one of those conversations also clears it on its own.</span></div>
 <input class="search" id="search-users" placeholder="search approved users…" autocomplete="off">
 <div id="users"><div class="empty">load to see approved users.</div></div>
 </section>
@@ -6866,7 +7195,7 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 </section>
 <section class="pane danger" id="pane-danger">
 <h2>Wipe data</h2>
-<p>Delete every application (pending and approved). Usernames and tokens are wiped; everyone must re-apply. Casino balances and shop items are not cleared by this.</p>
+<p>Delete every application (pending and approved). Usernames and tokens are wiped; everyone must re-apply, and what they said goes with them &mdash; their chat messages and every DM. Casino balances and shop items are not cleared by this.</p>
 <div class="row" style="margin-top:12px"><button class="no" id="clear">clear all applications</button></div>
 </section>
 </div>
@@ -6946,6 +7275,16 @@ function setVeil(live){
     .then(function(r){return r.json();}).then(paintVeil)
     .catch(function(){paintVeil({error:"could not reach the server."});});
 }
+document.getElementById("purgeGone").onclick=function(){
+  var btn=this,out=document.getElementById("purgeGoneOut");
+  if(!keyEl.value.trim()){out.textContent="enter your admin key first.";return;}
+  btn.disabled=true;out.textContent="clearing\u2026";
+  apost("/admin/purgegone",{}).then(function(d){
+    btn.disabled=false;
+    if(d.error){out.textContent=d.error;return;}
+    out.textContent=d.accounts?("cleared "+d.accounts+" deleted account"+(d.accounts===1?"":"s")+": "+d.conversations+" conversation"+(d.conversations===1?"":"s")+" and "+d.lines+" chat message"+(d.lines===1?"":"s")+"."):"nothing left behind \u2014 it is all clear.";
+  }).catch(function(){btn.disabled=false;out.textContent="network error.";});
+};
 document.getElementById("clear").onclick=function(){
   if(!confirm("Delete ALL applications (pending + approved)? Everyone will have to re-apply."))return;
   fetch("/admin/clear",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim()})}).then(function(r){return r.json();}).then(function(d){alert(d.error?d.error:("cleared "+d.cleared+" entries"));loadAll();});
@@ -7258,7 +7597,7 @@ function saveNote(id,note){
   fetch("/admin/note",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,note:note})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 function deleteUser(id,name){
-  if(!confirm("Delete "+name+" entirely? This frees the username and cannot be undone."))return;
+  if(!confirm("Delete "+name+" entirely? This frees the username and deletes everything they said: their chat messages, reactions and every DM they were in, on both sides. It cannot be undone."))return;
   fetch("/admin/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();refreshBalances();});
 }
 function repend(id,name){
@@ -7561,6 +7900,7 @@ function dmDumpThread(){
   if(!b){alert("pick somebody they have talked to");return;}
   dmout.innerHTML='<div class="empty">loading...</div>';
   apost("/admin/dm/thread",{user:a,peer:b}).then(function(d){
+    if(d.error==="gone"){dmout.innerHTML='<div class="empty">that account was deleted, so the conversation has been cleared.</div>';dmLoadPeers();return;}
     if(d.error){dmout.innerHTML='<div class="empty">'+d.error+' \u2014 check your key.</div>';return;}
     dmPaintThread(d);
   }).catch(function(){dmout.innerHTML='<div class="empty">network error.</div>';});

@@ -80,6 +80,10 @@
       /* a DM line has no reactions, replies or gifts, so it does not reserve
          room for the buttons that would work them */
       '.msg.dm .acts{display:none}' +
+      /* the one thing a shut conversation shows: who shut it */
+      '.dmnotice{align-self:center;margin:auto 0;padding:12px 18px;max-width:420px;text-align:center;' +
+      'font-size:13px;font-weight:700;line-height:1.45;color:#f2c063;background:#241505;' +
+      'border:1px solid #3a2410;border-radius:10px}' +
       /* the rail is the first thing to go when there is no width for it; the
          room still works without it */
       '@media (max-width:760px){#dmrail{display:none}}' +
@@ -1076,6 +1080,7 @@
       '& #pick{background:{inset};border-color:{line};color:{text}}' +
       '& .msg{background:{raised}}' +
       '& .msg.me{background:{pressed}}' +
+      '& .dmnotice{background:{raised};border-color:{line};color:{heading}}' +
       '& .who{color:{muted}}' +
       '& .msg.me .who,& .who:hover{color:{heading}}' +
       '& .when{color:{lineHot}}' +

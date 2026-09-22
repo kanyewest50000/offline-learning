@@ -407,17 +407,21 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     var pb = document.createElement("button"); pb.type = "button"; pb.className = "act"; pb.textContent = "↩"; pb.title = "reply";
     pb.addEventListener("click", function(ev){ ev.stopPropagation(); setReply(m); input.focus(); });
     acts.appendChild(rb); acts.appendChild(pb);
-    // moderators get a third button and nobody else does. it arms on the first
-    // click and fires on the second, so one stray tap cannot destroy a line.
-    if (IS_MOD) {
-      var db = document.createElement("button"); db.type = "button"; db.className = "act del"; db.textContent = "🗑"; db.title = "delete this message";
+    // a third button: on your own lines for everybody, and on every line for a
+    // moderator. it arms on the first click and fires on the second, so one
+    // stray tap cannot destroy a line.
+    var canDel = !!m.mine && m.from !== "tung";
+    if (IS_MOD) canDel = true;
+    if (canDel) {
+      var dbt = m.mine ? "delete your message" : "delete this message";
+      var db = document.createElement("button"); db.type = "button"; db.className = "act del"; db.textContent = "🗑"; db.title = dbt;
       var armed = 0, armT = null;
       db.addEventListener("click", function(ev){
         ev.stopPropagation();
         if (!armed) {
           armed = 1; db.textContent = "⚠"; db.title = "click again to delete";
           if (armT) clearTimeout(armT);
-          armT = setTimeout(function(){ armed = 0; db.textContent = "🗑"; db.title = "delete this message"; }, 4000);
+          armT = setTimeout(function(){ armed = 0; db.textContent = "🗑"; db.title = dbt; }, 4000);
           return;
         }
         if (armT) clearTimeout(armT);
@@ -461,7 +465,12 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
   function applyWarn(t){ if (warnEl) warnEl.textContent = t; }
   function applyEvent(ev){
     if (!ev) return;
-    if (ev.type === "del") { dropMsg(ev.id); return; }
+    if (ev.type === "del") {
+      // one line, or — when an account is deleted — every line it had, in one event
+      if (ev.ids && ev.ids.length) { for (var di = 0; di < ev.ids.length; di++) dropMsg(ev.ids[di]); }
+      else dropMsg(ev.id);
+      return;
+    }
     if (ev.type === "react") { if (seenEids[ev.eid]) return; seenEids[ev.eid] = 1; applyReact(ev.id, ev.e, ev.op); return; }
     if (ev.type === "msg") {
       if (MSGS[ev.id]) { if (MSGS[ev.id].meta) stampWhen(MSGS[ev.id].meta, ev.ts); return; }

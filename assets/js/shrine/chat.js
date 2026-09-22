@@ -439,11 +439,13 @@
     'if(m.reply){var q=document.createElement("div");q.className="quote";var qn=document.createElement("b");qn.textContent=m.reply.name+": ";q.appendChild(qn);q.appendChild(document.createTextNode(emojify(m.reply.text)));q.addEventListener("click",function(){var t=document.querySelector("[data-id="+m.reply.id+"]");if(t){t.scrollIntoView({block:"center"});t.className+=" flash";setTimeout(function(){t.className=t.className.replace(" flash","");},700);}});row.appendChild(q);}' +
     'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
     'var acts=document.createElement("div");acts.className="acts";var rb=document.createElement("button");rb.type="button";rb.className="act";rb.textContent="😀";rb.title="react";rb.addEventListener("click",function(ev){ev.stopPropagation();openPalette(m.id,rb);});var pb=document.createElement("button");pb.type="button";pb.className="act";pb.textContent="↩";pb.title="reply";pb.addEventListener("click",function(ev){ev.stopPropagation();setReply(m);});acts.appendChild(rb);acts.appendChild(pb);' +
-    /* moderators get a third button and nobody else does. it arms on the first
-       click and fires on the second, so one stray tap on a tiny target cannot
-       destroy a line; it disarms itself again after four seconds. */
-    'if(IS_MOD){var db=document.createElement("button");db.type="button";db.className="act del";db.textContent="🗑";db.title="delete this message";var armed=0,armT=null;' +
-    'db.addEventListener("click",function(ev){ev.stopPropagation();if(!armed){armed=1;db.textContent="⚠";db.title="click again to delete";if(armT)clearTimeout(armT);armT=setTimeout(function(){armed=0;db.textContent="🗑";db.title="delete this message";},4000);return;}' +
+    /* a third button: on your own lines for everybody, and on every line for
+       a moderator. it arms on the first click and fires on the second, so one
+       stray tap on a tiny target cannot destroy a line; it disarms itself
+       again after four seconds. his lines are nobody's but a moderator's. */
+    'var canDel=!!m.mine&&!isT;if(IS_MOD)canDel=true;' +
+    'if(canDel){var dbt=m.mine?"delete your message":"delete this message";var db=document.createElement("button");db.type="button";db.className="act del";db.textContent="🗑";db.title=dbt;var armed=0,armT=null;' +
+    'db.addEventListener("click",function(ev){ev.stopPropagation();if(!armed){armed=1;db.textContent="⚠";db.title="click again to delete";if(armT)clearTimeout(armT);armT=setTimeout(function(){armed=0;db.textContent="🗑";db.title=dbt;},4000);return;}' +
     'if(armT)clearTimeout(armT);armed=0;db.disabled=true;delMsg(m.id);});acts.appendChild(db);}' +
     'row.appendChild(acts);' +
     'if(m.gift&&m.gift.id){var gw=document.createElement("div");gw.className="giftbox";' +
@@ -472,7 +474,7 @@
     'show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}' +
     'if((isTo||isChat)&&!pageHidden())statusT=setTimeout(refreshGate,isChat?15000:5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
-    'function applyEvent(ev){if(!ev)return;if(ev.type==="del"){dropMsg(ev.id);return;}if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id]){if(MSGS[ev.id].meta)stampWhen(MSGS[ev.id].meta,ev.ts);return;}add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null,ts:ev.ts||null});}}' +
+    'function applyEvent(ev){if(!ev)return;if(ev.type==="del"){if(ev.ids&&ev.ids.length){for(var di=0;di<ev.ids.length;di++)dropMsg(ev.ids[di]);}else dropMsg(ev.id);return;}if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id]){if(MSGS[ev.id].meta)stampWhen(MSGS[ev.id].meta,ev.ts);return;}add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null,ts:ev.ts||null});}}' +
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 4s. */
     'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}if(r&&r.mine)markMine(r.mine);}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,4000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
@@ -557,10 +559,11 @@
        the timer, or its reply lands on top of whatever replaced it */
     'function dmStop(){dmRun++;if(dmT){clearTimeout(dmT);dmT=null;}}' +
     /* ---- blocking ----
-       DMSHUT says whether this conversation is shut and, if it is, whether it
-       was this end that shut it — which is the whole difference between a
-       button that says "unblock" and a line saying there is nothing to do. */
-    'var DMSHUT={on:false,mine:false};' +
+       DMSHUT says whether this conversation is shut and, if it is, whose block
+       shut it: `mine` is the difference between a button that says "unblock"
+       and nothing to do, and `them` is what says "you have been blocked by X"
+       rather than leaving the blocked end staring at a dead composer. */
+    'var DMSHUT={on:false,mine:false,them:false};' +
     'function dmPaintBlock(){' +
     'if(!convBlock)return;' +
     'if(!DM){convBlock.style.display="none";return;}' +
@@ -568,27 +571,36 @@
     'if(DMSHUT.on&&!DMSHUT.mine){convBlock.style.display="none";return;}' +
     'convBlock.textContent=DMSHUT.on?"unblock":"block";' +
     'convBlock.className=DMSHUT.on?"on":"";}' +
-    /* the sub line under the name is where the state is explained, because the
-       button alone cannot say why the composer stopped working */
-    'function dmSetShut(on,mine){' +
+    /* the state is said three times — under the name, in the middle of the
+       empty conversation, and in the composer it has switched off — because
+       one small grey line is easy to miss and the whole point is not to leave
+       anybody guessing why nothing sends */
+    'function dmShutWhy(mine,them){var n=DM?DM.name:"";' +
+    'if(mine)return "you blocked "+n+"."+(them?" they blocked you too.":"");' +
+    'if(them)return "you have been blocked by "+n+".";' +
+    'return "this conversation is closed.";}' +
+    'function dmNotice(t){var old=log.querySelector(".dmnotice");if(old)old.parentNode.removeChild(old);' +
+    'if(!t)return;var d=document.createElement("div");d.className="dmnotice";d.textContent=t;log.appendChild(d);}' +
+    'function dmSetShut(on,mine,them){' +
     /* a shut conversation shows nothing, so that what is on screen matches
        what opening it again would give you */
     'if(on&&!DMSHUT.on){log.innerHTML="";dmSeq=0;}' +
-    'DMSHUT={on:!!on,mine:!!mine};' +
-    'if(DM&&convsub){' +
-    'convsub.textContent=!on?"only the two of you":mine?"you blocked "+DM.name+". they are not told.":"this conversation is closed.";}' +
-    'if(input)input.disabled=!!on;' +
+    'DMSHUT={on:!!on,mine:!!(on&&mine),them:!!(on&&them)};' +
+    'var why=on?dmShutWhy(DMSHUT.mine,DMSHUT.them):"";' +
+    'if(DM&&convsub)convsub.textContent=on?why:"only the two of you";' +
+    'dmNotice(why);' +
+    'if(input){input.disabled=!!on;if(DM)input.placeholder=on?why:"message "+DM.name+"\u2026";}' +
     'dmPaintBlock();}' +
     'function dmToggleBlock(){' +
     'if(!DM||!TOKEN)return;' +
     'var conv=DM,want=!DMSHUT.on;' +
-    'if(want&&!confirm("block "+conv.name+"? neither of you will be able to write to the other. you can undo this."))return;' +
+    'if(want&&!confirm("block "+conv.name+"? neither of you will be able to write to the other, and they will see that you blocked them. you can undo this."))return;' +
     'convBlock.disabled=true;' +
     'apiPost("/dm/block",{token:TOKEN,to:conv.id,blocked:want}).then(function(r){' +
     'convBlock.disabled=false;' +
     'if(DM!==conv)return;' +
     'if(!r||r.error){convsub.textContent="that did not go through.";return;}' +
-    'dmSetShut(r.blocked,r.byYou);' +
+    'dmSetShut(r.blocked,r.byYou,r.byThem);' +
     /* unblocking leaves an empty pane, so read the conversation back in */
     'if(!r.blocked){log.innerHTML="";dmSeq=0;dmStop();dmPoll();}' +
     'dmListRefresh();' +
@@ -613,7 +625,26 @@
     'meta.appendChild(w);' +
     'stampWhen(meta,m.ts);row.appendChild(meta);' +
     'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
+    /* your own lines get the one action a DM line has: taking it back. the
+       seq is what names the line to the server; a line still on its way up
+       has none yet, and the send stamps it on when it answers. */
+    'if(m.seq)row.setAttribute("data-seq",m.seq);' +
+    'if(m.mine){var acts=document.createElement("div");acts.className="acts";' +
+    'var db=document.createElement("button");db.type="button";db.className="act del";db.textContent="🗑";db.title="delete your message";var armed=0,armT=null;' +
+    'db.addEventListener("click",function(ev){ev.stopPropagation();var sq=Number(row.getAttribute("data-seq"))||0;if(!sq)return;' +
+    'if(!armed){armed=1;db.textContent="⚠";db.title="click again to delete";if(armT)clearTimeout(armT);armT=setTimeout(function(){armed=0;db.textContent="🗑";db.title="delete your message";},4000);return;}' +
+    'if(armT)clearTimeout(armT);armed=0;db.disabled=true;dmDelete(row,sq);});' +
+    'acts.appendChild(db);row.appendChild(acts);}' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;return row;}' +
+    /* the line comes off this screen as soon as the shrine agrees; the other
+       end's window drops it on its next poll, off the marker that takes its
+       place. already gone counts as done. */
+    'function dmDropSeq(sq){var rs=log.querySelectorAll(".msg.dm");for(var i=0;i<rs.length;i++){if(rs[i].getAttribute("data-seq")===String(sq)){rs[i].parentNode.removeChild(rs[i]);return;}}}' +
+    'function dmDelete(row,sq){var conv=DM;if(!conv||!TOKEN)return;' +
+    'apiPost("/dm/delete",{token:TOKEN,with:conv.id,seq:sq}).then(function(r){' +
+    'if(r&&(r.ok||r.error==="gone")){if(row.parentNode)row.parentNode.removeChild(row);dmListRefresh();return;}' +
+    'var b=row.querySelector(".act.del");if(b){b.disabled=false;b.textContent="🗑";b.title="that did not go through \u2014 try again";}' +
+    '}).catch(function(){var b=row.querySelector(".act.del");if(b){b.disabled=false;b.textContent="🗑";}});}' +
     /* `dmSeq` is only ever moved by a response we actually rendered, so a reply
        we throw away is simply fetched again rather than lost. The one thing
        that can arrive twice is a line of our own, already on screen from the
@@ -631,9 +662,10 @@
     'if(DM!==conv||run!==dmRun)return;' +
     'if(r&&r.error){dmT=setTimeout(dmPoll,4000);return;}' +
     'if(r&&r.with&&r.with.tung&&!conv.tung){conv.tung=true;if(r.with.name)conv.name=r.with.name;paintConvName();}' +
-    'if(r&&r.closed){dmSetShut(true,!!r.byYou);}' +
+    'if(r&&r.closed){dmSetShut(true,!!r.byYou,!!r.byThem);}' +
     'else if(r&&r.msgs){if(DMSHUT.on)dmSetShut(false,false);' +
     'for(var i=0;i<r.msgs.length;i++){var m=r.msgs[i];' +
+    'if(m.del){dmDropSeq(m.del);continue;}' +
     'if(m.mine&&dmSkip[m.seq]){delete dmSkip[m.seq];continue;}dmAdd(m);}' +
     'if(r.seq>dmSeq)dmSeq=r.seq;}' +
     'if(r&&r.msgs&&r.msgs.length)dmListRefresh();' +
@@ -643,7 +675,7 @@
        resumed from a mark that moved on without us. */
     'function openRoom(){' +
     'dmStop();DM=null;dmSeq=0;dmSkip={};' +
-    'DMSHUT={on:false,mine:false};if(input)input.disabled=false;dmPaintBlock();' +
+    'DMSHUT={on:false,mine:false,them:false};if(input)input.disabled=false;dmPaintBlock();' +
     'paintConvName();if(convsub)convsub.textContent="everyone who is here";' +
     'input.placeholder="say something... try :sob:";' +
     'log.innerHTML="";MSGS={};cursor=0;seenEids={};' +
@@ -683,7 +715,7 @@
     'if(c.unread>0){var u=document.createElement("span");u.className="dmbadge";u.textContent=c.unread>99?"99+":String(c.unread);top.appendChild(u);}' +
     'b.appendChild(top);' +
     'var l=document.createElement("span");l.className="dmlast";' +
-    'l.textContent=c.closed?(c.byYou?"blocked":"closed"):(c.last||"");b.appendChild(l);' +
+    'l.textContent=c.closed?(c.byYou?"you blocked them":c.byThem?"blocked you":"closed"):(c.last||"");b.appendChild(l);' +
     'b.addEventListener("click",function(){openDM(c.id,c.name,!!c.tung);});' +
     'dmlist.appendChild(b);' +
     '})(DMS[i]);}' +
@@ -709,13 +741,14 @@
     'var row=dmAdd({text:text,ts:Date.now(),mine:true});' +
     'dmSending++;dmStop();' +
     'apiPost("/dm/send",{token:TOKEN,to:conv.id,text:text}).then(function(r){' +
-    'if(r&&r.msg){dmSkip[r.msg.seq]=1;if(DM===conv)convsub.textContent="only the two of you";}' +
+    'if(r&&r.msg){dmSkip[r.msg.seq]=1;if(row)row.setAttribute("data-seq",r.msg.seq);if(DM===conv)convsub.textContent="only the two of you";}' +
     /* a refused line is taken back off the screen rather than left sitting
        there looking sent */
     'if(r&&r.error){if(row&&row.parentNode)row.parentNode.removeChild(row);' +
     'if(DM===conv){' +
-    'if(r.error==="you_blocked")dmSetShut(true,true);' +
-    'else if(r.error==="closed")dmSetShut(true,false);' +
+    'if(r.error==="you_blocked")dmSetShut(true,true,false);' +
+    'else if(r.error==="blocked_you")dmSetShut(true,false,true);' +
+    'else if(r.error==="closed")dmSetShut(true,false,false);' +
     /* the conversation cap: a first line to somebody new is the one thing a
        DM can do that costs the shrine anything lasting, so there is a ceiling
        on how many conversations one member may have going. Saying which it
