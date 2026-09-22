@@ -365,6 +365,10 @@
        a name. It carries the id so the DM is opened against the account rather
        than against a string somebody could have renamed out from under it. */
     'function dmFromProfile(){' +
+    /* his card has no member id — he is not a member — so the conversation is
+       opened against the name the server already resolves to him */
+    'var card=profEl&&profEl.querySelector(".ovcard");' +
+    'if(card&&card.classList.contains("tung")){if(profEl)profEl.style.display="none";openDM("tung","tung",true);return;}' +
     'if(!tipTo)return;' +
     'var who=tipTo,id=profId||tipTo;' +
     'if(profEl)profEl.style.display="none";' +
@@ -418,12 +422,15 @@
     'if(r&&(r.ok||r.error==="gone")){dropMsg(id);return;}' +
     'var b=delBtn(id);if(b){b.disabled=false;b.textContent="🗑";b.title="the shrine would not — try again";}' +
     '}).catch(function(){var b=delBtn(id);if(b){b.disabled=false;b.textContent="🗑";}});}' +
+    /* one drawing of his name — portrait, the name, the mark — so the room and
+       a direct message cannot drift into two versions of him */
+    'function paintTungWho(w,name){w.classList.add("tung");w.textContent="";var ti=document.createElement("img");ti.className="tungimg";ti.src=TUNG_IMG;ti.alt="";ti.onerror=function(){ti.style.display="none";};w.appendChild(ti);var tn=document.createElement("span");tn.className="tungname";tn.textContent=name||"tung";w.appendChild(tn);var tb=document.createElement("span");tb.className="tungmark";tb.textContent="the shrine";w.appendChild(tb);}' +
     'function add(m){var isT=isTung(m);var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(isT)row.classList.add("tung");if(m.id)row.setAttribute("data-id",m.id);' +
     'var meta=document.createElement("div");meta.className="meta";' +
     'var w=document.createElement("button");w.type="button";w.className="who";w.textContent=m.name;w.title="view profile";' +
     /* his name gets his portrait and a mark, so the line reads as the shrine
        speaking rather than as somebody in the room */
-    'if(isT){w.classList.add("tung");w.textContent="";var ti=document.createElement("img");ti.className="tungimg";ti.src=TUNG_IMG;ti.alt="";ti.onerror=function(){ti.style.display="none";};w.appendChild(ti);var tn=document.createElement("span");tn.textContent=m.name;w.appendChild(tn);var tb=document.createElement("span");tb.className="tungmark";tb.textContent="the shrine";w.appendChild(tb);w.title="who is this";}' +
+    'if(isT){paintTungWho(w,m.name);w.title="who is this";}' +
     'w.addEventListener("click",function(ev){ev.stopPropagation();openProfile(m.name,isT);});meta.appendChild(w);stampWhen(meta,m.ts);row.appendChild(meta);' +
     'if(m.reply){var q=document.createElement("div");q.className="quote";var qn=document.createElement("b");qn.textContent=m.reply.name+": ";q.appendChild(qn);q.appendChild(document.createTextNode(emojify(m.reply.text)));q.addEventListener("click",function(){var t=document.querySelector("[data-id="+m.reply.id+"]");if(t){t.scrollIntoView({block:"center"});t.className+=" flash";setTimeout(function(){t.className=t.className.replace(" flash","");},700);}});row.appendChild(q);}' +
     'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
@@ -586,9 +593,17 @@
     /* a conversation line: plain, because a DM has no reactions, no replies
        and no gifts — pretending otherwise would be a row of buttons that do
        nothing */
-    'function dmAdd(m){var row=document.createElement("div");row.className=m.mine?"msg me dm":"msg dm";' +
+    'function dmAdd(m){' +
+    /* his lines wear the room's mark, not a plain left-hand bubble. from:"tung"
+       is stamped by the server; DM.tung is the same fact on the conversation,
+       for a line that arrives before the flag on the message does. */
+    'var isT=!m.mine&&(m.from==="tung"||(DM&&DM.tung));' +
+    'var row=document.createElement("div");row.className=(m.mine?"msg me dm":"msg dm")+(isT?" tung":"");' +
     'var meta=document.createElement("div");meta.className="meta";' +
-    'var w=document.createElement("span");w.className="who";w.textContent=m.mine?(ME||"you"):(DM?DM.name:"");meta.appendChild(w);' +
+    'var w=document.createElement(isT?"button":"span");if(isT)w.type="button";w.className="who";' +
+    'if(isT){paintTungWho(w,(DM&&DM.name)||"tung");w.title="who is this";w.addEventListener("click",function(ev){ev.stopPropagation();openProfile((DM&&DM.name)||"tung",true);});}' +
+    'else{w.textContent=m.mine?(ME||"you"):(DM?DM.name:"");}' +
+    'meta.appendChild(w);' +
     'stampWhen(meta,m.ts);row.appendChild(meta);' +
     'var bd=document.createElement("span");bd.className="body";renderBody(bd,m.text);row.appendChild(bd);' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;return row;}' +
@@ -608,6 +623,7 @@
     'api("/dm/with?token="+encodeURIComponent(TOKEN)+"&with="+encodeURIComponent(conv.id)+"&since="+dmSeq).then(function(r){' +
     'if(DM!==conv||run!==dmRun)return;' +
     'if(r&&r.error){dmT=setTimeout(dmPoll,4000);return;}' +
+    'if(r&&r.with&&r.with.tung&&!conv.tung){conv.tung=true;if(r.with.name)conv.name=r.with.name;paintConvName();}' +
     'if(r&&r.closed){dmSetShut(true,!!r.byYou);}' +
     'else if(r&&r.msgs){if(DMSHUT.on)dmSetShut(false,false);' +
     'for(var i=0;i<r.msgs.length;i++){var m=r.msgs[i];' +
@@ -621,18 +637,21 @@
     'function openRoom(){' +
     'dmStop();DM=null;dmSeq=0;dmSkip={};' +
     'DMSHUT={on:false,mine:false};if(input)input.disabled=false;dmPaintBlock();' +
-    'convname.textContent="the shrine";convsub.textContent="everyone who is here";' +
+    'paintConvName();if(convsub)convsub.textContent="everyone who is here";' +
     'input.placeholder="say something... try :sob:";' +
     'log.innerHTML="";MSGS={};cursor=0;seenEids={};' +
     'dmPaint();polling=true;poll();}' +
-    'function openDM(id,name){' +
+    'function paintConvName(){if(!convname)return;convname.className="";convname.textContent="";' +
+    'if(!DM){convname.textContent="the shrine";return;}' +
+    'if(DM.tung)paintTungWho(convname,DM.name||"tung");else convname.textContent=DM.name;}' +
+    'function openDM(id,name,tung){' +
     'if(!id||!TOKEN)return;' +
-    'if(String(name||"").toLowerCase()===String(ME||"").toLowerCase())return;' +
+    'if(!tung&&String(name||"").toLowerCase()===String(ME||"").toLowerCase())return;' +
     'if(polling)polling=false;' +
     'if(pollT){clearTimeout(pollT);pollT=null;}' +
     'dmStop();' +
-    'DM={id:String(id),name:String(name||"")};dmSeq=0;dmSkip={};' +
-    'convname.textContent=DM.name;' +
+    'DM={id:String(id),name:String(name||(tung?"tung":"")),tung:!!tung};dmSeq=0;dmSkip={};' +
+    'paintConvName();' +
     'dmSetShut(false,false);' +
     'input.placeholder="message "+DM.name+"\u2026";' +
     'log.innerHTML="";cancelReply();' +
@@ -652,12 +671,13 @@
     'var b=document.createElement("button");b.type="button";' +
     'b.className="dmrow"+(DM&&DM.id===c.id?" on":"")+(c.unread>0?" unread":"");' +
     'var top=document.createElement("span");top.className="dmtop";' +
-    'var n=document.createElement("span");n.className="dmname";n.textContent=c.name;top.appendChild(n);' +
+    'var n=document.createElement("span");n.className="dmname";' +
+    'if(c.tung)paintTungWho(n,c.name||"tung");else n.textContent=c.name;top.appendChild(n);' +
     'if(c.unread>0){var u=document.createElement("span");u.className="dmbadge";u.textContent=c.unread>99?"99+":String(c.unread);top.appendChild(u);}' +
     'b.appendChild(top);' +
     'var l=document.createElement("span");l.className="dmlast";' +
     'l.textContent=c.closed?(c.byYou?"blocked":"closed"):(c.last||"");b.appendChild(l);' +
-    'b.addEventListener("click",function(){openDM(c.id,c.name);});' +
+    'b.addEventListener("click",function(){openDM(c.id,c.name,!!c.tung);});' +
     'dmlist.appendChild(b);' +
     '})(DMS[i]);}' +
     'if(!DMS.length){var e=document.createElement("div");e.className="dmempty";' +

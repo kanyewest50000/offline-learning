@@ -49,6 +49,9 @@
 //   GET  /admin/veil?key=                                 -> {live, configured}
 //   POST /admin/veil    {key, live}                       -> {ok, live, configured}
 //   POST /admin/veiluser {key, id, allowed}               -> {ok, veil}
+//   POST /admin/talk/list   {key}                         -> {convs}           (tung's inbox)
+//   POST /admin/talk/thread {key, user}                   -> {msgs}            (marks his side read)
+//   POST /admin/talk/send   {key, user, text}             -> {ok, msg}         (speaks as tung)
 
 // Deno.openKv() with no argument keeps its database in a per-location cache
 // directory, which means every run on one machine shares it. SHRINE_KV_PATH
@@ -1165,12 +1168,32 @@ type DmConv = { name: string; last: string; ts: number; seq: number; read: numbe
 function convOf(a: string, b: string): string {
   return a < b ? a + "~" + b : b + "~" + a;
 }
+// Tung has no account, and a direct message still needs two sides. This id is
+// not hex — rid() only ever emits hex — so it cannot collide with a member or
+// be approved into one. The name is the one the room already refuses to anyone
+// else, which is also what the client styles: from:"tung", the portrait, the
+// mark that says "the shrine".
+const TUNG_DM_ID = "tung!voice";
+function tungVoice(): { id: string; username: string; status: "approved" } {
+  return { id: TUNG_DM_ID, username: WISDOM_NAME, status: "approved" };
+}
+function dmPeerView(other: { id: string; username: string }) {
+  return {
+    id: other.id,
+    name: other.username,
+    ...(other.id === TUNG_DM_ID ? { tung: true } : {}),
+  };
+}
 // Who the other end is, by username or by id. Usernames are what the client
-// has — it reads them off the room — so both are accepted.
+// has — it reads them off the room — so both are accepted. He is named here
+// too, by the id the rail stores or by the name the room already knows, so a
+// reply has somewhere to go. Checked before the account lookup on purpose: he
+// is not an account, and nothing that reduces to his name is allowed to be.
 // deno-lint-ignore no-explicit-any
 async function dmOther(who: unknown): Promise<any | null> {
   const s = clip(who, 32);
   if (!s) return null;
+  if (s === TUNG_DM_ID || impersonatesTung(s)) return tungVoice();
   // deno-lint-ignore no-explicit-any
   const byId = await kv.get<any>(["app", s]);
   if (byId.value && byId.value.status === "approved") return byId.value;
@@ -3835,7 +3858,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!allow("dmls:" + u.id, 10, 10_000)) return tooMany(10);
     const convs: {
       id: string; name: string; last: string; ts: number; unread: number;
-      closed: boolean; byYou: boolean;
+      closed: boolean; byYou: boolean; tung?: boolean;
     }[] = [];
     // Bounded, so that one read of a rail costs what one read of a rail costs
     // however many rows are behind it. DM_CONV_MAX is what stops an account
@@ -3845,10 +3868,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     for await (const e of kv.list<DmConv>({ prefix: ["dmconv", u.id] }, { limit: DM_RAIL })) {
       const v = e.value;
       if (!v) continue;
+      const id = String(e.key[2]);
       convs.push({
-        id: String(e.key[2]), name: v.name, last: v.last, ts: v.ts,
+        id, name: v.name, last: v.last, ts: v.ts,
         unread: Math.max(0, (Number(v.seq) || 0) - (Number(v.read) || 0)),
         closed: false, byYou: false,
+        // the id, not the cached name: a rename cannot put his mark on a member,
+        // and nothing but this id is him
+        ...(id === TUNG_DM_ID ? { tung: true } : {}),
       });
     }
     convs.sort((a, c) => c.ts - a.ts);
@@ -3895,7 +3922,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // A member who has been shut out of the room is not somewhere you can
     // write to, and the conversation reads as closed rather than as missing.
     if (chatBlock(other).blocked) {
-      return json({ ok: true, with: { id: other.id, name: other.username }, msgs: [], seq: 0, closed: true });
+      return json({ ok: true, with: dmPeerView(other), msgs: [], seq: 0, closed: true });
     }
     // Blocked reads exactly like any other closed conversation, with one
     // addition: if it was YOU who shut it you are told so, because that is the
@@ -3907,7 +3934,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (dmBlocked(bl)) {
       const mine = !!bl[dmSide(u.id, other.id)];
       return json({
-        ok: true, with: { id: other.id, name: other.username }, msgs: [], seq: 0,
+        ok: true, with: dmPeerView(other), msgs: [], seq: 0,
         closed: true, ...(mine ? { byYou: true } : {}),
       });
     }
@@ -3919,7 +3946,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // conversation never costs a write.
     if (since === 0 && !await allowGlobal("dmcold:" + u.id, 40, 60_000)) return tooMany(60);
     const conv = convOf(u.id, other.id);
-    const msgs: { seq: number; text: string; ts: number; mine: boolean }[] = [];
+    const msgs: { seq: number; text: string; ts: number; mine: boolean; from?: "tung" }[] = [];
     let top = since;
     for await (
       const e of kv.list<DmMsg>(
@@ -3930,11 +3957,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const v = e.value;
       if (!v) continue;
       top = Math.max(top, v.seq);
-      msgs.push({ seq: v.seq, text: v.text, ts: v.ts, mine: v.from === u.id });
+      // from:"tung" is the same stamp the room puts on his lines, and on
+      // nothing else. The client styles that and never the name.
+      msgs.push({
+        seq: v.seq, text: v.text, ts: v.ts, mine: v.from === u.id,
+        ...(v.from === TUNG_DM_ID ? { from: "tung" as const } : {}),
+      });
     }
     // reading is what clears the badge, and only ever forward
     if (top > since) await dmMarkRead(u.id, other.id, top);
-    return json({ ok: true, with: { id: other.id, name: other.username }, msgs, seq: top });
+    return json({ ok: true, with: dmPeerView(other), msgs, seq: top });
   }
 
   // Block or unblock one member. Yours to set and yours to lift; the other end
@@ -4981,6 +5013,139 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     });
   }
 
+  // ---------- admin: talk to da people, as tung ----------
+  //
+  // The room already speaks as him. This is that voice in a conversation: the
+  // line is his, the other end sees from:"tung" and paints the portrait and the
+  // mark, and a reply comes back through the ordinary /dm/send because he is a
+  // side of the pair rather than a flag on somebody else's message.
+  //
+  // It is his inbox, so opening a thread marks HIS side read and nobody
+  // else's. The dump under Direct messages is a look at two members and must
+  // not touch their badges; an unread count here that never cleared would not
+  // be one. The member clocks (how many conversations, how many lines an hour)
+  // are not applied: those exist so one account cannot mint rails, and this
+  // route is the admin key.
+  if (req.method === "POST" && path === "/admin/talk/list") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const convs: {
+      id: string; name: string; last: string; ts: number; seq: number; unread: number;
+      closed: boolean; byYou: boolean; byThem: boolean;
+    }[] = [];
+    for await (const e of kv.list<DmConv>({ prefix: ["dmconv", TUNG_DM_ID] }, { limit: DM_RAIL })) {
+      const v = e.value;
+      if (!v) continue;
+      convs.push({
+        id: String(e.key[2]), name: v.name, last: v.last,
+        ts: Number(v.ts) || 0, seq: Number(v.seq) || 0,
+        unread: Math.max(0, (Number(v.seq) || 0) - (Number(v.read) || 0)),
+        closed: false, byYou: false, byThem: false,
+      });
+    }
+    await Promise.all(convs.map(async (pr) => {
+      // deno-lint-ignore no-explicit-any
+      const a = await kv.get<any>(["app", pr.id]);
+      if (a.value && a.value.username) pr.name = a.value.username;
+      else pr.name = (pr.name || pr.id) + " (gone)";
+      const bl = await dmBlockOf(TUNG_DM_ID, pr.id);
+      if (!dmBlocked(bl)) return;
+      pr.closed = true;
+      // his side, and theirs. the panel never sets his; theirs is the one
+      // worth saying out loud, and here it can be said.
+      pr.byYou = !!bl[dmSide(TUNG_DM_ID, pr.id)];
+      pr.byThem = !!bl[dmSide(pr.id, TUNG_DM_ID)];
+      pr.unread = 0;
+    }));
+    convs.sort((x, y) => y.ts - x.ts);
+    return json({ ok: true, convs });
+  }
+
+  if (req.method === "POST" && path === "/admin/talk/thread") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const id = clip(b.user, 32);
+    if (!id || id === TUNG_DM_ID) return json({ error: "not found" }, 404);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    const row = await kv.get<DmConv>(["dmconv", TUNG_DM_ID, id]);
+    // an approved member can be opened before a single line exists — that is
+    // how a conversation starts. anybody else only if the history is already
+    // there, so a guessed id does not become a blank thread.
+    if (!row.value && !(app.value && app.value.status === "approved")) {
+      return json({ error: "not found" }, 404);
+    }
+    const pair = convOf(TUNG_DM_ID, id);
+    const msgs: { seq: number; text: string; ts: number; mine: boolean; from?: "tung" }[] = [];
+    let top = 0;
+    for await (
+      const e of kv.list<DmMsg>({ prefix: ["dmev", pair] }, { limit: DM_DUMP, reverse: true })
+    ) {
+      const v = e.value;
+      if (!v) continue;
+      top = Math.max(top, v.seq);
+      msgs.push({
+        seq: v.seq, text: v.text, ts: v.ts, mine: v.from === TUNG_DM_ID,
+        ...(v.from === TUNG_DM_ID ? { from: "tung" as const } : {}),
+      });
+    }
+    msgs.reverse();
+    // his side only. the member's badge is theirs to clear by opening it.
+    if (top > 0) await dmMarkRead(TUNG_DM_ID, id, top);
+    const bl = await dmBlockOf(TUNG_DM_ID, id);
+    const blocked = dmBlocked(bl);
+    const themBlocked = blocked && !!bl[dmSide(id, TUNG_DM_ID)];
+    // deno-lint-ignore no-explicit-any
+    const shut = app.value ? chatBlock(app.value) : { blocked: true, reason: "gone" as const };
+    const reason = !app.value || app.value.status !== "approved"
+      ? "gone"
+      : shut.blocked
+      ? (shut.reason || "closed")
+      : themBlocked
+      ? "blocked"
+      : blocked
+      ? "closed"
+      : null;
+    return json({
+      ok: true,
+      user: { id, name: app.value?.username || row.value?.name || id, gone: !app.value },
+      msgs,
+      count: msgs.length,
+      truncated: msgs.length >= DM_DUMP,
+      closed: reason !== null,
+      reason,
+    });
+  }
+
+  if (req.method === "POST" && path === "/admin/talk/send") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const text = clip(b.text, 1000);
+    if (!text) return json({ error: "empty" }, 400);
+    const id = clip(b.user, 32);
+    if (!id || id === TUNG_DM_ID) return json({ error: "not found" }, 404);
+    // deno-lint-ignore no-explicit-any
+    const app = await kv.get<any>(["app", id]);
+    if (!app.value || app.value.status !== "approved") return json({ error: "not found" }, 404);
+    const shut = chatBlock(app.value);
+    // the same rule as /dm/send: a chat ban that still accepted a DM would be
+    // a change of venue. he can speak again when the room is open to them.
+    if (shut.blocked) return json({ error: "closed", reason: shut.reason }, 403);
+    const bl = await dmBlockOf(TUNG_DM_ID, id);
+    if (dmBlocked(bl)) {
+      return json({ error: bl[dmSide(id, TUNG_DM_ID)] ? "blocked" : "closed" }, 403);
+    }
+    const msg = await dmAppend(tungVoice(), app.value, text);
+    if (!msg) return json({ error: "busy" }, 503);
+    return json({
+      ok: true,
+      msg: { seq: msg.seq, text: msg.text, ts: msg.ts, mine: true, from: "tung" },
+    });
+  }
+
   // ---------- admin: wipe the chat log ----------
   // Drops every retained event — messages and the reactions on them alike —
   // and the two indexes hanging off them, which is what a single moderator
@@ -5024,12 +5189,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // `configured` tells the dashboard whether PROXY_URL is set at all, without
   // ever handing the URL itself to the page.
   // ---------- post a message as somebody else ----------
-  // The one place in the app where a message's author is not the account that
-  // sent the request. Key-gated, and deliberately narrow: the name has to
-  // belong to a real approved member (or be tung himself), so this cannot
-  // conjure a line from an account that never existed. It is a moderator tool
-  // for seeding and for putting words in tung's mouth on purpose — every other
-  // route derives the author from the token and always will.
+  // A message's author is the account that sent the request, except here and
+  // at /admin/talk/send. This one drops a line in the ROOM. That one is only
+  // ever tung, and only ever a direct message. Both are key-gated. The name
+  // here has to belong to a real approved member (or be tung himself), so this
+  // cannot conjure a line from an account that never existed. It is a moderator
+  // tool for seeding and for putting words in tung's mouth on purpose — every
+  // other room route derives the author from the token and always will.
   if (req.method === "POST" && path === "/admin/postas") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -6425,6 +6591,48 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .tmsg .twhen{display:block;font-size:10px;opacity:.8;margin-bottom:3px}
 .app h3 .when{margin-left:8px;font-size:11px;font-weight:500;color:#c8823c;letter-spacing:0;text-transform:none}
 .danger p{color:#e9d9c2;line-height:1.45}
+.content.wide{max-width:none;height:calc(100vh - 53px);display:flex;flex-direction:column;box-sizing:border-box;overflow:hidden}
+.content.wide .keybar{flex:0 0 auto}
+#pane-talk.on{flex:1;display:flex;flex-direction:column;min-height:0}
+#pane-talk .hint{flex:0 0 auto}
+#pane-talk h2{flex:0 0 auto}
+#pane-talk .talkbox{flex:1;min-height:0;display:flex;border:1px solid #3a2410;border-radius:12px;overflow:hidden;background:#1d1206}
+#pane-talk .talkrail{flex:0 0 232px;max-width:232px;min-width:0;display:flex;flex-direction:column;background:#1d1206;border-right:1px solid #3a2410}
+#pane-talk .talkrailhead{padding:13px 14px 9px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8a6a3a}
+#pane-talk .talknew{padding:0 8px 8px}
+#pane-talk .talknew select{width:100%;min-width:0;flex:none}
+#pane-talk .talklist{flex:1;overflow-y:auto;padding:0 8px 10px;display:flex;flex-direction:column;gap:2px}
+#pane-talk .dmrow{display:flex;flex-direction:column;gap:2px;align-items:stretch;text-align:left;width:100%;padding:8px 10px;border-radius:9px;border:1px solid transparent;background:transparent;color:inherit;font-weight:600;cursor:pointer;font-family:inherit}
+#pane-talk .dmrow:hover{background:#241505}
+#pane-talk .dmrow.on{background:#2b1a0a;border-color:#3a2410}
+#pane-talk .dmtop{display:flex;align-items:center;gap:7px;min-width:0}
+#pane-talk .dmname{flex:1;min-width:0;font-size:13px;font-weight:700;color:#f5efe0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pane-talk .dmrow.unread .dmname{color:#f2c063}
+#pane-talk .dmlast{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:100%}
+#pane-talk .dmbadge{flex:0 0 auto;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#c8823c;color:#1d1206;font-size:10px;font-weight:800;line-height:18px;text-align:center}
+#pane-talk .dmempty{padding:10px;font-size:11px;color:#8a6a3a;line-height:1.5}
+#pane-talk .talkmain{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+#pane-talk .talkhead{display:flex;align-items:baseline;gap:9px;padding:12px 16px;background:#2b1a0a;border-bottom:1px solid #3a2410;min-height:44px}
+#pane-talk .talkname{font-size:15px;font-weight:800;color:#f5efe0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pane-talk .talksub{font-size:11px;color:#8a6a3a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+#pane-talk .talklog{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+#pane-talk .talkempty{color:#8a6a3a;font-size:13px;line-height:1.5}
+#pane-talk .msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}
+#pane-talk .msg.me{align-self:flex-end;background:#8a5a28}
+#pane-talk .msg.tung{align-self:stretch;max-width:100%;background:linear-gradient(160deg,#2e1c08,#1d1206);border:1px solid #7a5a1a;border-left:3px solid #f2c063}
+#pane-talk .msg.tung .body{color:#f5efe0;font-style:italic;line-height:1.5}
+#pane-talk .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+#pane-talk .who{display:block;font-size:11px;color:#c8823c;font-weight:600;line-height:1.2}
+#pane-talk .msg.me .who{color:#f2c063}
+#pane-talk .who.tung{display:flex;align-items:center;gap:6px;color:#f2c063;font-weight:800;letter-spacing:.02em}
+#pane-talk .tungmark{font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#1d1206;background:#f2c063;border-radius:4px;padding:1px 5px;line-height:1.5;flex:0 0 auto}
+#pane-talk .tungimg{width:15px;height:15px;border-radius:3px;object-fit:cover;flex:0 0 auto}
+#pane-talk .when{font-size:10px;font-weight:500;color:#8a6a3a;white-space:nowrap}
+#pane-talk .msg.me .when{color:#d4b48a}
+#pane-talk .body{display:block;white-space:pre-wrap;word-break:break-word}
+#pane-talk .talkform{display:flex;gap:8px;padding:10px;background:#2b1a0a;border-top:1px solid #3a2410}
+#pane-talk .talkform input{flex:1;min-width:0}
+#pane-talk .talkform input:disabled{opacity:.55}
 </style></head><body>
 <header>Shrine of Tung — admin</header>
 <div class="shell">
@@ -6435,6 +6643,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
 <button type="button" class="navbtn" data-pane="chat">Chat log <span class="count" id="count-chat"></span></button>
 <button type="button" class="navbtn" data-pane="dms">Direct messages <span class="count" id="count-dms"></span></button>
+<button type="button" class="navbtn" data-pane="talk">Talk to da people <span class="count" id="count-talk"></span></button>
 <button type="button" class="navbtn" data-pane="postas">Post as&hellip;</button>
 <button type="button" class="navbtn" data-pane="veil">Web veil <span class="count" id="count-veil"></span></button>
 <button type="button" class="navbtn" data-pane="danger">Wipe data</button>
@@ -6484,6 +6693,22 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 <button class="load" id="dmDump">dump</button>
 </div>
 <div id="dmout"><div class="empty">nothing dumped yet.</div></div>
+</section>
+<section class="pane" id="pane-talk">
+<h2>Talk to da people</h2>
+<p class="hint">Pick a member and write to them as tung. His lines wear the same mark they do in the room &mdash; the portrait, the gold, <b>the shrine</b> &mdash; and their replies land here. A chat ban still covers this.</p>
+<div class="talkbox">
+<div class="talkrail">
+<div class="talkrailhead">conversations</div>
+<div class="talknew"><select id="talkWho"><option value="">load first, then pick somebody&hellip;</option></select></div>
+<div id="talklist"></div>
+</div>
+<div class="talkmain">
+<div class="talkhead"><span class="talkname" id="talkname">nobody yet</span><span class="talksub" id="talksub">pick somebody</span></div>
+<div id="talklog"><div class="talkempty">his conversations are on the left. pick a member to start one.</div></div>
+<form class="talkform" id="talkform"><input id="talkinput" autocomplete="off" maxlength="1000" placeholder="message them as tung&hellip;" disabled><button class="load" id="talksend" type="submit">send</button></form>
+</div>
+</div>
 </section>
 <section class="pane" id="pane-postas">
 <h2>Post as&hellip;</h2>
@@ -6589,6 +6814,9 @@ function showPane(id){
   for(var i=0;i<panes.length;i++) panes[i].classList.toggle("on", panes[i].id==="pane-"+id);
   var btns=document.querySelectorAll(".navbtn");
   for(var j=0;j<btns.length;j++) btns[j].classList.toggle("on", btns[j].getAttribute("data-pane")===id);
+  var content=document.querySelector(".content");
+  if(content)content.classList.toggle("wide", id==="talk");
+  if(id==="talk")talkOpen();else talkStop();
 }
 var navBtns=document.querySelectorAll(".navbtn");
 document.getElementById("paSend").onclick=postAs;
@@ -7123,6 +7351,7 @@ function dmFillUsers(){
   dmOption(dmWho,"",usersCache?"pick a member\u2026":"load first, then pick a member\u2026");
   (usersCache||[]).forEach(function(u){dmOption(dmWho,u.id,u.username);});
   if(prev)dmWho.value=prev;
+  talkFillUsers();
 }
 function dmSetPeers(msg){
   if(!dmPeer)return;
@@ -7198,4 +7427,215 @@ function dmDumpThread(){
 if(dmWho)dmWho.onchange=function(){dmSetPeers("looking\u2026");dmLoadPeers();};
 if(dmPeer)dmPeer.onchange=function(){if(dmWho.value&&dmPeer.value)dmDumpThread();};
 document.getElementById("dmDump").onclick=dmDumpThread;
+/* ---------------------------------------------------------------------------
+   Talk to da people.
+
+   The same shape as the shrine's own DM menu: a rail of conversations, one
+   thread, one composer. Every line sent from here is his. The portrait and
+   the mark are the ones the room paints for from:"tung" — kept in step with
+   assets/js/shrine rather than invented a second time.
+
+   The face is the file the shrine ships. This page is served by the API,
+   which does not host the repo, so the portrait is the same bytes from the
+   pages host the embed already uses. If that host is quiet the mark still
+   reads; the image is the only part that can fail closed. */
+var TUNG_FACE="https://cdn.jsdelivr.net/gh/kanyewest50000/offline-learning@main/assets/tungtungtungsahur.png";
+var talkWho=document.getElementById("talkWho"),talklist=document.getElementById("talklist");
+var talklog=document.getElementById("talklog"),talkname=document.getElementById("talkname"),talksub=document.getElementById("talksub");
+var talkinput=document.getElementById("talkinput"),talkform=document.getElementById("talkform");
+var talksend=document.getElementById("talksend");
+var talkUser=null,talkConvs=null,talkSig="",talkListSig="",talkRun=0,talkT=null,talkListT=null,talkSending=0,talkClosed=false,talkReason=null;
+function talkStop(){
+  talkRun++;
+  if(talkT){clearTimeout(talkT);talkT=null;}
+  if(talkListT){clearInterval(talkListT);talkListT=null;}
+}
+function talkFillUsers(){
+  if(!talkWho)return;
+  var prev=talkWho.value;
+  talkWho.innerHTML="";
+  dmOption(talkWho,"",usersCache?"message somebody\u2026":"load first, then pick somebody\u2026");
+  (usersCache||[]).forEach(function(u){dmOption(talkWho,u.id,u.username);});
+  if(prev)talkWho.value=prev;
+  else if(talkUser)talkWho.value=talkUser.id;
+}
+function talkFace(w,name){
+  w.className="who tung";
+  var ti=document.createElement("img");ti.className="tungimg";ti.alt="";ti.src=TUNG_FACE;
+  ti.onerror=function(){ti.style.display="none";};
+  w.appendChild(ti);
+  var tn=document.createElement("span");tn.textContent=name||"tung";w.appendChild(tn);
+  var tb=document.createElement("span");tb.className="tungmark";tb.textContent="the shrine";w.appendChild(tb);
+}
+function talkWhy(reason){
+  if(reason==="blocked")return "they blocked this conversation.";
+  if(reason==="chatban")return "banned from the chat. a chat ban covers this too.";
+  if(reason==="banned")return "banned from the shrine.";
+  if(reason==="timeout")return "timed out. this stays shut until it lifts.";
+  if(reason==="gone")return "that account is gone.";
+  if(reason==="closed")return "this conversation is closed.";
+  if(reason==="empty")return "write something first.";
+  if(reason==="not found")return "no such member.";
+  if(reason==="forbidden")return "that key is not his.";
+  if(reason==="busy")return "the shrine was busy. try again.";
+  return reason?String(reason):"that did not send.";
+}
+function talkPreview(c){
+  if(c.closed&&c.byThem)return "blocked";
+  if(c.closed)return "closed";
+  return c.last||"";
+}
+function talkPaintList(convs){
+  if(!talklist)return;
+  var rows=convs||[];
+  var listSig=rows.map(function(c){return c.id+"/"+c.unread+"/"+(c.last||"")+"/"+(c.closed?1:0)+"/"+c.name;}).join("|")+(talkUser?"#"+talkUser.id:"");
+  if(listSig===talkListSig&&talklist.childNodes.length)return;
+  talkListSig=listSig;
+  talklist.innerHTML="";
+  var seen=false;
+  rows.forEach(function(c){
+    if(talkUser&&c.id===talkUser.id)seen=true;
+    talklist.appendChild(talkRow(c));
+  });
+  if(talkUser&&!seen){
+    talklist.insertBefore(talkRow({id:talkUser.id,name:talkUser.name,last:"",unread:0,closed:false}),talklist.firstChild);
+  }
+  if(!rows.length&&!talkUser){
+    var e=document.createElement("div");e.className="dmempty";
+    e.textContent=talkConvs?"no conversations yet. pick a member above.":"loading\u2026";
+    talklist.appendChild(e);
+  }
+}
+function talkRow(c){
+  var b=document.createElement("button");b.type="button";
+  b.className="dmrow"+(talkUser&&talkUser.id===c.id?" on":"")+(c.unread>0?" unread":"");
+  var top=document.createElement("span");top.className="dmtop";
+  var n=document.createElement("span");n.className="dmname";n.textContent=c.name||"";top.appendChild(n);
+  if(c.unread>0){var u=document.createElement("span");u.className="dmbadge";u.textContent=c.unread>99?"99+":String(c.unread);top.appendChild(u);}
+  b.appendChild(top);
+  var l=document.createElement("span");l.className="dmlast";l.textContent=talkPreview(c);b.appendChild(l);
+  b.addEventListener("click",function(){talkOpenUser(c.id,c.name);});
+  return b;
+}
+function talkAdd(m){
+  var empty=talklog.querySelector(".talkempty");if(empty)empty.remove();
+  var isT=m.from==="tung";
+  var row=document.createElement("div");row.className=isT?"msg tung":"msg";
+  var meta=document.createElement("div");meta.className="meta";
+  if(isT)talkFace(meta.appendChild(document.createElement("span")),"tung");
+  else{var w=document.createElement("span");w.className="who";w.textContent=(talkUser&&talkUser.name)||"";meta.appendChild(w);}
+  if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();meta.appendChild(tm);}
+  row.appendChild(meta);
+  var bd=document.createElement("span");bd.className="body";bd.textContent=m.text||"";row.appendChild(bd);
+  talklog.appendChild(row);
+  talklog.scrollTop=talklog.scrollHeight;
+}
+function talkPaintThread(d){
+  var sig=(d.msgs||[]).map(function(m){return m.seq;}).join(",")+"|"+(d.reason||"");
+  var atBottom=talklog.scrollHeight-talklog.scrollTop-talklog.clientHeight<90;
+  var fresh=!talkSig;
+  if(talkUser&&d.user&&d.user.name){talkUser.name=d.user.name;talkname.textContent=d.user.name;}
+  talkClosed=!!d.closed;
+  talkReason=d.reason||null;
+  talkinput.disabled=!!d.closed;
+  if(talksend)talksend.disabled=!!d.closed;
+  talksub.textContent=d.closed?talkWhy(d.reason):(d.truncated?"as tung \u2014 the newest lines":"as tung \u00b7 only the two of you");
+  if(sig===talkSig)return;
+  talkSig=sig;
+  talklog.innerHTML="";
+  if(!d.msgs||!d.msgs.length){
+    var e=document.createElement("div");e.className="talkempty";
+    e.textContent=d.closed?talkWhy(d.reason):"nothing here yet. the first line is his.";
+    talklog.appendChild(e);
+  }else{
+    d.msgs.forEach(function(m){
+      var isT=m.from==="tung";
+      var row=document.createElement("div");row.className=isT?"msg tung":"msg";
+      var meta=document.createElement("div");meta.className="meta";
+      if(isT){var face=document.createElement("span");talkFace(face,"tung");meta.appendChild(face);}
+      else{var w=document.createElement("span");w.className="who";w.textContent=(d.user&&d.user.name)||"";meta.appendChild(w);}
+      if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();meta.appendChild(tm);}
+      row.appendChild(meta);
+      var bd=document.createElement("span");bd.className="body";bd.textContent=m.text||"";row.appendChild(bd);
+      talklog.appendChild(row);
+    });
+  }
+  if(fresh||atBottom)talklog.scrollTop=talklog.scrollHeight;
+}
+function talkFetchList(){
+  var run=talkRun;
+  if(!keyEl.value.trim()){talkListSig="";talklist.innerHTML='<div class="dmempty">enter your admin key first.</div>';return;}
+  apost("/admin/talk/list",{}).then(function(d){
+    if(run!==talkRun)return;
+    if(d.error){talkListSig="";talklist.innerHTML="";var e=document.createElement("div");e.className="dmempty";e.textContent=talkWhy(d.error);talklist.appendChild(e);setCount("talk","");return;}
+    talkConvs=d.convs||[];
+    setCount("talk",talkConvs.length);
+    talkPaintList(talkConvs);
+  }).catch(function(){if(run===talkRun){talkListSig="";talklist.innerHTML='<div class="dmempty">network error.</div>';}});
+}
+function talkArm(){if(talkT)clearTimeout(talkT);talkT=setTimeout(talkPoll,2500);}
+function talkPoll(){
+  if(talkSending){talkT=setTimeout(talkPoll,400);return;}
+  if(!talkUser)return;
+  talkFetchThread(true);
+}
+function talkFetchThread(silent){
+  var who=talkUser,run=talkRun;
+  if(!who)return;
+  if(!keyEl.value.trim()){talksub.textContent="enter your admin key first.";return;}
+  apost("/admin/talk/thread",{user:who.id}).then(function(d){
+    if(run!==talkRun||!talkUser||talkUser.id!==who.id)return;
+    if(d.error){if(!silent){talklog.innerHTML="";var e=document.createElement("div");e.className="talkempty";e.textContent=talkWhy(d.error);talklog.appendChild(e);}talksub.textContent=talkWhy(d.error);talkArm();return;}
+    talkPaintThread(d);
+    talkArm();
+  }).catch(function(){if(run===talkRun){talksub.textContent="network error.";talkArm();}});
+}
+function talkOpenUser(id,name){
+  if(!id)return;
+  talkUser={id:id,name:name||""};
+  talkSig="";
+  talkListSig="";
+  talkClosed=false;
+  if(talkWho&&talkWho.value!==id)talkWho.value=id;
+  talkname.textContent=talkUser.name||"\u2026";
+  talksub.textContent="as tung";
+  talkReason=null;
+  talkinput.disabled=false;
+  if(talksend)talksend.disabled=false;
+  talklog.innerHTML='<div class="talkempty">loading\u2026</div>';
+  talkPaintList(talkConvs||[]);
+  if(talkT){clearTimeout(talkT);talkT=null;}
+  talkFetchThread(false);
+}
+function talkSend(){
+  if(!talkUser){talksub.textContent="pick somebody first.";return;}
+  var text=talkinput.value.trim();
+  if(!text)return;
+  if(talkClosed){talksub.textContent=talkWhy(talkReason||"closed");return;}
+  var who=talkUser;
+  talkinput.value="";
+  talkSending++;
+  talkAdd({from:"tung",text:text,ts:Date.now()});
+  talksub.textContent="sending\u2026";
+  apost("/admin/talk/send",{user:who.id,text:text}).then(function(d){
+    talkSending--;
+    if(!talkUser||talkUser.id!==who.id)return;
+    if(d.error){talkSig="";talksub.textContent=talkWhy(d.error==="closed"?(d.reason||"closed"):d.error);talkFetchThread(false);return;}
+    talkSig="";
+    talkFetchThread(true);
+    talkFetchList();
+  }).catch(function(){talkSending--;if(talkUser&&talkUser.id===who.id)talksub.textContent="network error.";});
+}
+function talkOpen(){
+  talkStop();
+  talkFetchList();
+  talkListT=setInterval(function(){talkFetchList();},8000);
+  if(talkUser)talkFetchThread(true);
+}
+if(talkWho)talkWho.onchange=function(){
+  var id=talkWho.value;if(!id)return;
+  var label=talkWho.options[talkWho.selectedIndex];
+  talkOpenUser(id,label?label.textContent:"");
+};
+if(talkform)talkform.addEventListener("submit",function(ev){ev.preventDefault();talkSend();});
 </script></body></html>`;

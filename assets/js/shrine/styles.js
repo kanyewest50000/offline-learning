@@ -102,8 +102,12 @@
       '.msg.tung .body{color:#f5efe0;font-style:italic;line-height:1.5}' +
       '.who.tung{display:flex;align-items:center;gap:6px;color:#f2c063;font-weight:800;letter-spacing:.02em}' +
       '.who.tung:hover{color:#fff}' +
-      '.tungmark{font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#1d1206;background:#f2c063;border-radius:4px;padding:1px 5px;line-height:1.5}' +
+      '.tungmark{font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#1d1206;background:#f2c063;border-radius:4px;padding:1px 5px;line-height:1.5;flex:0 0 auto}' +
       '.tungimg{width:15px;height:15px;border-radius:3px;object-fit:cover;flex:0 0 auto}' +
+      /* the same mark on the rail and in the conversation header, so a DM from
+         him is recognisable before the thread is even open */
+      '.dmname.tung,#convname.tung{display:flex;align-items:center;gap:6px;color:#f2c063;font-weight:800;min-width:0}' +
+      '.dmname.tung .tungname,#convname.tung .tungname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
       /* the giveaway button under one of his lines in five */
       '.giftbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}' +
       '.giftbtn{background:#f2c063;color:#1d1206;font-weight:800;letter-spacing:.02em;padding:8px 14px;border-radius:9px;border:1px solid #f2c063;cursor:pointer}' +
@@ -1027,6 +1031,11 @@
       '& .when{color:{lineHot}}' +
       '& .msg.me .when{color:{textDim}}' +
       '& .msg.tung{background:linear-gradient(160deg,{raisedHi},{raisedLo});border-color:#5a4a24;border-left-color:#f2c063}' +
+      /* his name stays gold under a skin. the plain `.who` rule is the same
+         weight and comes first, which would otherwise wash the mark out */
+      '& .who.tung{color:#f2c063}' +
+      '& .who.tung:hover{color:#fff}' +
+      '& .dmname.tung,& #convname.tung{color:#f2c063}' +
       '& .act,& .chip{background:{inset};border-color:{line};color:{text}}' +
       '& .chip.on{background:{pressed};border-color:{lineMid}}' +
       '& .quote{color:{muted};border-left-color:{lineMid}}' +
