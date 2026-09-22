@@ -912,6 +912,20 @@
       '.tkin{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #3a2410;' +
       'background:#160d04;color:#f5efe0;font-family:inherit;font-size:14px}' +
       '.talkdrawer{flex-basis:100%;margin-top:8px}' +
+      /* ---- the same box, on a poker table ----
+         Floated over the felt rather than laid out under it. This page is
+         already taller than a laptop window — a chat log in the column would
+         push the action bar off the bottom of it, which is the exact thing the
+         raise panel had to be rebuilt to stop doing. Shut it costs no height
+         at all; open, nothing on the table moves. */
+      '.pktalkbtn{margin-left:auto;padding:5px 10px;font-size:13px;line-height:1.3;flex:0 0 auto}' +
+      '.pktalkbtn.on{background:#c8823c;border-color:#c8823c;color:#1d1206}' +
+      '.pktalkbtn.hot{border-color:#f2c063;color:#f2c063}' +
+      '.pktalk{position:fixed;right:16px;bottom:16px;z-index:60;' +
+      'width:min(340px,calc(100vw - 32px));background:#1d1206;border:1px solid #3a2410;' +
+      'border-radius:12px;padding:10px;box-shadow:0 12px 34px #000a}' +
+      '.pktalk .talkbox{max-width:none}' +
+      '@media (max-width:620px){.pktalk{left:16px;right:16px;width:auto}}' +
       /* tung at a table is marked the way he is marked in the chat: gold, and
          not part of whatever the skin is doing */
       '.pitvs .pn.tung{color:#f2c063}' +
@@ -1153,6 +1167,7 @@
       '& .pithist .phv,& .stat span,& .pcell span{color:{text2}}' +
       '& .pcell.gem span{color:{good}}' +
       '& .tklog{background:{inset};border-color:{line}}' +
+      '& .pktalk{background:{raised};border-color:{line}}' +
       '& .tkline b{color:{muted}}' +
       '& .tkin{background:{inset};border-color:{line};color:{text}}' +
       '& .roundbar .cbtn.sec.hot{background:{lineHot};color:{bg}}' +

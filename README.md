@@ -408,15 +408,42 @@ side is the buzzer: a hand still open when the clock stops is a stake paid and
 never played, and it scores as spent. Otherwise the last ten seconds of every
 round would be worth a free look at a hand you could abandon.
 
-For the three minutes a round is running, the players at that table get a small
-chat of their own. It is not the shrine's chat and shares nothing with it — no
-history, no reactions, no retention, no webhook. The whole conversation is one
-value held under the round, which is what lets the commit that settles the round
-delete it in the same breath: there is no window where the round is over and the
-talk is still readable, and nothing to sweep afterwards. It reaches the players
-wherever they are standing, because the round does: the table's own page shows
-it open, and out on the floor it is a drawer under the round bar. A chat ban
-closes it, the way it closes the shrine's chat, while leaving the tables open.
+### table talk
+
+The players at a table get a small chat of their own — **a round of Competitive
+Gambling and a poker game**, which are the two tables where the same people are
+sat together long enough to want to say anything. It is not the shrine's chat
+and shares nothing with it: no history, no reactions, no retention, no webhook.
+The whole conversation is one value held under the table, which is what lets the
+commit that settles it delete the talk in the same breath — there is no window
+where the game is over and the talk is still readable, and nothing to sweep
+afterwards. A chat ban closes it, the way it closes the shrine's chat, while
+leaving the tables open.
+
+It reaches the players wherever they are standing, because a round does: the
+table's own page shows it open, and out on the floor it is a drawer under the
+round bar. On a poker table it is a drawer on the table's own header, and it
+**floats** over the felt rather than sitting in the column — that page is
+already taller than a laptop window, and a chat log in the flow would push the
+action bar off the bottom of it, which is the exact thing the raise panel had to
+be rebuilt to stop doing. Shut, it costs no height at all; open, nothing on the
+table moves.
+
+**What it must not cost is a read per poll.** The talk rides the poll the table
+is already making, so it costs no request of its own — but `/duel/state` is the
+hottest poll in the casino, 1.2 seconds per player, and a poker game can run for
+an hour where a round lasts three minutes. Fetching a conversation nobody is
+having, fifty times a minute each, is exactly the kind of quiet expense this
+project keeps finding.
+
+So the *count* of lines said lives on the duel record, which every poll reads
+anyway, and the conversation itself is fetched only when the client's count and
+the table's disagree. A quiet table costs nothing at all; a line costs each
+player at the table one read, once. The line and the count go in the same atomic
+commit, because a counter that moved without its line would have everyone fetch
+a conversation that had not changed, and a line without its counter would sit
+there unread until somebody else spoke. The unread badge on the drawer comes off
+the same number, so it is free too.
 
 For those three minutes **the table's own page is the lobby**, and the back
 button says so. The round is played out on the floor — you leave the table's
@@ -786,6 +813,78 @@ game's own replies use mid-play, so a resumed table can never show more than a
 played one: never the mine layout, never the lane the cow dies in, never the
 dealer's hole card.
 
+## what an account is allowed to cost
+
+Every route in here that carries a session token skips the anonymous
+90-a-minute IP cap. That is deliberate — a school NAT full of approved members
+must not be one identity — but it means that for an approved account, a route
+with no clock of its own has **no ceiling at all**. Not a high one: none. A
+sweep of the whole surface turned up rather a lot of those, and they are all
+closed now.
+
+* **The house tables.** `/cas/dice`, limbo, roulette, plinko, blackjack (start
+  and every hit/stand/double/split), mines (start, pick, cash out) and beef
+  (start, step, cash out) are a KV read and a KV write each, and had nothing on
+  them. A balance that random-walks never runs out, so one account could hold
+  the tables down at whatever rate it could open sockets, forever. `CAS_BURST`
+  (30 per 10s) is far above anything a hand can do — the fastest table animates
+  for most of a second. It is env-overridable for exactly one caller:
+  `scripts/test-limbo-rtp.ts` fires sixty thousand spins through limbo to
+  measure the house edge, and says so in its own header.
+* **The pit.** `/duel/state` is polled every 1.2 seconds by every player at a
+  table, and every action route (`join`, `confirm`, `cancel`, `start`, `call`,
+  `move`, `chess`, `poker`) had no clock either. `PIT_BURST` is 300 per 10s —
+  about forty times what a client does, and a fortieth of what a socket can.
+  It is a wall for a script and invisible to everything else.
+* **The pit lobby.** `/duel/list` walks up to two hundred duel records, and the
+  lobby asks for it every 1.5 seconds. It is the most expensive read in the
+  casino and now has a clock several times the client's pace. **What that does
+  not fix is the walk itself**: a finished duel lingers a day so both players
+  can read the result, so most of what the lobby reads every 1.5 seconds is a
+  game that is already over, filtered out in JS afterwards. The real fix is an
+  index of open tables — `["duelopen", id]`, written and deleted by the commits
+  that already move a table in and out of `open` — so the lobby lists a handful
+  of keys instead of the day's history. That is a change across six commit
+  paths and is deliberately **not** done here.
+* **The application thread.** `/respond` appended to an array on the account
+  record and wrote it back, with no cap and no clock, and an applicant holds a
+  token. One KV value could be grown for as long as somebody liked — read back
+  by every `/status` poll, read by `/admin/pending` for every applicant at once,
+  and eventually big enough to hit the hard value-size limit and make the
+  account unwritable. Capped at `THREAD_MAX` (30 lines, oldest off the top,
+  from both ends of the conversation) and clocked at four answers per 30s.
+* **The shelves.** Every walk of `["shopitem"]` is bounded (`SHOP_MAX`), as is
+  the per-member list of unfinished redemptions, and `/shop/list` and `/themes`
+  are clocked. They are opened, never polled; there are a dozen shop entries in
+  practice, and the cap is only the difference between "small" and "unbounded".
+* **Tips and giveaways.** `/tip` writes two balances and is the one route a
+  member can aim at somebody else's record; `/gift/claim` races eight times for
+  a giveaway that only one person can win. Both are clocked well above what a
+  person does.
+* **Table talk** is clocked twice: five lines in five seconds against a burst,
+  and 120 an hour across isolates, because a line is two writes and a read on
+  the next poll of every other client at the table.
+
+Two things found in the sweep are **reported rather than fixed**, because the
+fix would break the repo's own tests and that is the wrong trade to make
+quietly:
+
+* **`/apply` can be flooded.** It is anonymous, so it is behind the 90-a-minute
+  IP cap — which is ninety accounts a minute, three KV writes each, every one
+  of them landing in a pending list that `/admin/pending` reads whole. The right
+  guard is a per-IP cap of a handful an hour. It is not here because the test
+  suite applies dozens of times from one address, and shipping a cap that turns
+  the suite red is worse than naming the risk. If the shrine is ever found, add
+  it as an env-overridable cap and set it high on the machine the tests run on.
+* **The `["duel"]` walk above**, for the same kind of reason: it is a
+  correctness-preserving change across six commit paths, which is not something
+  to bolt on at the end of an unrelated piece of work.
+
+Everything member-facing that takes a string `clip()`s it; every `innerHTML` in
+the admin panel interpolates a server-fixed error string and never member text,
+which goes through `textContent` and text nodes; and every unbounded `kv.list`
+left in the file is behind the admin key, where dumping the lot is the point.
+
 ## the tables, and how fast they move
 
 Dice, limbo, roulette and plinko all animate an outcome the server has already
@@ -989,6 +1088,11 @@ that are gone.
 
 `scripts/test-*.ts` are standalone `deno run --allow-read` checks; the ones that
 read source go through `scripts/shrine-sources.ts` so they keep working when a
-chunk moves file. `scripts/refresh-games.sh` re-vendors the gn-math loader
+chunk moves file. The live ones talk to a server you start yourself, and a
+handful want it started with particular dials — each of those says so in its own
+header. The one worth knowing about without reading it first is
+`test-limbo-rtp.ts`, which fires sixty thousand spins to measure the house edge
+and therefore needs `CAS_BURST=100000` on the server it is pointed at; run it
+against its own process rather than the one the rest of the suite is using. `scripts/refresh-games.sh` re-vendors the gn-math loader
 stubs, and `tidy-games.js` rewrites the `GAMES` array in
 `assets/js/shrine/games-catalog.js`.

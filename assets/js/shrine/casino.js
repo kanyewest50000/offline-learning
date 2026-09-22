@@ -358,11 +358,31 @@
      It rides the poll that is already running, so nothing new is fetched. The
      draft survives a repaint because the box is rebuilt constantly underneath
      the person typing in it. */
-  var TALK={lines:[],draft:"",open:false,log:null,input:null,seen:0,unread:0};
-  function talkReset(){TALK.lines=[];TALK.draft="";TALK.open=false;TALK.log=null;TALK.input=null;TALK.seen=0;TALK.unread=0;}
-  /* the poll's answer, whichever page it came back to */
-  function talkSync(lines){
-    if(!lines||!lines.length){if(TALK.lines.length)TALK.lines=[];}
+  /* TALK.at is which table is being talked at: {id, you}. It used to be read off
+     ROUND.live, which only exists for a round of Competitive Gambling — poker
+     has the same box and no round behind it, so the box is told which table it
+     belongs to instead of guessing. TALK.n is how many lines the server says have
+     been said, which is what the poll hands back so it knows whether to fetch
+     the conversation at all. */
+  var TALK={at:null,n:-1,lines:[],draft:"",open:false,log:null,input:null,seen:0,unread:0};
+  function talkReset(){TALK.at=null;TALK.n=-1;TALK.lines=[];TALK.draft="";TALK.open=false;TALK.log=null;TALK.input=null;TALK.seen=0;TALK.unread=0;}
+  /* Which table the box is for. A different one is a different conversation,
+     so everything about the last one goes — including the count, or the server
+     would think this client was already up to date with a table it has never
+     seen and never send it the lines. */
+  function talkFor(id,you){
+    if(!id){if(TALK.at)talkReset();return;}
+    if(!TALK.at||TALK.at.id!==id){talkReset();TALK.at={id:id,you:you||null};return;}
+    TALK.at.you=you||TALK.at.you;
+  }
+  /* The poll's answer, whichever page it came back to. A null line list means the
+     server did not even read the conversation because this client already has
+     it — which is not the same as [], "there is nothing", and must not empty
+     the box. */
+  function talkSync(lines,said){
+    if(typeof said==="number")TALK.n=said;
+    if(lines===null||lines===undefined){talkPaint();return;}
+    if(!lines.length){if(TALK.lines.length)TALK.lines=[];}
     else TALK.lines=lines;
     var n=TALK.lines.length;
     TALK.unread=Math.max(0,n-TALK.seen);
@@ -378,7 +398,7 @@
         TALK.log.innerHTML="";
         TALK.lines.forEach(function(m){
           var row=el("div","tkline");
-          var me=ROUND.live&&ROUND.live.you;
+          var me=TALK.at&&TALK.at.you;
           row.appendChild(el("b",null,(me&&m.name===me)?"you":String(m.name||"")));
           row.appendChild(el("span",null,m.text));
           TALK.log.appendChild(row);
@@ -387,9 +407,15 @@
         TALK.seen=TALK.lines.length;TALK.unread=0;
       }
     }
+    /* the same badge, on whichever of the two buttons is on screen: the round
+       bar's out on the floor, the poker table's in its own header */
     if(ROUND.bar&&ROUND.bar._talkBtn){
       ROUND.bar._talkBtn.textContent=TALK.unread?("\uD83D\uDCAC "+TALK.unread):"\uD83D\uDCAC";
       ROUND.bar._talkBtn.className="cbtn sec"+(TALK.unread?" hot":"");
+    }
+    if(PIT.pkTalkBtn&&PIT.pkTalkBtn.isConnected){
+      PIT.pkTalkBtn.textContent=TALK.unread?("\uD83D\uDCAC "+TALK.unread):"\uD83D\uDCAC";
+      PIT.pkTalkBtn.className="cbtn sec pktalkbtn"+(TALK.unread?" hot":"")+(TALK.open?" on":"");
     }
   }
   /* one builder, two homes: the table's own page and a drawer under the round
@@ -408,12 +434,17 @@
     form.addEventListener("submit",function(ev){
       ev.preventDefault();
       var text=inp.value.trim();
-      if(!text||!ROUND.live)return;
+      var at=TALK.at;
+      if(!text||!at)return;
       inp.value="";TALK.draft="";
       send.disabled=true;
-      jpost("/duel/say",{id:ROUND.live.id,text:text}).then(function(d){if(refused(d)){refusedGate();return;}
+      jpost("/duel/say",{id:at.id,text:text}).then(function(d){if(refused(d)){refusedGate();return;}
         send.disabled=false;
-        if(d&&d.talk)talkSync(d.talk);
+        /* the answer carries the conversation with our own line already on the
+           end of it, so the count moves with it — otherwise the next poll would
+           fetch a list we are holding */
+        if(d&&d.talk)talkSync(d.talk,TALK.n+1);
+        else if(d&&d.error)bad(null,0);
       }).catch(function(){send.disabled=false;});
     });
     box.appendChild(log);box.appendChild(form);
@@ -428,6 +459,9 @@
     if(v&&v.game==="comp"&&v.state==="live"){
       var fresh=!ROUND.live;
       ROUND.live=v;
+      /* the box asks TALK.at which table it is for, rather than reading it off
+         a round that poker does not have */
+      talkFor(v.id,v.you);
       /* while a table is still playing a wager out, the number it is going to
          land on is not ours to paint yet — see roundBet below */
       if(fresh||!ROUND.hold)ROUND.mine=v.yourChips;
@@ -455,10 +489,10 @@
     if(napping())return;
     /* the pit's own page is already polling this duel; two would only race */
     if(VIEW==="pit")return;
-    jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(ROUND.live.id)).then(function(d){
+    jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(ROUND.live.id)+"&talk="+TALK.n).then(function(d){
       if(refused(d)){roundStop();refusedGate();return;}
       if(!d||d.error){if(d&&d.error==="gone")roundStop();return;}
-      pitSkew(d);setBal(d.balance);talkSync(d.talk);roundSync(d.duel);
+      pitSkew(d);setBal(d.balance);talkSync(d.talk,d.talkN);roundSync(d.duel);
     }).catch(function(){});
   }
   /* Every wager on the floor names the round it believes it is in. The server
@@ -1957,7 +1991,7 @@
      (pitTick), both owned by PIT and both torn down by clearTimer(), which every
      navigation already calls. */
   var PIT={game:null,id:null,poll:null,tick:null,skew:0,shape:"",left:null,node:null,reveal:[],
-    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null,pkAuto:false,pkAutoBusy:false,pkUp:null,pkUpAt:0,pkRaise:false,pkShow:false,pkAmt:0,pkKeys:null,pkKeyBound:null};
+    busy:false,pending:null,roundsSeen:null,last:null,chips:null,pkSeen:null,pkHand:null,pkAuto:false,pkAutoBusy:false,pkUp:null,pkUpAt:0,pkRaise:false,pkShow:false,pkAmt:0,pkKeys:null,pkKeyBound:null,pkTalkBtn:null};
   /* the clash: the beat between a round resolving and the next one starting */
   var CL_IN_MS=520, CL_HIT_MS=600, CL_SAY_MS=1000, CL_HOLD_MS=2050;
   /* How a cut is dealt. There is nothing to play in this game — both cards are
@@ -2663,7 +2697,33 @@
       PIT.pkUp=up;PIT.pkUpAt=p.nextLevel;
     }else{PIT.pkUp=null;PIT.pkUpAt=0;}
     head.appendChild(el("span","pkhand","hand "+p.hand));
+    /* ---- the table talk ----
+       The same box Competitive Gambling has, and for the same reason: the
+       people at this table are sat together for an hour, not three minutes.
+       It hangs off the head as a drawer rather than sitting in the column,
+       because this page is already taller than a laptop window and a chat log
+       in the flow would push the action bar off the bottom of it — the thing
+       the last change to this file was about. Shut, it costs nothing; open, it
+       floats over the felt and the buttons stay exactly where they were.
+       The badge is free: the count of what has been said rides on the duel
+       record the poll is reading anyway. */
+    var tk=el("button","cbtn sec pktalkbtn","\uD83D\uDCAC");tk.type="button";tk.title="table talk";
+    var draw=el("div","pktalk");draw.style.display=TALK.open?"block":"none";
+    if(TALK.open){draw.appendChild(talkBox());}
+    tk.onclick=function(){
+      TALK.open=!TALK.open;
+      draw.style.display=TALK.open?"block":"none";
+      if(TALK.open){
+        draw.innerHTML="";draw.appendChild(talkBox());
+        if(TALK.input)try{TALK.input.focus();}catch(e){}
+      }else{draw.innerHTML="";TALK.log=null;TALK.input=null;}
+      talkPaint();
+    };
+    head.appendChild(tk);
+    PIT.pkTalkBtn=tk;
+    talkPaint();   /* the badge is whatever the last poll said, not blank */
     body.appendChild(head);
+    body.appendChild(draw);
 
     /* ---- the table ----
        An oval of felt with the seats set around its rim, which is what a poker
@@ -3173,10 +3233,10 @@
     pitRender(view);
     var pitOne=function(){
       if(napping())return;
-      jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(PIT.id)).then(function(d){
+      jget("/duel/state?token="+encodeURIComponent(tok())+"&id="+encodeURIComponent(PIT.id)+"&talk="+TALK.n).then(function(d){
         if(refused(d)){refusedGate();return;}
         if(!d||d.error){if(d&&d.error==="gone"){pitStop();openPlay("pit-"+(PIT.game||"tung"));}return;}
-        pitSkew(d);setBal(d.balance);talkSync(d.talk);pitRender(d.duel);
+        pitSkew(d);setBal(d.balance);talkSync(d.talk,d.talkN);pitRender(d.duel);
       }).catch(function(){});
     };
     PIT.poll=setInterval(pitOne,1200);onWake(pitOne);
@@ -3194,6 +3254,11 @@
      page under a running clock makes buttons impossible to hit. */
   function pitRender(d){
     PIT.last=d;
+    /* which table the talk box belongs to, if this one has a box at all. Named
+       here rather than in pokerTable() so that leaving a table clears it too —
+       a conversation belongs to one table and nothing of it may follow you to
+       the next. */
+    talkFor((d.game==="poker"||d.game==="comp")&&d.state==="live"?d.id:null,d.you);
     /* the bar belongs to the rest of the casino, but this page is the same
        round: keep it fed here too, and stand it down once the round is read */
     if(d.game==="comp"&&d.state==="live")roundSync(d);

@@ -181,9 +181,81 @@ const talkOf = async (token: string, id: string) =>
     "and a full box is wiped as completely as an empty one: " + JSON.stringify(done.body.talk));
 }
 
+// ---------------------------------------------------------------------------
+// The same box at a poker table — and what it is allowed to cost
+//
+// A round lasts three minutes. A poker game can last an hour, polled every 1.2
+// seconds by every player at it, so fetching a conversation nobody is having
+// fifty times a minute each is not a thing that may happen. The count of lines
+// said rides on the duel record the poll reads anyway; the conversation itself
+// is fetched only when the client's count and the table's disagree.
+{
+  const h = await member("tkpH"), g = await member("tkpG"), out = await member("tkpO");
+  const made = await post("/duel/create", { token: h.token, game: "poker", bet: 1 });
+  const id = (made.body.duel as { id: string }).id;
+  must((await post("/duel/join", { token: g.token, id })).body?.ok === true, "join failed");
+
+  // a table that has not been dealt is not a room yet
+  must((await post("/duel/say", { token: h.token, id, text: "hi" })).status === 409,
+    "an undealt table cannot be talked at");
+
+  must((await post("/duel/start", { token: h.token, id })).body?.ok === true, "deal failed");
+  for (const p of [h, g]) await post("/duel/confirm", { token: p.token, id });
+
+  const state = (token: string, held?: number) =>
+    j("/duel/state?token=" + encodeURIComponent(token) + "&id=" + id +
+      (held === undefined ? "" : "&talk=" + held));
+
+  // a client with no count of its own is behind anything, so it is answered
+  let v = await state(h.token);
+  must(Array.isArray(v.body.talk), "a cold look is answered with the conversation");
+  must((v.body.talk as unknown[]).length === 0, "…which is empty to begin with");
+  must(v.body.talkN === 0, "…and a count of nothing");
+  // and one that is level is answered WITHOUT the read
+  v = await state(h.token, 0);
+  must(v.body.talk === null,
+    "a poll that is level must not be answered with a read: " + JSON.stringify(v.body.talk));
+  must(v.body.talkN === 0, "…though the count still comes back");
+
+  const said = await post("/duel/say", { token: h.token, id, text: "nice flop" });
+  must(said.body?.ok === true, "could not talk at a poker table: " + JSON.stringify(said.body));
+  const back = said.body.talk as { name: string; text: string }[];
+  must(back.length === 1 && back[0].text === "nice flop", "the line comes straight back");
+  must(back[0].name === h.name, "…under the name that said it");
+
+  // the other player is behind now, so their next poll carries it — and only
+  // the one after that goes quiet again
+  v = await state(g.token, 0);
+  must(Array.isArray(v.body.talk) && (v.body.talk as unknown[]).length === 1,
+    "the other player is behind, so they are given it: " + JSON.stringify(v.body.talk));
+  must(v.body.talkN === 1, "…and the count moved with the line");
+  v = await state(g.token, 1);
+  must(v.body.talk === null, "…and once they have it the poll goes quiet again");
+
+  // nobody else, either way round
+  must((await post("/duel/say", { token: out.token, id, text: "let me in" })).status === 403,
+    "somebody not at the table cannot talk at it");
+  must((await state(out.token)).status === 403, "…nor read its state at all");
+
+  // and the tables that have no chat say so rather than carrying an empty one
+  const q = await member("tkqA"), r = await member("tkqB");
+  const tw = await post("/duel/create", { token: q.token, game: "tung", bet: 1 });
+  const tid = (tw.body.duel as { id: string }).id;
+  await post("/duel/join", { token: r.token, id: tid });
+  for (const p of [q, r]) await post("/duel/confirm", { token: p.token, id: tid });
+  const tv = await j("/duel/state?token=" + encodeURIComponent(q.token) + "&id=" + tid + "&talk=-1");
+  must(Array.isArray(tv.body.talk) && (tv.body.talk as unknown[]).length === 0,
+    "a table with no chat answers with nothing, not with null");
+  must(tv.body.talkN === 0, "…and a count of nothing");
+  must((await post("/duel/say", { token: q.token, id: tid, text: "hi" })).status === 409,
+    "…and refuses to be talked at");
+}
+
 console.log(
   "table talk: everyone seated can talk and hear, nobody else can read it or reach it, " +
     "a chat ban shuts it while leaving the tables open, the box clips and caps itself, " +
     "and the round ending — on the clock or early — deletes the whole conversation in the " +
-    "same commit that settles the pot",
+    "same commit that settles the pot. The same box is at a poker table, where it is only " +
+    "fetched when the count on the duel record says there is something new — so a table " +
+    "nobody is talking at costs no read at all, however long the game runs",
 );

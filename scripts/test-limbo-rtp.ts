@@ -46,6 +46,12 @@ await post("/admin/setbal", { key: ADMIN, id, balance: 5_000_000 });
 
 // target 1.10: win pays 1.10, p(win)=HOUSE/1.10≈0.908 → low variance, and the
 // old rounding leak was ~0.45% here. N=60k, ±0.006 band around 0.999.
+// Sixty thousand spins at a concurrency of sixty-four, which is not a rate the
+// house tables allow by default — /cas/* carries a per-account clock now, and
+// this is the one caller in the repo that has to go past it. Run the server
+// with CAS_BURST set high for this test:
+//
+//   ADMIN_KEY=devadminkey CAS_BURST=100000 deno run --allow-net --allow-env --unstable-kv server.ts
 const N = 60000, STAKE = 0.1, BAND = 0.006, CONC = 64;
 let staked = 0, returned = 0, done = 0, errored = false;
 async function worker() {
@@ -53,7 +59,10 @@ async function worker() {
     done++;
     const r = await post("/cas/limbo", { token, bet: STAKE, target: 1.1 });
     if (r.body && typeof r.body.balance === "number") { staked += STAKE; returned += (r.body.payout || 0); }
-    else { errored = true; fail("limbo bet error: " + JSON.stringify(r.body)); }
+    else if (r.status === 429) {
+      errored = true;
+      fail("the house clock refused a spin — start the server with CAS_BURST=100000 for this test");
+    } else { errored = true; fail("limbo bet error: " + JSON.stringify(r.body)); }
   }
 }
 const t0 = Date.now();

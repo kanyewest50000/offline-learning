@@ -412,9 +412,12 @@ type ShopPending = {
   ts: number;
 };
 
+// Bounded, like every other list a member's poll can reach. It is read on every
+// /shop/list, and while a pending row costs sahurs to make — so nobody is
+// minting them for free — "costs something" is not the same as "has an end".
 async function listShopPending(uid: string): Promise<ShopPending[]> {
   const rows: ShopPending[] = [];
-  for await (const e of kv.list<ShopPending>({ prefix: ["shoppend", uid] })) {
+  for await (const e of kv.list<ShopPending>({ prefix: ["shoppend", uid] }, { limit: SHOP_MAX })) {
     if (e.value) rows.push(e.value);
   }
   rows.sort((a, c) => a.ts - c.ts);
@@ -1429,6 +1432,12 @@ type Duel = {
   poker?: PokerState;
   // and the whole chess game, for the same reason
   chess?: ChessState;
+  // How many lines have been said at this table, ever. Not the number kept —
+  // it only ever goes up. It lives HERE, on a record every poll is already
+  // reading, so a client can be told whether there is anything new without
+  // anybody paying a read for the conversation itself. A table where nobody is
+  // talking, which is most of them most of the time, costs nothing at all.
+  talkN?: number;
 };
 
 function extraOf(d: Duel): DuelSide[] {
@@ -1774,9 +1783,56 @@ function splitPot(pot: number, ways: number): number[] {
 //
 // Because it is one value, a line is appended by read-modify-commit against the
 // version we read, so two players talking at once cannot lose each other's line.
+// The back-and-forth on an application, which lives on the account record as
+// one growing array. It had no ceiling: /respond appended and wrote, and the
+// applicant holds a token, so they skip the anonymous IP cap and could grow one
+// KV value for as long as they liked. Every /status poll reads that value back,
+// /admin/pending reads every one of them at once, and a KV value has a hard
+// size limit it would eventually hit — at which point the account stops being
+// writable at all. A conversation about an application is a dozen lines.
+// The most shelf entries any one read of the shop will walk. There are a dozen
+// of them in practice and the panel is the only thing that can make more, so
+// this is not a policy — it is the difference between "small" and "unbounded",
+// which is the only thing a read that runs on a poll needs to be.
+const SHOP_MAX = 120;
+// ---- how fast one account may play the house ----
+// Every wager is a KV read and a KV write, and every one of these routes
+// carries a session token — which means none of them was ever behind the
+// anonymous 90-a-minute IP cap. There was no other ceiling at all, and a
+// balance that random-walks never runs out, so one approved account could hold
+// the tables down at whatever rate it could open sockets, forever.
+//
+// Twelve a second is far above anything a hand can do — the fastest table in
+// here animates for the best part of a second, and plinko, the one that lets
+// you drop several balls at once, is still a click each. What it is NOT is
+// generous to a socket: it turns "as fast as you can ask" into a fixed
+// ceiling, which is the whole difference being bought here.
+//
+// The number is set where it is because the repo's own tests drop, step and
+// deal in tight loops — the point of a cap is to stop a script, not to turn
+// the suite red — and it is env-overridable for the one test that goes far
+// past any sane ceiling on purpose: scripts/test-limbo-rtp.ts fires sixty
+// thousand spins through /cas/limbo at a concurrency of sixty-four to measure
+// the house edge to three decimal places. That test says so in its own header.
+const CAS_BURST = Number(Deno.env.get("CAS_BURST") || 120);
+const CAS_BURST_MS = Number(Deno.env.get("CAS_BURST_MS") || 10_000);
+// And the pit's own ceiling, which has to be a much looser one: a table is
+// polled every 1.2 seconds by every player at it, a clash and a runout are
+// answered as fast as the client can ask, and scripts/test-poker.ts plays
+// whole tournaments out at a rate no person could. So this is not a pace — it
+// is the difference between "fast" and "unbounded", which is the only thing
+// these routes were missing. Thirty a second is roughly forty times what a
+// client does and a fortieth of what a socket can.
+const PIT_BURST = 300, PIT_BURST_MS = 10_000;
+const THREAD_MAX = 30;      // lines kept on an application; the oldest fall off
 const TALK_MAX = 40;        // lines kept; the oldest fall off the top
 const TALK_LEN = 200;       // characters one line may carry
 const TALK_TTL = 6 * 60 * 60 * 1000;
+// Which tables carry one. Competitive Gambling has always had it. Poker is the
+// other table where the same people sit together long enough to want to say
+// something — and unlike a three-minute round it can run for an hour, which is
+// exactly why the count on the duel record above is worth having.
+const TALK_AT = new Set(["comp", "poker"]);
 type TalkLine = { name: string; text: string; ts: number };
 
 async function readTalk(duelId: string): Promise<TalkLine[]> {
@@ -1788,17 +1844,23 @@ async function readTalk(duelId: string): Promise<TalkLine[]> {
 // sitting at it.
 async function sayAtTable(duelId: string, name: string, text: string): Promise<TalkLine[] | null> {
   for (let attempt = 0; attempt < 6; attempt++) {
-    // re-read the duel each pass: a round that ended under us must not be
-    // talked into, or the line would outlive the commit that wiped the rest
-    const d = (await loadDuel(duelId)).value;
-    if (!d || d.settled || d.game !== "comp" || d.state !== "live") return null;
+    // re-read the table each pass: one that ended under us must not be talked
+    // into, or the line would outlive the commit that wiped the rest
+    const entry = await loadDuel(duelId);
+    const d = entry.value;
+    if (!d || d.settled || !TALK_AT.has(d.game) || d.state !== "live") return null;
     const cur = await kv.get<{ lines: TalkLine[] }>(["dtalk", duelId]);
     const lines = (Array.isArray(cur.value?.lines) ? cur.value!.lines : [])
       .concat([{ name, text, ts: Date.now() }])
       .slice(-TALK_MAX);
+    // The line and the count of it go in ONE commit, guarded on both records.
+    // Apart, a counter that moved without its line would have every client at
+    // the table fetch a conversation that had not changed, and a line without
+    // its counter would sit there unread until somebody else spoke.
     const res = await kv.atomic()
-      .check(cur)
+      .check(cur).check(entry)
       .set(["dtalk", duelId], { lines }, { expireIn: TALK_TTL })
+      .set(["duel", duelId], { ...d, talkN: (Number(d.talkN) || 0) + 1 }, { expireIn: DUEL_TTL })
       .commit();
     if (res.ok) return lines;
   }
@@ -3596,7 +3658,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!app.value) return json({ error: "unauthorized" }, 401);
     const text = clip(b.text, 500);
     if (!text) return json({ error: "empty" }, 400);
-    const thread = (app.value.thread || []).concat([{ from: "applicant", text, ts: Date.now() }]);
+    // An applicant holds a token, so they are already past the anonymous IP
+    // cap. Answering tung about your application is a thing you do a handful of
+    // times, not something that needs to go faster than this.
+    if (!allow("resp:" + app.value.id, 4, 30_000)) return tooMany(30);
+    const thread = (app.value.thread || [])
+      .concat([{ from: "applicant", text, ts: Date.now() }])
+      .slice(-THREAD_MAX);
     await kv.set(["app", app.value.id], { ...app.value, thread });
     return json({ ok: true, thread });
   }
@@ -4047,6 +4115,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (chatBlock(user).blocked) return json({ error: "blocked" }, 403);
     const id = clip(b.id, 32);
     if (!id) return json({ error: "missing" }, 400);
+    // A gift is claimed once and the losers are told so — but a loser still
+    // paid a read to find out, and the eight-attempt race below can pay
+    // several. Racing for a giveaway is the point; doing it a thousand times a
+    // second is not.
+    if (!allow("gift:" + user.id, 20, 10_000)) return tooMany(10);
 
     for (let attempt = 0; attempt < 8; attempt++) {
       const gift = await kv.get<Gift>(["gift", id]);
@@ -4087,6 +4160,13 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/duel/list") {
     const u = await casUser(url.searchParams.get("token"));
     if (!u) return json({ error: "unauthorized" }, 401);
+    // The most expensive read in the casino: it walks up to two hundred duel
+    // records, and a finished one lingers a day so most of what it walks is
+    // already over and thrown away here. The lobby asks for it every 1.5
+    // seconds; this is several times that and nothing else should be asking at
+    // all. (What it does NOT fix is the cost of the walk itself — see the note
+    // on the open-table index in the README.)
+    if (!allow("plist:" + u.id, 20, 10_000)) return tooMany(10);
     const open: unknown[] = [];
     for await (const e of kv.list<Duel>({ prefix: ["duel"] }, { limit: 200 })) {
       const d = e.value;
@@ -4191,6 +4271,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     const entry = await loadDuel(clip(b.id, 32));
     const d = entry.value;
     if (!d) return json({ error: "gone" }, 404);
@@ -4224,6 +4305,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     for (let attempt = 0; attempt < 6; attempt++) {
       const entry = await loadDuel(clip(b.id, 32));
       const d = entry.value;
@@ -4253,6 +4335,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     // a 3- or 4-seat table can take two sit-downs at once, so a lost race
     // against another empty chair is retried rather than called taken
     for (let attempt = 0; attempt < 6; attempt++) {
@@ -4307,6 +4390,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     for (let attempt = 0; attempt < 6; attempt++) {
       const entry = await loadDuel(clip(b.id, 32));
       const d = entry.value;
@@ -4347,6 +4431,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     for (let attempt = 0; attempt < 6; attempt++) {
       const entry = await loadDuel(clip(b.id, 32));
       const d = entry.value;
@@ -4428,6 +4513,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     const action = clip(b.action, 8) || "move";
     for (let attempt = 0; attempt < 6; attempt++) {
       const entry = await loadDuel(clip(b.id, 32));
@@ -4535,6 +4621,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     const action = clip(b.action, 8);
     const amount = Number(b.amount);
     for (let attempt = 0; attempt < 6; attempt++) {
@@ -4582,6 +4669,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dact:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     const move = clip(b.move, 16);
     for (let attempt = 0; attempt < 6; attempt++) {
       const entry = await loadDuel(clip(b.id, 32));
@@ -4637,16 +4725,43 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/duel/state") {
     const u = await casUser(url.searchParams.get("token"));
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("dst:" + u.id, PIT_BURST, PIT_BURST_MS)) return tooMany(10);
     const entry = await loadDuel(clip(url.searchParams.get("id"), 32));
     const d = entry.value;
     if (!d) return json({ error: "gone" }, 404);
     if (!findSide(d, u.id)) {
       return json({ error: "not your duel" }, 403);
     }
-    // the table talk rides along with the state the round is already polling,
-    // so the chat costs no extra request and cannot lag the round it belongs to
-    const talk = d.game === "comp" && !d.settled ? await readTalk(d.id) : [];
-    return json({ ok: true, duel: duelView(d, u.id), talk, balance: round2((await getCas(u.id)).bal) });
+    // ---- the table talk, carried by the poll the table is already making ----
+    // It costs no request of its own and cannot lag the table it belongs to.
+    // What it must not cost is a READ of its own on every poll: this is the
+    // hottest poll in the casino — 1.2 seconds, per player, for as long as a
+    // poker game lasts — and a conversation nobody is having is not worth
+    // fetching fifty times a minute each.
+    //
+    // So the caller says how many lines it has, the count of how many have been
+    // said rides on the duel record that has just been read anyway, and the
+    // conversation itself is only fetched when those two disagree. A table
+    // where nobody is talking costs nothing; a line costs each client at the
+    // table exactly one read, once.
+    //
+    // No `talk` parameter at all means a client that has just opened the table
+    // and has nothing, so it is read: -1 is behind any count, including none.
+    const chat = TALK_AT.has(d.game) && !d.settled;
+    const said = Number(d.talkN) || 0;
+    const raw = url.searchParams.get("talk");
+    const held = raw === null ? -1 : Number(raw);
+    const behind = !Number.isFinite(held) || held < said;
+    // null is "nothing you have not got" and is not the same answer as [],
+    // which is "there is nothing" — a quiet poll must not wipe the box.
+    const talk = chat ? (behind ? await readTalk(d.id) : null) : [];
+    return json({
+      ok: true,
+      duel: duelView(d, u.id),
+      talk,
+      talkN: chat ? said : 0,
+      balance: round2((await getCas(u.id)).bal),
+    });
   }
 
   // ---------- say something at the table (Competitive Gambling only) ----------
@@ -4668,11 +4783,17 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const d = entry.value;
     if (!d) return json({ error: "gone" }, 404);
     if (!findSide(d, u.id)) return json({ error: "not your duel" }, 403);
-    if (d.settled || d.game !== "comp" || d.state !== "live") {
+    if (d.settled || !TALK_AT.has(d.game) || d.state !== "live") {
       return json({ error: "not now" }, 409);
     }
-    // a flood cap of its own: the round is three minutes and the box is small
+    // A flood cap of its own, and it earns its keep: a line is a KV write, a
+    // second write to the duel record, and a read on the next poll of every
+    // other client at the table. So one line costs the table a read each,
+    // however few are sitting at it. Five in five seconds is faster than
+    // anybody types; the hour-long cap behind it is what stops a script
+    // keeping a five-handed table fetching forever.
     if (!allow("say:" + u.id, 5, 5000)) return tooMany(5);
+    if (!await allowGlobal("say:" + u.id, 120, 60 * 60_000)) return tooMany(600);
     const talk = await sayAtTable(d.id, u.username, text);
     if (!talk) return json({ error: "not now" }, 409);
     return json({ ok: true, talk });
@@ -4686,10 +4807,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/themes") {
     const u = await casUser(url.searchParams.get("token"));
     if (!u) return json({ error: "unauthorized" }, 401);
+    // settings, not a poll: it walks the shelves and then every theme there is
+    if (!allow("thm:" + u.id, 15, 10_000)) return tooMany(10);
     // what the shop is selling, by theme
     const forSale = new Map<string, { itemId: string; price: number; name: string }>();
     // deno-lint-ignore no-explicit-any
-    for await (const e of kv.list<any>({ prefix: ["shopitem"] })) {
+    for await (const e of kv.list<any>({ prefix: ["shopitem"] }, { limit: SHOP_MAX })) {
       const th = String(e.value?.theme || "");
       if (!th || !e.value.active) continue;
       const price = round2(Number(e.value.price));
@@ -4963,7 +5086,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!app.value) return json({ error: "not found" }, 404);
     const text = clip(b.text, 1000);
     if (!text) return json({ error: "empty" }, 400);
-    const thread = (app.value.thread || []).concat([{ from: "admin", text, ts: Date.now() }]);
+    // the same ceiling from this end: it is one array and either side can grow it
+    const thread = (app.value.thread || [])
+      .concat([{ from: "admin", text, ts: Date.now() }])
+      .slice(-THREAD_MAX);
     await kv.set(["app", app.value.id], { ...app.value, thread });
     return json({ ok: true, thread });
   }
@@ -5609,6 +5735,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    // A tip is a write to two balances. It is also the one route a member can
+    // aim at somebody else's record, so it gets a clock of its own well below
+    // anything a person does and well above anything the tests do.
+    if (!allow("tip:" + u.id, 20, 60_000)) return tooMany(60);
     const toName = clip(b.to ?? b.username, 24);
     const amount = parseBet(b.amount); // same min/max + finite checks as casino wagers
     if (!toName || amount === null) return json({ error: "invalid" }, 400);
@@ -5639,6 +5769,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const target = round2(Number(b.target));
@@ -5665,6 +5796,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const target = round2(Number(b.target)); // desired cash-out multiplier
@@ -5692,6 +5824,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const kind = clip(b.kind, 12);   // number|red|black|odd|even|low|high|dozen|column
@@ -5727,6 +5860,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const risk = clip(b.risk, 8);
@@ -5753,6 +5887,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const purse = await purseFor(u.id, b.round);
@@ -5786,6 +5921,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     // deno-lint-ignore no-explicit-any
     const g = await kv.get<any>(["bj", u.id]);
     // drop any hand stored in the pre-split shape rather than misread it
@@ -5846,6 +5982,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const count = Math.floor(Number(b.mines));
@@ -5869,6 +6006,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     // deno-lint-ignore no-explicit-any
     const g = await kv.get<any>(["mines", u.id]);
     if (!g.value) return json({ error: "no game" }, 400);
@@ -5901,6 +6039,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     // deno-lint-ignore no-explicit-any
     const g = await kv.get<any>(["mines", u.id]);
     if (!g.value) return json({ error: "no game" }, 400);
@@ -5919,6 +6058,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     const bet = parseBet(b.bet);
     if (bet === null) return json({ error: wagerError(b.bet) }, 400);
     const diff = clip(b.difficulty, 10);
@@ -5947,6 +6087,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     // deno-lint-ignore no-explicit-any
     const g = await kv.get<any>(["beef", u.id]);
     if (!g.value) return json({ error: "no game" }, 400);
@@ -5981,6 +6122,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    if (!allow("cas:" + u.id, CAS_BURST, CAS_BURST_MS)) return tooMany(Math.ceil(CAS_BURST_MS / 1000));
     // deno-lint-ignore no-explicit-any
     const g = await kv.get<any>(["beef", u.id]);
     if (!g.value) return json({ error: "no game" }, 400);
@@ -6001,9 +6143,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/shop/list") {
     const u = await casUser(url.searchParams.get("token"));
     if (!u) return json({ error: "unauthorized" }, 401);
+    // the shop is opened, not polled — two walks of the shelves per read
+    if (!allow("shop:" + u.id, 15, 10_000)) return tooMany(10);
     const items: unknown[] = [];
     // deno-lint-ignore no-explicit-any
-    for await (const e of kv.list<any>({ prefix: ["shopitem"] })) {
+    for await (const e of kv.list<any>({ prefix: ["shopitem"] }, { limit: SHOP_MAX })) {
       // inputLabel is shipped so the buyer can be prompted; output is held back
       // until they actually redeem (it may be a code or a one-time reward).
       if (e.value.active) {
@@ -6172,7 +6316,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
     const items: unknown[] = [];
     // deno-lint-ignore no-explicit-any
-    for await (const e of kv.list<any>({ prefix: ["shopitem"] })) items.push(e.value);
+    for await (const e of kv.list<any>({ prefix: ["shopitem"] }, { limit: SHOP_MAX })) items.push(e.value);
     // deno-lint-ignore no-explicit-any
     items.sort((a: any, c: any) => (a.ts || 0) - (c.ts || 0));
     return json({ items });
