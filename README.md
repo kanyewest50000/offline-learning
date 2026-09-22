@@ -324,6 +324,23 @@ never told. What it costs is bounded like everything else on these keys:
 `DM_RAIL` conversations, `DM_DUMP` (1000) lines, and a conversation longer than
 that gives back its newest end rather than its oldest.
 
+### talking to a member as tung
+
+**Talk to da people**, under Direct messages, is tung's own DM inbox. He has no
+account, so he is a side of the pair under an id no member can have
+(`tung!voice`), and a line sent from the panel (`POST /admin/talk/send`) is an
+ordinary direct message: it lands in that member's conversation rail as a DM
+from *tung*, only the two of them can see it, and their reply goes back through
+the ordinary `/dm/send` into his inbox (`/admin/talk/list`, `/admin/talk/thread`).
+Nothing on this path touches the room.
+
+It is drawn as a DM, too. His portrait and gold name say it is him — the name
+is one nobody else is allowed to hold — but not the room's gold proclamation
+bar or the **the shrine** chip: "the shrine" is what the public room is called,
+and on a private conversation it made his DM read as the room itself. In the
+panel his lines sit on the right, as the sender's, and theirs on the left. A
+chat ban or their block still shuts it. `scripts/test-admin-talk.ts`.
+
 ## the pit
 
 Four tables in the casino where the opponent is another member rather than the
@@ -595,6 +612,14 @@ itself on positions with one right answer — a search that misses mate in one i
 not a weak opponent, it is a broken one, which is exactly what the first cut of
 it was.
 
+The move list scrolls inside its panel and can never move the board. In normal
+flow it counted toward the height of the row the board sits in, and since the
+game is centred in the window, every move pushed the board up until *tung's own
+head* ran into the header. It is now positioned out of flow in a box that takes
+the panel's leftover height, and the page centres with auto margins, which
+give up the space instead of pushing anything above the top. The pit's own
+scoresheet was never affected: it has always been capped at 210px and scrolls.
+
 Stockfish is GPL-3.0. It lives in `games/tung/stockfish/` with its licence
 alongside it, unmodified, loaded as a separate program the page talks to over
 UCI — the same arrangement every browser chess front end uses. Keep
@@ -861,6 +886,14 @@ closed now.
   and eventually big enough to hit the hard value-size limit and make the
   account unwritable. Capped at `THREAD_MAX` (30 lines, oldest off the top,
   from both ends of the conversation) and clocked at four answers per 30s.
+  It also ends with its verdict: approving, rejecting or sending somebody to
+  tung takes the thread off the record (`dropThread()`), so sending them back
+  to review later opens on an empty thread rather than the old questions — and
+  `/admin/repend` drops it too, for a record decided before that rule. Once an
+  application has its verdict neither `/respond` nor `/admin/message` will
+  write to it (409), and `/respond` commits against the version it read, so an
+  answer racing a verdict cannot put the thread back or flip the account to
+  pending. `scripts/test-app-thread.ts`.
 * **The shelves.** Every walk of `["shopitem"]` is bounded (`SHOP_MAX`), as is
   the per-member list of unfinished redemptions, and `/shop/list` and `/themes`
   are clocked. They are opened, never polled; there are a dozen shop entries in
@@ -897,9 +930,23 @@ eventually trips. That is the design: a counter that trips is never believed, it
 is checked against a walk bounded by the ceiling itself and then put right. The
 worst drift can do is spend one bounded count on one application; the failure it
 can never produce is the one that would matter, which is the door shut on
-somebody real because a number was stale. `scripts/test-apply-flood.ts` floods
-it, checks it stops at the ceiling rather than at a rate, and checks that
-answering some lets the next applicant straight in.
+somebody real because a number was stale.
+
+The walk is over `["pendq"]`, an index of the applications still waiting: the
+commit that makes an application writes its row, and every verdict, account
+delete and wipe takes it out (re-review puts it back). It first walked the
+first `PENDING_MAX + 1` rows of *every* account instead, which only counted the
+pile while the pile was most of the accounts — once members outnumbered it,
+those rows were nearly all approved, the count came back near zero, and the
+ceiling never shut. Each index row is checked against the account it names, and
+one whose account is not pending is dropped rather than counted, so a stale row
+can cost a walk but can never turn anybody away. `scripts/test-apply-flood.ts`
+lets in half a pile's worth of members first, then floods it, checks it stops at
+the ceiling rather than at a rate, and checks that answering some lets the next
+applicant straight in. Every one of those applications also comes out of the
+anonymous IP cap the next test in a suite run shares, so it finishes by waiting
+out that minute — about a minute longer, and the next test starts with all of
+it.
 
 Everything member-facing that takes a string `clip()`s it; every `innerHTML` in
 the admin panel interpolates a server-fixed error string and never member text,

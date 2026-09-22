@@ -4,8 +4,10 @@
 // He is not an account. A direct message still needs two sides, so he has an
 // id that is not a member's and a name the room already refuses to anyone
 // else. A line sent from Talk to da people arrives in that member's own DM
-// menu as him — from:"tung", which is the stamp the room styles — and a reply
-// comes back through the ordinary composer. Reading his inbox marks his side
+// menu as him — from:"tung" — and a reply comes back through the ordinary
+// composer. It is drawn as a DM, not as the room: an ordinary bubble with his
+// portrait and name, and none of the room's "the shrine" mark, which on a
+// private conversation made it read as the public chat. Reading his inbox marks his side
 // read and must not clear the member's badge. A chat ban and a block still
 // shut it, the same as any other DM.
 //
@@ -36,9 +38,12 @@ const talkAt = src.indexOf('data-pane="talk"');
 const postAt = src.indexOf('data-pane="postas"');
 must(dmsAt > 0 && talkAt > dmsAt && postAt > talkAt, "Talk to da people must sit under Direct messages");
 must(src.indexOf('id="pane-dms"') < src.indexOf('id="pane-talk"'), "the pane must follow the Direct messages pane");
-for (const bit of ['id="pane-talk"', 'id="talkWho"', 'id="talklist"', 'id="talklog"', 'id="talkform"', "the shrine"]) {
+for (const bit of ['id="pane-talk"', 'id="talkWho"', 'id="talklist" class="talklist"', 'id="talklog" class="talklog"', 'id="talkform"']) {
   must(src.includes(bit), "the admin panel is missing " + bit);
 }
+// the pane's CSS targets these by class; without the class the log never took
+// the spare height and the composer floated under the last line
+must(src.includes("#pane-talk .talklog{flex:1;overflow-y:auto"), "his thread must fill the pane and scroll");
 const loadAll = src.match(/function loadAll\(\)\{[^}]+\}/);
 must(!!loadAll && !loadAll[0].includes("/admin/talk"), "load must not open his inbox: " + loadAll?.[0]);
 must(src.includes('path === "/admin/talk/send"'), "sending as him needs a route");
@@ -47,10 +52,25 @@ must(src.includes("dmMarkRead(TUNG_DM_ID"), "opening his inbox marks his side re
 // and the shrine paints that stamp with the same mark the room uses
 must(shrine.includes("function paintTungWho("), "his name is drawn in one place");
 must(shrine.includes('m.from==="tung"'), "a DM line has to notice the stamp");
-must(shrine.includes("paintTungWho(w,"), "the DM line has to use that drawing");
-must(shrine.includes('tb.textContent="the shrine"'), "the mark still says the shrine");
-must(shrine.includes(".msg.tung{"), "his line still has its own shape");
-must(shrine.includes(".tungmark{"), "the mark still has its chip");
+// in the room he keeps the mark; in a conversation he does not
+must(shrine.includes('if(isT){paintTungWho(w,m.name);'), "the room still draws the whole mark");
+must(shrine.includes('tb.textContent="the shrine"'), "the room's mark still says the shrine");
+must(shrine.includes(".msg.tung{"), "his room line still has its own shape");
+const paintSrc = shrine.slice(shrine.indexOf("function paintTungWho(w,name,dm){"));
+must(shrine.includes("function paintTungWho(w,name,dm){") && paintSrc.slice(0, paintSrc.indexOf("' +")).includes("if(dm)return;"),
+  "the drawing has to be able to leave the room's mark off");
+const dmAddSrc = shrine.slice(shrine.indexOf("function dmAdd(m){"), shrine.indexOf("function dmAdd(m){") + 900);
+must(dmAddSrc.includes('row.className=m.mine?"msg me dm":"msg dm";'),
+  "a DM line from him is an ordinary DM bubble, not the room's proclamation: " + dmAddSrc.slice(0, 400));
+must(dmAddSrc.includes('paintTungWho(w,(DM&&DM.name)||"tung",true)'), "a DM line draws him without the room's mark");
+must(shrine.includes('if(DM.tung)paintTungWho(convname,DM.name||"tung",true)'), "the conversation header too");
+must(shrine.includes('if(c.tung)paintTungWho(n,c.name||"tung",true)'), "and his row on the rail, under the room's own row");
+// and from the panel's seat, his lines are the sender's: on the right
+const talkPane = src.slice(src.indexOf("function talkLine("), src.indexOf("function talkAdd("));
+must(talkPane.includes('row.className=isT?"msg me":"msg"'), "the panel draws his lines as sent, on the right");
+must(!/tungmark/.test(src.slice(src.indexOf("#pane-talk"), src.indexOf("</style>", src.indexOf("#pane-talk")))),
+  "the panel's DM pane carries no room mark");
+must(!/msg tung/.test(src.slice(src.indexOf("Talk to da people.") )), "nor the room's line shape");
 
 const panel = await fetch(API + "/admin", {
   method: "POST",
@@ -153,7 +173,7 @@ const blocked = await post("/admin/talk/send", { key: ADMIN, user: P.id, text: "
 must(blocked.status === 403 && blocked.body.error === "blocked", "their block must stop him: " + JSON.stringify(blocked.body));
 
 console.log(
-  "talk to da people: a line from the panel arrives in the member's own menu as tung, " +
-    "with the same from:\"tung\" stamp the room paints, a reply comes back, reading his " +
+  "talk to da people: a line from the panel arrives in the member's own menu as a DM " +
+    "from tung, drawn as a DM rather than as the room, a reply comes back, reading his " +
     "inbox does not clear their badge, and a chat ban or a block still shuts it",
 );

@@ -8,8 +8,13 @@
 <style>
   /* the lobby, laid out like the pit's: pick what you are playing, then play */
   html,body{overflow:auto}
+  /* centred with auto margins rather than justify-content: those give the
+     spare room to both sides while there is some, and nothing once there is
+     not — so something taller than the window runs off the bottom, where it
+     can be scrolled to, instead of up under the header where it cannot */
   .wrap{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;
-        justify-content:center;padding:0 16px 20px;gap:14px}
+        justify-content:flex-start;padding:0 16px 20px;gap:14px}
+  .lobby,.game{margin-top:auto;margin-bottom:auto}
   .lobby{width:100%;max-width:560px;display:flex;flex-direction:column;gap:14px}
   .blurb{margin:0;color:#c8823c;font-size:14px;line-height:1.5}
   .sub{margin:0;color:#8a6a3a;font-size:12px;line-height:1.55}
@@ -99,7 +104,14 @@
   .state.check{color:#f2c063}
   .state.over{color:#f5efe0}
   .think{padding:0 14px 7px;font-size:11px;color:#8a6a3a;min-height:15px}
-  .moves{flex:1;min-height:0;overflow-y:auto;padding:4px 0;font-size:13px;
+  /* The list scrolls inside a box that takes whatever height the panel has
+     left, and adds nothing to it. The panel is stretched to the board column
+     beside it, but a list in normal flow still counted toward how tall that
+     row wanted to be — so every move made the row taller, the centred game
+     grew upward, and the board climbed until the name over it ran into the
+     header. Out of flow, the list cannot move the board at all. */
+  .movebox{flex:1 1 0;min-height:120px;position:relative}
+  .moves{position:absolute;inset:0;overflow-y:auto;padding:4px 0;font-size:13px;
          font-variant-numeric:tabular-nums}
   .mrow{display:grid;grid-template-columns:42px 1fr 1fr;gap:0;padding:3px 14px}
   .mrow:nth-child(odd){background:rgba(0,0,0,.16)}
@@ -188,7 +200,7 @@
         <div class="panhead">moves</div>
         <div class="state" id="state"></div>
         <div class="think" id="think"></div>
-        <div class="moves" id="moves"></div>
+        <div class="movebox"><div class="moves" id="moves"></div></div>
         <div class="row">
           <button class="ghost" id="undo">take it back</button>
           <button class="ghost" id="again">new game</button>

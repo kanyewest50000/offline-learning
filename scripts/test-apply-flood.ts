@@ -49,10 +49,18 @@ const nap = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // which is not what this file is about, and which a flood of this size will
 // meet long before the ceiling if it is fired flat out. Wait it out rather than
 // reading it as an answer. (Set PENDING_MAX low and this never comes up.)
+// Every application this file gets through is also one spent from that cap,
+// and the next test in a suite run comes from the same address. `spent` is
+// when each one landed, so the file can hand the address back with its budget
+// whole rather than leave the next test to trip over what this one used.
+const spent: number[] = [];
 async function apply(n: string) {
   for (let i = 0; i < 40; i++) {
     const r = await post("/apply", { username: n, application: "flood test" });
-    if (r.status !== 429) return r;
+    if (r.status !== 429) {
+      spent.push(Date.now());
+      return r;
+    }
     await nap(3000);
   }
   throw new Error("still behind the IP cap after two minutes");
@@ -72,13 +80,26 @@ must(/async function pendingRoom\(\): Promise<boolean> \{/.test(src), "could not
 const room = src.slice(src.indexOf("async function pendingRoom()"), src.indexOf("\n}", src.indexOf("async function pendingRoom()")));
 must(/if \(\(Number\(cur\.value\) \|\| 0\) < PENDING_MAX\) return true;/.test(room),
   "the counter is the fast path and must answer without counting when there is room");
-must(/kv\.list<any>\(\{ prefix: \["app"\] \}, \{ limit: PENDING_MAX \+ 1 \}\)/.test(room),
-  "…and when it says there is none, it must COUNT — bounded by the ceiling itself");
+must(/kv\.list\(\{ prefix: \["pendq"\] \}, \{ limit: PENDING_MAX \+ 1 \}\)/.test(room),
+  "…and when it says there is none, it must COUNT the pile — its own index, bounded by the ceiling itself");
+must(!/prefix: \["app"\]/.test(room),
+  "…not the first rows of every account, which stop being the pile once members outnumber it");
+must(/if \(got\[k\]\.value\?\.status === "pending"\) n\+\+;\s*else await kv\.delete\(\["pendq", batch\[k\]\]\);/.test(room),
+  "…and a row whose account is not pending is dropped, never counted against somebody real");
 must(/await kv\.set\(\["pendn"\], n\);/.test(room), "…and put the counter right while it is there");
 must(/return n < PENDING_MAX;/.test(room), "…and answer from the count, not from the counter");
 // the commit that takes a place must be the commit that makes the account
 const applySrc = src.slice(src.indexOf('path === "/apply"'), src.indexOf('path === "/login"'));
 must(/\.set\(\["pendn"\], pend \+ 1\)/.test(applySrc), "the pile grows in the commit that grew it");
+must(/\.set\(\["pendq", id\], app\.ts\)/.test(applySrc), "…and its index row is written in that same commit");
+// every way off the pile takes the row with it
+const decideSrc = src.slice(src.indexOf('path === "/admin/decide"'), src.indexOf('path === "/admin/repend"'));
+must((decideSrc.match(/\.delete\(\["pendq", app\.value\.id\]\)/g) || []).length === 2,
+  "both verdict commits (banish, and approve/reject) must drop the index row");
+const deleteSrc = src.slice(src.indexOf('path === "/admin/delete"'), src.indexOf('path === "/admin/delete"') + 1200);
+must(deleteSrc.includes('.delete(["pendq", id])'), "deleting an account drops its row");
+const repSrc = src.slice(src.indexOf('path === "/admin/repend"'), src.indexOf('path === "/admin/repend"') + 1200);
+must(repSrc.includes('.set(["pendq", app.value.id], Date.now())'), "sending somebody back to review puts it back");
 must(!/\.check\(pend\)/.test(applySrc),
   "the counter must NOT be guarded: a lost increment is drift, which is absorbed, " +
     "and guarding it would refuse somebody for no reason");
@@ -89,6 +110,23 @@ must(!/\.check\(pend\)/.test(applySrc),
 // start from whatever is there; this test's own arithmetic is about the delta
 await answerAll();
 must((await pending()).length === 0, "the pile starts empty for this test");
+
+// Members first. The count used to walk the first PENDING_MAX + 1 rows of
+// every account, which is only the pile while the pile is nearly all of the
+// accounts; with members mixed in, those rows are never all pending, the count
+// came back short however big the pile was, and the flood below never stopped.
+// Half a pile's worth is plenty to show it — the old walk would have needed
+// every waiting application and at most one member in its first rows — and
+// every one is an application this file spends from the cap.
+for (let i = 0; i < Math.ceil(MAX / 2); i++) {
+  const n = "fm" + rnd();
+  const r = await apply(n);
+  must(!!r.body?.token, "a member could not apply: " + JSON.stringify(r.body));
+  const row = (await pending()).find((a) => a.username === n);
+  must(!!row, n + " is not on the pile");
+  await post("/admin/decide", { key: ADMIN, id: row!.id, action: "approve" });
+}
+must((await pending()).length === 0, "letting them in empties the pile again");
 
 let took = 0, refused = 0, why = "";
 for (let i = 0; i < MAX + 6; i++) {
@@ -117,6 +155,15 @@ must((await j("/status?token=" + encodeURIComponent(after.body.token as string))
   "and the applicant that got in is a normal pending applicant");
 
 await answerAll();
+
+// hand the address back: the cap's window is a fixed minute, so a minute after
+// the last application this file made, none of it is counted against anybody
+const recent = spent.filter((t) => Date.now() - t < 60_000).length;
+if (recent > 15) {
+  const wait = 60_000 - (Date.now() - spent[spent.length - 1]) + 500;
+  console.log("(" + recent + " applications this minute — waiting " + Math.ceil(wait / 1000) + "s so the next test has the whole IP cap)");
+  await nap(Math.max(0, wait));
+}
 
 console.log(
   "apply flood: the pile of unanswered applications has a ceiling and a flood stops writing at " +

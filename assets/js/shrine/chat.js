@@ -422,9 +422,13 @@
     'if(r&&(r.ok||r.error==="gone")){dropMsg(id);return;}' +
     'var b=delBtn(id);if(b){b.disabled=false;b.textContent="🗑";b.title="the shrine would not — try again";}' +
     '}).catch(function(){var b=delBtn(id);if(b){b.disabled=false;b.textContent="🗑";}});}' +
-    /* one drawing of his name — portrait, the name, the mark — so the room and
-       a direct message cannot drift into two versions of him */
-    'function paintTungWho(w,name){w.classList.add("tung");w.textContent="";var ti=document.createElement("img");ti.className="tungimg";ti.src=TUNG_IMG;ti.alt="";ti.onerror=function(){ti.style.display="none";};w.appendChild(ti);var tn=document.createElement("span");tn.className="tungname";tn.textContent=name||"tung";w.appendChild(tn);var tb=document.createElement("span");tb.className="tungmark";tb.textContent="the shrine";w.appendChild(tb);}' +
+    /* one drawing of his name — portrait, the name, and in the room the mark —
+       so the room and a direct message cannot drift into two versions of him.
+       `dm` leaves the mark off: "the shrine" is what the room is called, and on
+       a private conversation it made his DM read as the room itself. There the
+       portrait and the gold are what say it is him; the name is one nobody else
+       can hold. */
+    'function paintTungWho(w,name,dm){w.classList.add("tung");w.textContent="";var ti=document.createElement("img");ti.className="tungimg";ti.src=TUNG_IMG;ti.alt="";ti.onerror=function(){ti.style.display="none";};w.appendChild(ti);var tn=document.createElement("span");tn.className="tungname";tn.textContent=name||"tung";w.appendChild(tn);if(dm)return;var tb=document.createElement("span");tb.className="tungmark";tb.textContent="the shrine";w.appendChild(tb);}' +
     'function add(m){var isT=isTung(m);var row=document.createElement("div");row.className=m.mine?"msg me":"msg";if(isT)row.classList.add("tung");if(m.id)row.setAttribute("data-id",m.id);' +
     'var meta=document.createElement("div");meta.className="meta";' +
     'var w=document.createElement("button");w.type="button";w.className="who";w.textContent=m.name;w.title="view profile";' +
@@ -594,14 +598,17 @@
        and no gifts — pretending otherwise would be a row of buttons that do
        nothing */
     'function dmAdd(m){' +
-    /* his lines wear the room's mark, not a plain left-hand bubble. from:"tung"
-       is stamped by the server; DM.tung is the same fact on the conversation,
-       for a line that arrives before the flag on the message does. */
+    /* his lines are an ordinary direct message — the same left-hand bubble as
+       anybody's — with his portrait and gold name on them. Not the room's
+       full-width proclamation: that shape is how he speaks to everyone, and
+       this is only the two of you. from:"tung" is stamped by the server;
+       DM.tung is the same fact on the conversation, for a line that arrives
+       before the flag on the message does. */
     'var isT=!m.mine&&(m.from==="tung"||(DM&&DM.tung));' +
-    'var row=document.createElement("div");row.className=(m.mine?"msg me dm":"msg dm")+(isT?" tung":"");' +
+    'var row=document.createElement("div");row.className=m.mine?"msg me dm":"msg dm";' +
     'var meta=document.createElement("div");meta.className="meta";' +
     'var w=document.createElement(isT?"button":"span");if(isT)w.type="button";w.className="who";' +
-    'if(isT){paintTungWho(w,(DM&&DM.name)||"tung");w.title="who is this";w.addEventListener("click",function(ev){ev.stopPropagation();openProfile((DM&&DM.name)||"tung",true);});}' +
+    'if(isT){paintTungWho(w,(DM&&DM.name)||"tung",true);w.title="who is this";w.addEventListener("click",function(ev){ev.stopPropagation();openProfile((DM&&DM.name)||"tung",true);});}' +
     'else{w.textContent=m.mine?(ME||"you"):(DM?DM.name:"");}' +
     'meta.appendChild(w);' +
     'stampWhen(meta,m.ts);row.appendChild(meta);' +
@@ -643,7 +650,7 @@
     'dmPaint();polling=true;poll();}' +
     'function paintConvName(){if(!convname)return;convname.className="";convname.textContent="";' +
     'if(!DM){convname.textContent="the shrine";return;}' +
-    'if(DM.tung)paintTungWho(convname,DM.name||"tung");else convname.textContent=DM.name;}' +
+    'if(DM.tung)paintTungWho(convname,DM.name||"tung",true);else convname.textContent=DM.name;}' +
     'function openDM(id,name,tung){' +
     'if(!id||!TOKEN)return;' +
     'if(!tung&&String(name||"").toLowerCase()===String(ME||"").toLowerCase())return;' +
@@ -672,7 +679,7 @@
     'b.className="dmrow"+(DM&&DM.id===c.id?" on":"")+(c.unread>0?" unread":"");' +
     'var top=document.createElement("span");top.className="dmtop";' +
     'var n=document.createElement("span");n.className="dmname";' +
-    'if(c.tung)paintTungWho(n,c.name||"tung");else n.textContent=c.name;top.appendChild(n);' +
+    'if(c.tung)paintTungWho(n,c.name||"tung",true);else n.textContent=c.name;top.appendChild(n);' +
     'if(c.unread>0){var u=document.createElement("span");u.className="dmbadge";u.textContent=c.unread>99?"99+":String(c.unread);top.appendChild(u);}' +
     'b.appendChild(top);' +
     'var l=document.createElement("span");l.className="dmlast";' +

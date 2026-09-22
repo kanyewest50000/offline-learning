@@ -534,6 +534,18 @@ must(Math.abs((winAfter + loseAfter) - (winBefore + loseBefore)) < 1e-9,
     "it must go back until it is your turn");
   must(/if \(!yours\(\)\) setTimeout\(botMove/.test(page),
     "and ask him to play again if there is no game left to go back through");
+
+  // The move list must not be able to move the board. In normal flow it added
+  // its height to the row the board sits in, the centred game grew upward, and
+  // after enough moves "tung's own head" ran into the header. It scrolls inside
+  // a box that takes the panel's leftover height and contributes none.
+  must(/<div class="movebox"><div class="moves" id="moves"><\/div><\/div>/.test(page),
+    "the move list has to sit inside its own box");
+  must(/\.movebox\{[^}]*position:relative/.test(page) &&
+    /\.moves\{position:absolute;inset:0;overflow-y:auto/.test(page),
+    "and scroll there, out of flow, so a long game cannot grow the page");
+  must(/\.wrap\{[^}]*justify-content:flex-start/.test(page) && /\.lobby,\.game\{margin-top:auto;margin-bottom:auto\}/.test(page),
+    "centring is by auto margins, which never push anything up under the header");
 }
 
 // --- the client draws a board and owns no rules ------------------------------
@@ -542,6 +554,11 @@ must(casino.includes("function chessBoard("), "the client needs a board to draw"
 must(casino.includes('"pit-chess"'), "chess needs a tile in the pit");
 must(/legal\[i\]\.slice\(0,2\)===picked/.test(casino),
   "the client must offer the server's legal list rather than work moves out itself");
+// the pit's scoresheet has a ceiling of its own and scrolls under it, which is
+// what keeps a long game there from walking the board anywhere
+const pitStyles = await Deno.readTextFile(`${ROOT}/assets/js/shrine/styles.js`);
+must(/\.chmoves\{[^']*max-height:\d+px;overflow-y:auto/.test(pitStyles),
+  "the pit's move list must stay capped and scroll");
 // the one thing that must never appear out here
 for (const word of ["chessMoves", "chessAttacked", "chessInCheck"]) {
   must(!casino.includes(word), "the rules must not be copied into the client: " + word);

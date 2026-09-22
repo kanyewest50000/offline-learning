@@ -1171,8 +1171,9 @@ function convOf(a: string, b: string): string {
 // Tung has no account, and a direct message still needs two sides. This id is
 // not hex — rid() only ever emits hex — so it cannot collide with a member or
 // be approved into one. The name is the one the room already refuses to anyone
-// else, which is also what the client styles: from:"tung", the portrait, the
-// mark that says "the shrine".
+// else. The client keys off from:"tung" and paints his portrait and gold name
+// on an ordinary DM line — not the room's "the shrine" mark, which on a private
+// conversation read as the public room.
 const TUNG_DM_ID = "tung!voice";
 function tungVoice(): { id: string; username: string; status: "approved" } {
   return { id: TUNG_DM_ID, username: WISDOM_NAME, status: "approved" };
@@ -1867,13 +1868,33 @@ const PENDING_MAX = Number(Deno.env.get("PENDING_MAX") || 200);
 // worst drift can do is spend one bounded walk on one application, and the
 // failure it can never produce is the one that would matter — the door shut on
 // somebody real because a number was wrong.
+//
+// The walk is over ["pendq"], an index of the applications still waiting: the
+// commit that makes one writes its row, and every verdict, delete and wipe
+// takes it out. It used to walk ["app"] — every account, of every status —
+// and stop after PENDING_MAX + 1 of them, which only counted the pile while
+// the pile was most of the accounts. Once enough members had been let in,
+// those first rows were nearly all approved, the count came back near zero
+// however big the pile was, and the ceiling never shut. Each row is still
+// checked against the account it names, and a row whose account is not
+// pending is dropped rather than counted: a stale row may cost one walk, but it
+// can never be what turns somebody away.
 async function pendingRoom(): Promise<boolean> {
   const cur = await kv.get<number>(["pendn"]);
   if ((Number(cur.value) || 0) < PENDING_MAX) return true;
+  const ids: string[] = [];
+  for await (const e of kv.list({ prefix: ["pendq"] }, { limit: PENDING_MAX + 1 })) {
+    ids.push(String(e.key[1]));
+  }
   let n = 0;
-  // deno-lint-ignore no-explicit-any
-  for await (const e of kv.list<any>({ prefix: ["app"] }, { limit: PENDING_MAX + 1 })) {
-    if (e.value?.status === "pending") n++;
+  for (let i = 0; i < ids.length; i += 10) {
+    const batch = ids.slice(i, i + 10);
+    // deno-lint-ignore no-explicit-any
+    const got = await kv.getMany<any[]>(batch.map((id) => ["app", id]));
+    for (let k = 0; k < got.length; k++) {
+      if (got[k].value?.status === "pending") n++;
+      else await kv.delete(["pendq", batch[k]]);
+    }
   }
   await kv.set(["pendn"], n);
   return n < PENDING_MAX;
@@ -1908,6 +1929,17 @@ const CAS_BURST_MS = Number(Deno.env.get("CAS_BURST_MS") || 10_000);
 // client does and a fortieth of what a socket can.
 const PIT_BURST = 300, PIT_BURST_MS = 10_000;
 const THREAD_MAX = 30;      // lines kept on an application; the oldest fall off
+// That thread is the conversation BEFORE a verdict. Once there is one — let in,
+// turned away, or sent to tung — it has nothing left to say, and a thread left
+// on the record would greet a later re-review with the old questions as if they
+// had just been asked. So every verdict takes it off, and so does sending
+// somebody back to review, for a record decided before this rule existed.
+// deno-lint-ignore no-explicit-any
+function dropThread(app: any): any {
+  const next = { ...app };
+  delete next.thread;
+  return next;
+}
 const TALK_MAX = 40;        // lines kept; the oldest fall off the top
 const TALK_LEN = 200;       // characters one line may carry
 const TALK_TTL = 6 * 60 * 60 * 1000;
@@ -3652,6 +3684,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       .set(["app", id], app)
       .set(["tok", token], id)
       .set(["pendn"], pend + 1)
+      .set(["pendq", id], app.ts)
       .commit();
     if (!res.ok) return json({ error: "username taken" }, 409);
     postWebhook(
@@ -3758,10 +3791,17 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // cap. Answering tung about your application is a thing you do a handful of
     // times, not something that needs to go faster than this.
     if (!allow("resp:" + app.value.id, 4, 30_000)) return tooMany(30);
+    // Only while the application is open. A verdict takes the thread off the
+    // record, and a line written after it would put one back for the next
+    // review to find. The check is on the version read, so a verdict landing
+    // between that read and this write is not undone by the write — which
+    // would otherwise also flip the account back to pending.
+    if (app.value.status !== "pending") return json({ error: "not pending" }, 409);
     const thread = (app.value.thread || [])
       .concat([{ from: "applicant", text, ts: Date.now() }])
       .slice(-THREAD_MAX);
-    await kv.set(["app", app.value.id], { ...app.value, thread });
+    const put = await kv.atomic().check(app).set(["app", app.value.id], { ...app.value, thread }).commit();
+    if (!put.ok) return json({ error: "not pending" }, 409);
     return json({ ok: true, thread });
   }
 
@@ -5100,9 +5140,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // ---------- admin: talk to da people, as tung ----------
   //
   // The room already speaks as him. This is that voice in a conversation: the
-  // line is his, the other end sees from:"tung" and paints the portrait and the
-  // mark, and a reply comes back through the ordinary /dm/send because he is a
-  // side of the pair rather than a flag on somebody else's message.
+  // line is his, the other end sees from:"tung" and paints his portrait on an
+  // ordinary DM line, and a reply comes back through the ordinary /dm/send
+  // because he is a side of the pair rather than a flag on somebody else's
+  // message. Nothing here touches the room.
   //
   // It is his inbox, so opening a thread marks HIS side read and nobody
   // else's. The dump under Direct messages is a look at two members and must
@@ -5336,11 +5377,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     if (!app.value) return json({ error: "not found" }, 404);
     const text = clip(b.text, 1000);
     if (!text) return json({ error: "empty" }, 400);
+    // an application that has had its verdict is not open to questions — the
+    // line would sit on the record until the next review. /admin/talk/send is
+    // how he speaks to a member.
+    if (app.value.status !== "pending") return json({ error: "already decided" }, 409);
     // the same ceiling from this end: it is one array and either side can grow it
     const thread = (app.value.thread || [])
       .concat([{ from: "admin", text, ts: Date.now() }])
       .slice(-THREAD_MAX);
-    await kv.set(["app", app.value.id], { ...app.value, thread });
+    const put = await kv.atomic().check(app).set(["app", app.value.id], { ...app.value, thread }).commit();
+    if (!put.ok) return json({ error: "busy" }, 409);
     return json({ ok: true, thread });
   }
   if (req.method === "POST" && path === "/admin/decide") {
@@ -5360,27 +5406,31 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // application form like anybody else. What does not come back is the
     // account — that name and that token stay banned.
     if (b.action === "banish") {
-      await kv.set(["app", app.value.id], {
-        ...app.value,
+      await kv.atomic().set(["app", app.value.id], {
+        ...dropThread(app.value),
         status: "rejected",
         banned: true,
         banished: true,
         banishedAt: Date.now(),
-      });
+      }).delete(["pendq", app.value.id]).commit();
       return json({ ok: true, status: "rejected", banished: true });
     }
     const status = b.action === "approve" ? "approved" : "rejected";
     // approving somebody who was sent to tung is how it is undone, and it has
     // to lift both flags or they would be let in and shown a white page
     const lift = b.action === "approve" ? { banned: false, banished: false } : {};
-    await kv.set(["app", app.value.id], { ...app.value, ...lift, status });
+    await kv.atomic()
+      .set(["app", app.value.id], { ...dropThread(app.value), ...lift, status })
+      .delete(["pendq", app.value.id])
+      .commit();
     return json({ ok: true, status });
   }
 
   // ---------- admin: send an approved user back to review (pending) ----------
   // flips status to "pending" so they drop back to the application screen where
-  // the follow-up thread lives. their token + thread are kept, so the existing
-  // conversation carries over and they can answer new questions.
+  // the follow-up thread lives. their token is kept; the thread starts empty —
+  // whatever was said before the last verdict belongs to that review, not this
+  // one (dropThread above, which every verdict already applies).
   if (req.method === "POST" && path === "/admin/repend") {
     // deno-lint-ignore no-explicit-any
     const b: any = await req.json().catch(() => ({}));
@@ -5388,7 +5438,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // deno-lint-ignore no-explicit-any
     const app = await kv.get<any>(["app", clip(b.id, 32)]);
     if (!app.value) return json({ error: "not found" }, 404);
-    await kv.set(["app", app.value.id], { ...app.value, status: "pending" });
+    // back on the pile, so back in its index
+    await kv.atomic()
+      .set(["app", app.value.id], { ...dropThread(app.value), status: "pending" })
+      .set(["pendq", app.value.id], Date.now())
+      .commit();
     return json({ ok: true, status: "pending" });
   }
 
@@ -5558,6 +5612,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const lower = String(app.value.username).toLowerCase();
     const atomic = kv.atomic()
       .delete(["app", id])
+      .delete(["pendq", id])
       .delete(["name", lower])
       .delete(["cas", id])
       .delete(["loan", id])
@@ -5698,8 +5753,10 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       }
     }
     // the pile is gone, so the number of it goes too — it would correct itself
-    // on the next application either way, but not saying so would be untidy
+    // on the next application either way, but not saying so would be untidy.
+    // Its index is bookkeeping, not entries anybody made, so it is not counted.
     await kv.delete(["pendn"]);
+    for await (const e of kv.list({ prefix: ["pendq"] })) await kv.delete(e.key);
     return json({ ok: true, cleared: n });
   }
 
@@ -6706,13 +6763,10 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 #pane-talk .talkempty{color:#8a6a3a;font-size:13px;line-height:1.5}
 #pane-talk .msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}
 #pane-talk .msg.me{align-self:flex-end;background:#8a5a28}
-#pane-talk .msg.tung{align-self:stretch;max-width:100%;background:linear-gradient(160deg,#2e1c08,#1d1206);border:1px solid #7a5a1a;border-left:3px solid #f2c063}
-#pane-talk .msg.tung .body{color:#f5efe0;font-style:italic;line-height:1.5}
 #pane-talk .meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}
 #pane-talk .who{display:block;font-size:11px;color:#c8823c;font-weight:600;line-height:1.2}
 #pane-talk .msg.me .who{color:#f2c063}
 #pane-talk .who.tung{display:flex;align-items:center;gap:6px;color:#f2c063;font-weight:800;letter-spacing:.02em}
-#pane-talk .tungmark{font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#1d1206;background:#f2c063;border-radius:4px;padding:1px 5px;line-height:1.5;flex:0 0 auto}
 #pane-talk .tungimg{width:15px;height:15px;border-radius:3px;object-fit:cover;flex:0 0 auto}
 #pane-talk .when{font-size:10px;font-weight:500;color:#8a6a3a;white-space:nowrap}
 #pane-talk .msg.me .when{color:#d4b48a}
@@ -6783,16 +6837,16 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 </section>
 <section class="pane" id="pane-talk">
 <h2>Talk to da people</h2>
-<p class="hint">Pick a member and write to them as tung. His lines wear the same mark they do in the room &mdash; the portrait, the gold, <b>the shrine</b> &mdash; and their replies land here. A chat ban still covers this.</p>
+<p class="hint">Pick a member and write to them as tung. It is a private direct message: it lands in <b>their</b> conversations as a DM from tung, nobody else sees it, and their replies land here. A chat ban still covers this.</p>
 <div class="talkbox">
 <div class="talkrail">
 <div class="talkrailhead">conversations</div>
 <div class="talknew"><select id="talkWho"><option value="">load first, then pick somebody&hellip;</option></select></div>
-<div id="talklist"></div>
+<div id="talklist" class="talklist"></div>
 </div>
 <div class="talkmain">
 <div class="talkhead"><span class="talkname" id="talkname">nobody yet</span><span class="talksub" id="talksub">pick somebody</span></div>
-<div id="talklog"><div class="talkempty">his conversations are on the left. pick a member to start one.</div></div>
+<div id="talklog" class="talklog"><div class="talkempty">his conversations are on the left. pick a member to start one.</div></div>
 <form class="talkform" id="talkform"><input id="talkinput" autocomplete="off" maxlength="1000" placeholder="message them as tung&hellip;" disabled><button class="load" id="talksend" type="submit">send</button></form>
 </div>
 </div>
@@ -7518,14 +7572,15 @@ document.getElementById("dmDump").onclick=dmDumpThread;
    Talk to da people.
 
    The same shape as the shrine's own DM menu: a rail of conversations, one
-   thread, one composer. Every line sent from here is his. The portrait and
-   the mark are the ones the room paints for from:"tung" — kept in step with
-   assets/js/shrine rather than invented a second time.
+   thread, one composer. Every line sent from here is his, and it is drawn
+   the way a DM client draws your own lines: on the right. The member's are
+   on the left. None of the room's proclamation styling — the full-width
+   gold bar, "the shrine" — belongs here; that is how he talks to everyone.
 
    The face is the file the shrine ships. This page is served by the API,
    which does not host the repo, so the portrait is the same bytes from the
-   pages host the embed already uses. If that host is quiet the mark still
-   reads; the image is the only part that can fail closed. */
+   pages host the embed already uses. If that host is quiet the gold name
+   still reads; the image is the only part that can fail closed. */
 var TUNG_FACE="https://cdn.jsdelivr.net/gh/kanyewest50000/offline-learning@main/assets/tungtungtungsahur.png";
 var talkWho=document.getElementById("talkWho"),talklist=document.getElementById("talklist");
 var talklog=document.getElementById("talklog"),talkname=document.getElementById("talkname"),talksub=document.getElementById("talksub");
@@ -7552,7 +7607,19 @@ function talkFace(w,name){
   ti.onerror=function(){ti.style.display="none";};
   w.appendChild(ti);
   var tn=document.createElement("span");tn.textContent=name||"tung";w.appendChild(tn);
-  var tb=document.createElement("span");tb.className="tungmark";tb.textContent="the shrine";w.appendChild(tb);
+}
+/* one line of the conversation, drawn the way any DM client draws one: his
+   (yours, from this seat) on the right, theirs on the left */
+function talkLine(m,theirName){
+  var isT=m.from==="tung";
+  var row=document.createElement("div");row.className=isT?"msg me":"msg";
+  var meta=document.createElement("div");meta.className="meta";
+  if(isT)talkFace(meta.appendChild(document.createElement("span")),"tung");
+  else{var w=document.createElement("span");w.className="who";w.textContent=theirName||"";meta.appendChild(w);}
+  if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();meta.appendChild(tm);}
+  row.appendChild(meta);
+  var bd=document.createElement("span");bd.className="body";bd.textContent=m.text||"";row.appendChild(bd);
+  return row;
 }
 function talkWhy(reason){
   if(reason==="blocked")return "they blocked this conversation.";
@@ -7606,15 +7673,7 @@ function talkRow(c){
 }
 function talkAdd(m){
   var empty=talklog.querySelector(".talkempty");if(empty)empty.remove();
-  var isT=m.from==="tung";
-  var row=document.createElement("div");row.className=isT?"msg tung":"msg";
-  var meta=document.createElement("div");meta.className="meta";
-  if(isT)talkFace(meta.appendChild(document.createElement("span")),"tung");
-  else{var w=document.createElement("span");w.className="who";w.textContent=(talkUser&&talkUser.name)||"";meta.appendChild(w);}
-  if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();meta.appendChild(tm);}
-  row.appendChild(meta);
-  var bd=document.createElement("span");bd.className="body";bd.textContent=m.text||"";row.appendChild(bd);
-  talklog.appendChild(row);
+  talklog.appendChild(talkLine(m,talkUser&&talkUser.name));
   talklog.scrollTop=talklog.scrollHeight;
 }
 function talkPaintThread(d){
@@ -7635,17 +7694,7 @@ function talkPaintThread(d){
     e.textContent=d.closed?talkWhy(d.reason):"nothing here yet. the first line is his.";
     talklog.appendChild(e);
   }else{
-    d.msgs.forEach(function(m){
-      var isT=m.from==="tung";
-      var row=document.createElement("div");row.className=isT?"msg tung":"msg";
-      var meta=document.createElement("div");meta.className="meta";
-      if(isT){var face=document.createElement("span");talkFace(face,"tung");meta.appendChild(face);}
-      else{var w=document.createElement("span");w.className="who";w.textContent=(d.user&&d.user.name)||"";meta.appendChild(w);}
-      if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();meta.appendChild(tm);}
-      row.appendChild(meta);
-      var bd=document.createElement("span");bd.className="body";bd.textContent=m.text||"";row.appendChild(bd);
-      talklog.appendChild(row);
-    });
+    d.msgs.forEach(function(m){talklog.appendChild(talkLine(m,d.user&&d.user.name));});
   }
   if(fresh||atBottom)talklog.scrollTop=talklog.scrollHeight;
 }
@@ -7674,6 +7723,9 @@ function talkFetchThread(silent){
     if(run!==talkRun||!talkUser||talkUser.id!==who.id)return;
     if(d.error){if(!silent){talklog.innerHTML="";var e=document.createElement("div");e.className="talkempty";e.textContent=talkWhy(d.error);talklog.appendChild(e);}talksub.textContent=talkWhy(d.error);talkArm();return;}
     talkPaintThread(d);
+    // opening a thread is what reads it, so the badge on its row goes now
+    // rather than at the next pass of the list
+    if(talkConvs&&talkConvs.some(function(c){return c.id===who.id&&c.unread>0;}))talkFetchList();
     talkArm();
   }).catch(function(){if(run===talkRun){talksub.textContent="network error.";talkArm();}});
 }
