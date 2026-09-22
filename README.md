@@ -836,16 +836,24 @@ closed now.
   `move`, `chess`, `poker`) had no clock either. `PIT_BURST` is 300 per 10s —
   about forty times what a client does, and a fortieth of what a socket can.
   It is a wall for a script and invisible to everything else.
-* **The pit lobby.** `/duel/list` walks up to two hundred duel records, and the
-  lobby asks for it every 1.5 seconds. It is the most expensive read in the
-  casino and now has a clock several times the client's pace. **What that does
-  not fix is the walk itself**: a finished duel lingers a day so both players
-  can read the result, so most of what the lobby reads every 1.5 seconds is a
-  game that is already over, filtered out in JS afterwards. The real fix is an
-  index of open tables — `["duelopen", id]`, written and deleted by the commits
-  that already move a table in and out of `open` — so the lobby lists a handful
-  of keys instead of the day's history. That is a change across six commit
-  paths and is deliberately **not** done here.
+* **The pit lobby.** `/duel/list` used to walk up to two hundred duel records
+  every 1.5 seconds and throw away the ones that were not open — and a finished
+  duel lingers a day so both players can read the result, so nearly everything
+  it read was history. It was the most expensive read in the casino by a
+  distance. A table that is open now has a key of its own, `["duelopen", id]`,
+  written and deleted by the same commits that move it in and out of that
+  state; the lobby lists those and reads only the tables they name. It has a
+  clock on it as well.
+
+  The index is a **hint**, never the truth — the duel record is that, and the
+  lobby checks every entry against one. An entry naming a table that is no
+  longer open is deleted on sight, so a commit that somehow missed one costs a
+  single wasted read, once. The direction that would actually matter, an open
+  table with no entry and so invisible to everybody, cannot happen: the only
+  commit that ever creates an open table is the one that creates its entry.
+  `scripts/test-pit-index.ts` walks a table from put-up to filled, to
+  cancelled, to expired, and counts the commit sites in the source so that a
+  new one added later cannot quietly skip the index.
 * **The application thread.** `/respond` appended to an array on the account
   record and wrote it back, with no cap and no clock, and an applicant holds a
   token. One KV value could be grown for as long as somebody liked — read back
@@ -865,20 +873,33 @@ closed now.
   and 120 an hour across isolates, because a line is two writes and a read on
   the next poll of every other client at the table.
 
-Two things found in the sweep are **reported rather than fixed**, because the
-fix would break the repo's own tests and that is the wrong trade to make
-quietly:
+### the pile of applications
 
-* **`/apply` can be flooded.** It is anonymous, so it is behind the 90-a-minute
-  IP cap — which is ninety accounts a minute, three KV writes each, every one
-  of them landing in a pending list that `/admin/pending` reads whole. The right
-  guard is a per-IP cap of a handful an hour. It is not here because the test
-  suite applies dozens of times from one address, and shipping a cap that turns
-  the suite red is worse than naming the risk. If the shrine is ever found, add
-  it as an env-overridable cap and set it high on the machine the tests run on.
-* **The `["duel"]` walk above**, for the same kind of reason: it is a
-  correctness-preserving change across six commit paths, which is not something
-  to bolt on at the end of an unrelated piece of work.
+`/apply` is the one route that makes an account, and it is anonymous, so the
+only thing in front of it is the 90-a-minute IP cap — ninety accounts a minute,
+three KV writes each, and ninety more rows in a list tung reads whole every time
+he opens the panel. A morning of that and the panel is useless while the door
+still works.
+
+The obvious guard is a rate cap per address, and it is the wrong one here: this
+repo's own suite applies dozens of times from one address, and a guard that
+turns the tests red is a guard nobody keeps. So the cap is on the thing that
+actually does the harm — **the size of the pile, not the speed it arrives at**.
+`PENDING_MAX` (200) unanswered applications is the ceiling; past it the door
+says *"tung has more applications than he has read, try again later"* and stops
+writing. Answering them is what makes room for more, which is how it ought to
+work anyway, and the tests never come near it because they approve what they
+apply for.
+
+The counter in front of that is **allowed to be wrong**. It only ever goes up —
+nothing decrements it when tung answers one — so it drifts past the truth and
+eventually trips. That is the design: a counter that trips is never believed, it
+is checked against a walk bounded by the ceiling itself and then put right. The
+worst drift can do is spend one bounded count on one application; the failure it
+can never produce is the one that would matter, which is the door shut on
+somebody real because a number was stale. `scripts/test-apply-flood.ts` floods
+it, checks it stops at the ceiling rather than at a rate, and checks that
+answering some lets the next applicant straight in.
 
 Everything member-facing that takes a string `clip()`s it; every `innerHTML` in
 the admin panel interpolates a server-fixed error string and never member text,
@@ -1090,9 +1111,12 @@ that are gone.
 read source go through `scripts/shrine-sources.ts` so they keep working when a
 chunk moves file. The live ones talk to a server you start yourself, and a
 handful want it started with particular dials — each of those says so in its own
-header. The one worth knowing about without reading it first is
-`test-limbo-rtp.ts`, which fires sixty thousand spins to measure the house edge
-and therefore needs `CAS_BURST=100000` on the server it is pointed at; run it
-against its own process rather than the one the rest of the suite is using. `scripts/refresh-games.sh` re-vendors the gn-math loader
+header. Two are worth knowing about without
+reading them first: `test-limbo-rtp.ts` fires sixty thousand spins to measure
+the house edge and therefore needs `CAS_BURST=100000` on the server it is
+pointed at (run it against its own process rather than the one the rest of the
+suite is using), and `test-apply-flood.ts` fills the pile of unanswered
+applications to its ceiling, so it wants `PENDING_MAX=12` or it spends a couple
+of minutes doing it two hundred times. `scripts/refresh-games.sh` re-vendors the gn-math loader
 stubs, and `tidy-games.js` rewrites the `GAMES` array in
 `assets/js/shrine/games-catalog.js`.

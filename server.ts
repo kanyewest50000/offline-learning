@@ -1463,6 +1463,28 @@ type Duel = {
   talkN?: number;
 };
 
+// ---- the index of tables still filling --------------------------------------
+// The pit lobby used to find them by walking every duel record there is and
+// throwing away the ones that were over — and a finished duel lingers a day so
+// both players can read the result, so nearly everything it walked was history.
+// Two hundred reads, every 1.5 seconds, for a handful of rows.
+//
+// A table that is OPEN now has a key of its own, written and deleted by the
+// same commits that move it in and out of that state. The lobby lists those and
+// reads only the tables they name.
+//
+// The index is a HINT. The duel record is the truth, and the lobby checks it
+// against one: an entry naming a table that is no longer open is deleted on
+// sight, so a commit that somehow missed one costs a single wasted read, once.
+// The direction that would actually matter — an open table with no entry, and
+// so invisible to everybody — cannot happen, because the only commit that ever
+// creates an open table is the one that creates its entry.
+function duelIndex(op: Deno.AtomicOperation, d: Duel): Deno.AtomicOperation {
+  return d.state === "open" && !d.settled
+    ? op.set(["duelopen", d.id], d.ts, { expireIn: DUEL_TTL })
+    : op.delete(["duelopen", d.id]);
+}
+
 function extraOf(d: Duel): DuelSide[] {
   return Array.isArray(d.extra) ? d.extra : [];
 }
@@ -1766,6 +1788,8 @@ async function commitDuel(
     op = op.check(cur).set(["cas", c.id], { ...rec, bal: nb }, { expireIn: CAS_TTL });
   }
   op = op.set(["duel", next.id], next, { expireIn: DUEL_TTL });
+  // and the lobby's index of it, in the same commit that decided its state
+  op = duelIndex(op, next);
   // the players are free again the moment the record is final
   if (next.settled) {
     for (const p of seatedPlayers(next)) if (!isBot(p)) op = op.delete(["duelof", p.id]);
@@ -1818,6 +1842,42 @@ function splitPot(pot: number, ways: number): number[] {
 // this is not a policy — it is the difference between "small" and "unbounded",
 // which is the only thing a read that runs on a poll needs to be.
 const SHOP_MAX = 120;
+// ---- how big the pile of unanswered applications may get ----
+// /apply is the one route that MAKES an account, and it is anonymous, so the
+// only thing in front of it was the 90-a-minute IP cap. Ninety accounts a
+// minute is three KV writes each and ninety more rows in a list tung reads
+// whole every time he opens the panel — a morning of that and the panel is
+// useless and the door still works.
+//
+// A rate cap per address is the obvious answer and the wrong one here: this
+// repo's own suite applies dozens of times from one address, and a guard that
+// turns the tests red is a guard nobody will keep. So the cap is on the thing
+// that actually does the harm — the size of the PILE, not the speed it arrives
+// at. Tung answering applications is what makes room for more, which is how it
+// should work anyway; a flood fills it to the ceiling and then stops writing,
+// and the tests never come near it because they approve what they apply for.
+const PENDING_MAX = Number(Deno.env.get("PENDING_MAX") || 200);
+
+// The pile's size, kept as a number so /apply does not have to count it.
+//
+// It is allowed to drift. It is only ever incremented — nothing decrements it
+// when tung answers one — so it climbs past the truth and eventually trips.
+// That is the design: a counter that trips is never believed, it is CHECKED,
+// against a walk bounded by the ceiling itself, and then put right. So the
+// worst drift can do is spend one bounded walk on one application, and the
+// failure it can never produce is the one that would matter — the door shut on
+// somebody real because a number was wrong.
+async function pendingRoom(): Promise<boolean> {
+  const cur = await kv.get<number>(["pendn"]);
+  if ((Number(cur.value) || 0) < PENDING_MAX) return true;
+  let n = 0;
+  // deno-lint-ignore no-explicit-any
+  for await (const e of kv.list<any>({ prefix: ["app"] }, { limit: PENDING_MAX + 1 })) {
+    if (e.value?.status === "pending") n++;
+  }
+  await kv.set(["pendn"], n);
+  return n < PENDING_MAX;
+}
 // ---- how fast one account may play the house ----
 // Every wager is a KV read and a KV write, and every one of these routes
 // carries a session token — which means none of them was ever behind the
@@ -3571,14 +3631,27 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const application = clip(b.application, 500);
     if (!username || !application) return json({ error: "missing" }, 400);
     if (impersonatesTung(username)) return json({ error: "that name is his. pick another." }, 409);
+    if (!await pendingRoom()) {
+      return json({
+        error: "tung has more applications than he has read. try again later.",
+      }, 503);
+    }
     const lower = username.toLowerCase();
     const id = rid(8), token = rid(24);
     const app = { id, username, application, status: "pending", ts: Date.now() };
+    const pend = Number((await kv.get<number>(["pendn"])).value) || 0;
     const res = await kv.atomic()
+      // the name is still the only thing this commit may be refused over, so
+      // "username taken" stays the honest answer to a failure. The counter is
+      // deliberately NOT checked: two applications racing would both read the
+      // same number and one increment would be lost, which is drift, and drift
+      // is what pendingRoom() above is built to absorb. Guarding it would buy
+      // an exact count at the price of refusing somebody for no reason.
       .check({ key: ["name", lower], versionstamp: null })
       .set(["name", lower], id)
       .set(["app", id], app)
       .set(["tok", token], id)
+      .set(["pendn"], pend + 1)
       .commit();
     if (!res.ok) return json({ error: "username taken" }, 409);
     postWebhook(
@@ -4192,20 +4265,23 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/duel/list") {
     const u = await casUser(url.searchParams.get("token"));
     if (!u) return json({ error: "unauthorized" }, 401);
-    // The most expensive read in the casino: it walks up to two hundred duel
-    // records, and a finished one lingers a day so most of what it walks is
-    // already over and thrown away here. The lobby asks for it every 1.5
-    // seconds; this is several times that and nothing else should be asking at
-    // all. (What it does NOT fix is the cost of the walk itself — see the note
-    // on the open-table index in the README.)
+    // The lobby asks for this every 1.5 seconds, and this is several times that;
+    // nothing else should be asking at all.
     if (!allow("plist:" + u.id, 20, 10_000)) return tooMany(10);
     const open: unknown[] = [];
-    for await (const e of kv.list<Duel>({ prefix: ["duel"] }, { limit: 200 })) {
-      const d = e.value;
-      if (!d || d.state !== "open") continue;
-      // an open table past its hour is swept here rather than shown; the host
-      // gets their stake back without ever having to reopen the page
-      if (Date.now() > d.deadline) { await sweepDuel(e); continue; }
+    // The index, not the duels. This used to walk every duel record there was
+    // and throw away the finished ones — and a finished one lingers a day, so
+    // it was reading the day's history to show a handful of rows. It now reads
+    // the tables that are actually filling and nothing else.
+    for await (const e of kv.list<number>({ prefix: ["duelopen"] }, { limit: 200 })) {
+      const id = String(e.key[1]);
+      // loadDuel() sweeps an overdue table on the way past, so one that ran out
+      // its ten minutes comes back settled and is dropped by the line below —
+      // the host still gets their stake home without reopening the page.
+      const d = (await loadDuel(id)).value;
+      // the record is the truth and the index is a hint, so an entry that has
+      // stopped being true is swept here rather than believed
+      if (!d || d.settled || d.state !== "open") { await kv.delete(["duelopen", id]); continue; }
       open.push({
         id: d.id, game: d.game, gameName: DUEL_GAMES[d.game]?.name || d.game,
         bet: d.bet, seats: duelSeats(d), filled: seatedPlayers(d).length,
@@ -4283,12 +4359,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       deadline: now + DUEL_OPEN_MS, round: 1, settled: false, winner: null, paid: [], reason: "", rounds: [],
       ...(game === "chess" ? { tc: chessTc(b.tc) } : {}),
     };
-    const res = await kv.atomic()
-      .check(lock).check(cur)
-      .set(["duelof", u.id], id, { expireIn: DUEL_TTL })
-      .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
-      .set(["duel", id], duel, { expireIn: DUEL_TTL })
-      .commit();
+    const res = await duelIndex(
+      kv.atomic()
+        .check(lock).check(cur)
+        .set(["duelof", u.id], id, { expireIn: DUEL_TTL })
+        .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
+        .set(["duel", id], duel, { expireIn: DUEL_TTL }),
+      duel,
+    ).commit();
     if (!res.ok) return json({ error: "busy" }, 409);
     return json({ ok: true, duel: duelView(duel, u.id), balance: Math.max(0, nb) });
   }
@@ -4352,10 +4430,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         return json({ error: "nobody has sat down yet", duel: duelView(d, u.id) }, 409);
       }
       const next: Duel = { ...d, state: "confirm", deadline: Date.now() + DUEL_CONFIRM_MS };
-      const res = await kv.atomic()
-        .check(entry)
-        .set(["duel", d.id], next, { expireIn: DUEL_TTL })
-        .commit();
+      const res = await duelIndex(
+        kv.atomic()
+          .check(entry)
+          .set(["duel", d.id], next, { expireIn: DUEL_TTL }),
+        next,
+      ).commit();
       if (res.ok) return json({ ok: true, duel: duelView(next, u.id) });
     }
     return json({ error: "busy" }, 409);
@@ -4399,12 +4479,14 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       };
       // seat, stake and lock in one commit: two people racing for the last
       // seat means exactly one debit, and the loser is told the table is taken.
-      const res = await kv.atomic()
-        .check(entry).check(lock).check(cur)
-        .set(["duelof", u.id], d.id, { expireIn: DUEL_TTL })
-        .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
-        .set(["duel", d.id], next, { expireIn: DUEL_TTL })
-        .commit();
+      const res = await duelIndex(
+        kv.atomic()
+          .check(entry).check(lock).check(cur)
+          .set(["duelof", u.id], d.id, { expireIn: DUEL_TTL })
+          .set(["cas", u.id], { ...rec, bal: Math.max(0, nb) }, { expireIn: CAS_TTL })
+          .set(["duel", d.id], next, { expireIn: DUEL_TTL }),
+        next,
+      ).commit();
       if (res.ok) return json({ ok: true, duel: duelView(next, u.id), balance: Math.max(0, nb) });
     }
     return json({ error: "taken" }, 409);
@@ -4448,10 +4530,12 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // no lock and no debit for the chair he is in — there is no account
       // behind it, and the same commit guard still stops a player racing him
       // for the last seat, because it checks the duel we read
-      const res = await kv.atomic()
-        .check(entry)
-        .set(["duel", d.id], next, { expireIn: DUEL_TTL })
-        .commit();
+      const res = await duelIndex(
+        kv.atomic()
+          .check(entry)
+          .set(["duel", d.id], next, { expireIn: DUEL_TTL }),
+        next,
+      ).commit();
       if (res.ok) return json({ ok: true, duel: duelView(next, u.id), balance: round2((await getCas(u.id)).bal) });
     }
     return json({ error: "busy" }, 409);
@@ -5613,6 +5697,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
         n++;
       }
     }
+    // the pile is gone, so the number of it goes too — it would correct itself
+    // on the next application either way, but not saying so would be untidy
+    await kv.delete(["pendn"]);
     return json({ ok: true, cleared: n });
   }
 
