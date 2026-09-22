@@ -772,8 +772,6 @@
       '.pkshowcards .pcard{width:26px;height:36px}' +
       '.pkshowcards .pcface{font-size:11px;border-radius:5px}' +
       '.pkshowhand{flex:1;text-align:right;font-size:11px;color:#c8823c}' +
-      '.pklog{width:100%;max-width:420px;display:flex;flex-direction:column;gap:2px}' +
-      '.pklogline{font-size:11px;color:#8a6a3a;line-height:1.5}' +
       '.pitmoves{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}' +
       '.pitmove{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-width:104px;padding:16px 14px;' +
       'background:linear-gradient(155deg,#3a2410,#241505);border:1px solid #4a3316;border-radius:14px;color:#f2c063;font-weight:800;' +
@@ -917,19 +915,71 @@
       'background:#160d04;color:#f5efe0;font-family:inherit;font-size:14px}' +
       '.talkdrawer{flex-basis:100%;margin-top:8px}' +
       /* ---- the same box, on a poker table ----
-         Floated over the felt rather than laid out under it. This page is
-         already taller than a laptop window — a chat log in the column would
-         push the action bar off the bottom of it, which is the exact thing the
-         raise panel had to be rebuilt to stop doing. Shut it costs no height
-         at all; open, nothing on the table moves. */
-      '.pktalkbtn{margin-left:auto;padding:5px 10px;font-size:13px;line-height:1.3;flex:0 0 auto}' +
+         A round button in the corner of the screen, and the log above it
+         when it is open. It used to sit in the header, where every button is
+         a wide one, so it drew as a long bar beside the hand number. Fixed,
+         so it never takes a row, and the log never takes one either. */
+      '.pkdock{position:fixed;right:16px;bottom:16px;z-index:70;display:flex;flex-direction:column;' +
+      'align-items:flex-end;gap:8px;pointer-events:none}' +
+      '.pkdock>*{pointer-events:auto}' +
+      '.pktalkbtn{position:relative;width:46px;height:46px;min-width:46px;padding:0;margin:0;border-radius:50%;' +
+      'border:1px solid #7a5a1a;background:#241505;color:#f2c063;font-size:18px;line-height:1;cursor:pointer;' +
+      'display:flex;align-items:center;justify-content:center;box-shadow:0 8px 22px #000a;flex:0 0 auto}' +
+      '.pktalkbtn:hover{border-color:#c8823c;background:#3a2410}' +
       '.pktalkbtn.on{background:#c8823c;border-color:#c8823c;color:#1d1206}' +
       '.pktalkbtn.hot{border-color:#f2c063;color:#f2c063}' +
-      '.pktalk{position:fixed;right:16px;bottom:16px;z-index:60;' +
-      'width:min(340px,calc(100vw - 32px));background:#1d1206;border:1px solid #3a2410;' +
+      '.pktalkface{pointer-events:none;line-height:1}' +
+      '.pkbadge{display:none;position:absolute;top:-3px;right:-3px;min-width:16px;height:16px;padding:0 4px;' +
+      'box-sizing:border-box;border-radius:999px;background:#f2c063;color:#1d1206;font-size:10px;font-weight:800;' +
+      'line-height:16px;text-align:center}' +
+      '.pktalk{position:relative;width:min(320px,calc(100vw - 32px));background:#1d1206;border:1px solid #3a2410;' +
       'border-radius:12px;padding:10px;box-shadow:0 12px 34px #000a}' +
       '.pktalk .talkbox{max-width:none}' +
-      '@media (max-width:620px){.pktalk{left:16px;right:16px;width:auto}}' +
+      '@media (max-width:620px){.pkdock{left:16px;right:16px}.pktalk{width:auto;align-self:stretch}}' +
+      /* a live table fits the window it is open in. Below the poker breakpoint
+         the column still scrolls, because a phone has no width to give the
+         oval. From there up, the felt takes whatever height the buttons leave
+         and the page itself does not move. */
+      '.pkfit{width:100%}' +
+      '@media (min-width:700px){' +
+      '#casscreen.pkpage{position:relative;overflow:hidden;padding:8px 16px 12px;gap:0;min-height:0}' +
+      '#casscreen.pkpage .caswrap{flex:1;min-height:0;max-width:1120px;display:grid;' +
+      'grid-template-columns:auto auto minmax(0,1fr) auto;' +
+      'grid-template-rows:auto minmax(0,1fr) auto;' +
+      'grid-template-areas:"back title pot clock" "body body body body" "note note note note";' +
+      'align-items:center;column-gap:12px;row-gap:6px}' +
+      '#casscreen.pkpage .casback{grid-area:back;padding:4px 10px;font-size:12px}' +
+      '#casscreen.pkpage .casview{display:contents}' +
+      '#casscreen.pkpage .casview h3{grid-area:title;font-size:15px;white-space:nowrap}' +
+      '#casscreen.pkpage .pitpot{grid-area:pot;font-size:12px;line-height:1.2;overflow:hidden;' +
+      'text-overflow:ellipsis;white-space:nowrap}' +
+      '#casscreen.pkpage .pitclock{grid-area:clock;font-size:22px;min-height:0;line-height:1;text-align:right}' +
+      '#casscreen.pkpage .pitclock:empty{display:none}' +
+      '#casscreen.pkpage .casres{grid-area:note}' +
+      '#casscreen.pkpage .casres:empty{display:none}' +
+      '#casscreen.pkpage .pitbody{grid-area:body;min-height:0;width:100%;gap:8px;align-self:stretch;overflow:hidden}' +
+      '#casscreen.pkpage .pkhead{flex-wrap:nowrap;gap:8px}' +
+      '#casscreen.pkpage .pitbody .pitsub{max-width:none;line-height:1.3}' +
+      '#casscreen.pkpage .pkfit{flex:1 1 auto;min-height:0;width:100%;display:flex;flex-direction:column;' +
+      'justify-content:flex-end;align-items:center;gap:8px;container-type:size}' +
+      '#casscreen.pkpage .pkstage{container-type:size;margin:0;max-width:none;aspect-ratio:auto;' +
+      'width:min(980px,calc(100cqw - 120px),calc((100cqh - 40px) / 0.56));' +
+      'height:min(560px,calc(100cqh - 40px),calc((100cqw - 120px) * 0.56))}' +
+      '#casscreen.pkpage .pkboard .pcard,#casscreen.pkpage .pkslot{width:clamp(30px,5.2cqw,46px);height:clamp(42px,7.3cqw,64px)}' +
+      '#casscreen.pkpage .pkboard .pcface{font-size:clamp(12px,2.1cqw,19px)}' +
+      '#casscreen.pkpage .pkpot{font-size:clamp(16px,3cqw,26px)}' +
+      '#casscreen.pkpage .pkseat{width:clamp(78px,13cqw,108px)}' +
+      '#casscreen.pkpage .pkseat.you{width:clamp(96px,16cqw,132px)}' +
+      '#casscreen.pkpage .pkwho{max-width:9cqw}' +
+      '#casscreen.pkpage .pkseat.you .pkwho{max-width:12cqw}' +
+      '#casscreen.pkpage .pkhole .pcard{width:clamp(26px,4cqw,34px);height:clamp(36px,5.6cqw,48px)}' +
+      '#casscreen.pkpage .pkhole .pcface{font-size:clamp(11px,1.6cqw,14px)}' +
+      '#casscreen.pkpage .pkseat.you .pkhole .pcard{width:clamp(34px,5.4cqw,48px);height:clamp(48px,7.6cqw,67px)}' +
+      '#casscreen.pkpage .pkseat.you .pkhole .pcface{font-size:clamp(14px,2.2cqw,20px)}' +
+      '#casscreen.pkpage .pkbar{width:min(680px,calc(100% - 108px));max-width:680px}' +
+      '#casscreen.pkpage .pkbet{width:min(780px,calc(100% - 80px));max-width:780px}' +
+      '#casscreen.pkpage .pkact{min-height:46px;padding:6px 4px}' +
+      '}' +
       /* tung at a table is marked the way he is marked in the chat: gold, and
          not part of whatever the skin is doing */
       '.pitvs .pn.tung{color:#f2c063}' +
@@ -1102,7 +1152,7 @@
       '& .pkdealer{background:{lineHot};color:{solidInk}}' +
       '& .pkblind,& .pkstack{color:{heading}}' +
       '& .pkpot{color:{text}}' +
-      '& .pkhead,& .pklogline{color:{muted}}' +
+      '& .pkhead{color:{muted}}' +
       '& .pkup,& .pktag,& .pkshowhand{color:{textDim}}' +
       '& .pkact,& .pkbetval{background:{sunk};border-color:{line}}' +
       '& .pkactlab{color:{text}}' + '& .pkactkey{color:{muted}}' +
@@ -1177,6 +1227,10 @@
       '& .pcell.gem span{color:{good}}' +
       '& .tklog{background:{inset};border-color:{line}}' +
       '& .pktalk{background:{raised};border-color:{line}}' +
+      '& .pktalkbtn{background:{raised};border-color:{line};color:{heading}}' +
+      '& .pktalkbtn.on{background:{lineHot};border-color:{lineHot};color:{solidInk}}' +
+      '& .pktalkbtn.hot{border-color:{heading};color:{heading}}' +
+      '& .pkbadge{background:{heading};color:{bg}}' +
       '& .tkline b{color:{muted}}' +
       '& .tkin{background:{inset};border-color:{line};color:{text}}' +
       '& .roundbar .cbtn.sec.hot{background:{lineHot};color:{bg}}' +

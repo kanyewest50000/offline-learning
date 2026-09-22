@@ -89,6 +89,22 @@ must(/go\.scrollIntoView\(\{block:"nearest"\}\)/.test(casino),
 must(/PIT\.pkRaise=false;PIT\.pkShow=false;\}/.test(casino),
   "and the flag comes down with the panel when it is no longer your turn");
 
+// ---------------------------------------------------------------------------
+// the table itself fits a desktop window, and the two things that were making
+// it look like a form do not come back
+must(!casino.includes("pklog"), "the action log is not drawn under the table");
+must(!css.includes(".pklog{"), "and its styles are gone with it");
+must(!casino.includes("cbtn sec pktalkbtn"),
+  "table talk is not a wide header button");
+must(/el\("div","pkdock"\)/.test(casino), "table talk lives in a corner dock");
+must(/el\("button","pktalkbtn"\)/.test(casino), "the talk control is its own button, not a .cbtn");
+must(/screen\.classList\.add\("pkpage"\)/.test(casino),
+  "a live table marks the screen so the felt can take the height that is left");
+must(/#casscreen\.pkpage\{[^}]*overflow:hidden/.test(css),
+  "on a desktop window the live table does not scroll");
+must(/\.pkdock\{[^}]*position:fixed/.test(css),
+  "the talk button is fixed to the screen, not laid out beside the hand number");
+
 console.log(
   "poker raise: above the poker breakpoint the panel lays out across the screen instead of down " +
     "it — amount and minimum left, shortcuts and slider middle, BACK and BET full-height right — " +

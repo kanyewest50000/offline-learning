@@ -414,8 +414,12 @@
       ROUND.bar._talkBtn.className="cbtn sec"+(TALK.unread?" hot":"");
     }
     if(PIT.pkTalkBtn&&PIT.pkTalkBtn.isConnected){
-      PIT.pkTalkBtn.textContent=TALK.unread?("\uD83D\uDCAC "+TALK.unread):"\uD83D\uDCAC";
-      PIT.pkTalkBtn.className="cbtn sec pktalkbtn"+(TALK.unread?" hot":"")+(TALK.open?" on":"");
+      var badge=PIT.pkTalkBtn.querySelector(".pkbadge");
+      if(badge){
+        badge.textContent=TALK.unread?String(TALK.unread):"";
+        badge.style.display=TALK.unread?"block":"none";
+      }
+      PIT.pkTalkBtn.className="pktalkbtn"+(TALK.unread?" hot":"")+(TALK.open?" on":"");
     }
   }
   /* one builder, two homes: the table's own page and a drawer under the round
@@ -931,7 +935,7 @@
   /* ---------- shared scaffolding ---------- */
   /* every screen lives in one centred column so nothing pins to the left edge
      or sprawls across a wide desktop window */
-  function column(){screen.innerHTML="";var w=el("div","caswrap");screen.appendChild(w);return w;}
+  function column(){screen.innerHTML="";screen.classList.remove("pkpage");var w=el("div","caswrap");screen.appendChild(w);return w;}
   function mount(title,icon,paced){
     VIEW="game";
     var w=column();
@@ -2698,16 +2702,16 @@
     }else{PIT.pkUp=null;PIT.pkUpAt=0;}
     head.appendChild(el("span","pkhand","hand "+p.hand));
     /* ---- the table talk ----
-       The same box Competitive Gambling has, and for the same reason: the
-       people at this table are sat together for an hour, not three minutes.
-       It hangs off the head as a drawer rather than sitting in the column,
-       because this page is already taller than a laptop window and a chat log
-       in the flow would push the action bar off the bottom of it — the thing
-       the last change to this file was about. Shut, it costs nothing; open, it
-       floats over the felt and the buttons stay exactly where they were.
-       The badge is free: the count of what has been said rides on the duel
-       record the poll is reading anyway. */
-    var tk=el("button","cbtn sec pktalkbtn","\uD83D\uDCAC");tk.type="button";tk.title="table talk";
+       The same box Competitive Gambling has. It used to be a button in the
+       header, and every button in this column is a wide one, so it came out
+       as a long bar beside the hand number. It belongs in the corner of the
+       screen: a round button, the log above it when it is open, and nothing
+       in the column either way. The count sits on the button rather than in
+       its label, or the circle stops being a circle the moment somebody talks. */
+    var dock=el("div","pkdock");
+    var tk=el("button","pktalkbtn");tk.type="button";tk.title="table talk";
+    tk.appendChild(el("span","pktalkface","\uD83D\uDCAC"));
+    tk.appendChild(el("span","pkbadge",""));
     var draw=el("div","pktalk");draw.style.display=TALK.open?"block":"none";
     if(TALK.open){draw.appendChild(talkBox());}
     tk.onclick=function(){
@@ -2719,11 +2723,11 @@
       }else{draw.innerHTML="";TALK.log=null;TALK.input=null;}
       talkPaint();
     };
-    head.appendChild(tk);
+    dock.appendChild(draw);
+    dock.appendChild(tk);
     PIT.pkTalkBtn=tk;
-    talkPaint();   /* the badge is whatever the last poll said, not blank */
-    body.appendChild(head);
-    body.appendChild(draw);
+    talkPaint();
+    body.appendChild(dock);
 
     /* ---- the table ----
        An oval of felt with the seats set around its rim, which is what a poker
@@ -2832,7 +2836,13 @@
         stage.appendChild(chip);
       }
     });
-    body.appendChild(stage);
+    /* the blinds sit on the felt, and the felt sits on the buttons. The spare
+       height of a tall window stays above that group, so the three of them
+       never drift apart. */
+    var fit=el("div","pkfit");
+    fit.appendChild(head);
+    fit.appendChild(stage);
+    body.appendChild(fit);
 
     /* what just happened, while it is still up */
     if(p.showing){
@@ -2895,8 +2905,8 @@
         bar.appendChild(act("FOLD","F","fold",function(){send(bar,"fold");},true));
         body.appendChild(bar);
         body.appendChild(el("p","pitsub",p.toCall>0
-          ?("there is "+chips(p.toCall)+" to you. say nothing for long enough and it folds for you.")
-          :"it is on you. say nothing for long enough and it checks for you."));
+          ?(chips(p.toCall)+" to call. say nothing and it folds.")
+          :"say nothing and it checks."));
         PIT.pkKeys=function(ev){
           if(ev.target&&/^(INPUT|TEXTAREA)$/.test(ev.target.tagName))return;
           var k=String(ev.key||"").toLowerCase();
@@ -3083,12 +3093,6 @@
        so a stray keypress on the lobby cannot fold a hand. */
     if(PIT.pkKeyBound){document.removeEventListener("keydown",PIT.pkKeyBound);PIT.pkKeyBound=null;}
     if(PIT.pkKeys){PIT.pkKeyBound=PIT.pkKeys;document.addEventListener("keydown",PIT.pkKeyBound);}
-
-    if(p.log&&p.log.length){
-      var lg=el("div","pklog");
-      p.log.slice(-6).forEach(function(line){lg.appendChild(el("div","pklogline",line));});
-      body.appendChild(lg);
-    }
   }
 
   /* ---- the pit lobby: who is waiting, and a form to wait yourself ---- */
@@ -3327,6 +3331,10 @@
     PIT.shape=shape;PIT.frame=frame;
     if(PIT.tick){clearInterval(PIT.tick);PIT.tick=null;}
     var v=mount(cfg.name,gameIcon("pit-"+d.game));VIEW="pit";paintRound();
+    /* a live poker table is one screen: the felt, the buttons, and no log
+       under them. The class is what lets the stylesheet size the oval to
+       whatever height is actually left. */
+    if(d.game==="poker"&&d.state==="live")screen.classList.add("pkpage");
     var back=v.parentNode.querySelector(".casback");
     /* mid-round the casino floor IS the game, so the way out of THIS page is
        the floor rather than the pit's own list of tables. Given to paintBack()
