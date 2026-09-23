@@ -148,7 +148,7 @@
       <p class="sub">
         two opponents live here. <b>tung's own head</b> is a few hundred lines of search that
         ships with the page and starts instantly. <b>stockfish</b> is the real engine, about
-        350KB of it, fetched once from this site and then cached — stronger than anybody
+        370KB of it, fetched once from this site and then cached — stronger than anybody
         reading this.
       </p>
       <div class="ctlrow">
@@ -555,16 +555,25 @@
 
   function botMove(){
     if (!G || G.over || !bot) return;
+    /* never on your move. Every call here is on a timer, and a timer set by a
+       game you have since walked away from still fires — the one that has
+       him open as white, say, going off in the new game where white is you */
+    if (R.chessParse(G.fen).w === (G.you === "w")) return;
     /* What he is being asked about, so that what comes back can be checked
        against it. He thinks for the better part of a second, and a take-back
        inside that second leaves his answer addressed to a position that is no
        longer on the board — played anyway, it moves whatever piece happens to
        be standing on those two squares now, on a turn that is not even his. */
-    var asked = G.turn, fen = G.fen;
+    /* and WHICH game he was asked about: a new game starts on the same
+       position with the same count, so an answer still on its way from the
+       last one would otherwise be played in this one — a move made for you,
+       in your colour, before you had touched a piece */
+    var game = G, asked = G.turn, fen = G.fen;
     thinkEl.textContent = "thinking…";
     bot.pick(fen, function(uci){
-      if (!G || G.over || G.turn !== asked || G.fen !== fen) return;
-      thinkEl.textContent = "";
+      if (G !== game || G.over || G.turn !== asked || G.fen !== fen) return;
+      /* a note that has to stay (stockfish fell back) outlives every move */
+      thinkEl.textContent = G.note || "";
       if (!uci){ G.over = true; G.overText = "he has resigned. take it."; paint(); return; }
       play(uci);
     });
@@ -583,7 +592,16 @@
     topName.textContent = opp === "hard" ? "stockfish" : "tung's own head";
     if (bot && bot.stop) bot.stop();
     thinkEl.textContent = opp === "hard" ? "waking stockfish…" : "";
-    bot = window.TungEngine.make(opp, function(msg){ thinkEl.textContent = msg || ""; });
+    /* If stockfish cannot run, tung's own head plays instead, and the board
+       says so where it stays said: the name over the board changes to who is
+       actually playing, and the reason is kept rather than wiped by the next
+       move. It used to keep calling itself stockfish the whole game. */
+    var game = G;
+    bot = window.TungEngine.make(opp, function(msg, fellBack){
+      if (G !== game) return;
+      if (fellBack){ topName.textContent = "tung's own head"; game.note = msg || ""; }
+      thinkEl.textContent = msg || "";
+    });
     paint();
     if (you === "b") setTimeout(botMove, 400);
   }

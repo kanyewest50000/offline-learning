@@ -567,6 +567,9 @@
   }
 
   window.__casinoBack=function(){clearTimer();hideWin();};
+  /* the page's lockout: a timeout or a ban stops every table poll at once,
+     the round's included, which otherwise follows you around the floor */
+  window.__casinoHalt=function(){clearTimer();hideWin();roundStop();};
   window.__casinoShop=function(){clearTimer();hideWin();viewShop();};
   window.__casinoShrine=function(){clearTimer();hideWin();viewShrine();};
   window.__casinoBank=function(){clearTimer();hideWin();viewBank();};
@@ -638,6 +641,9 @@
       var st=s&&s.status;
       if(st==="approved"){
         if(s.blocked){
+          /* a timeout or a ban is the whole shrine's, not the tables': the
+             page puts its one screen over everything */
+          if(window.__shrineLock){window.__shrineLock(s);return;}
           gate("you are blocked",[
             s.reason==="banned"
               ? "tung has barred you from the shrine. the tables are shut to you."

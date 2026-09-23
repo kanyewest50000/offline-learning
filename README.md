@@ -607,10 +607,29 @@ accepting are one action and not two.
 of a person — and it never touches the backend at all. No table, no escrow, no
 polling, nothing for anybody to pay for. Two opponents: *tung's own head* is a
 few hundred lines of alpha-beta with piece-square tables that ship with the page
-and start instantly, and *stockfish* is the real engine, 350KB of WebAssembly
-served from this site as a static file and run in a Worker. If the wasm cannot
-be fetched — a network that blocks it, a school proxy — the game falls back to
-tung's own head at its strongest and says so rather than breaking.
+and start instantly, and *stockfish* is the real engine — Stockfish 10, about
+370KB of WebAssembly served from this site as a static file and run in a
+Worker. If it cannot run — a network that blocks the wasm, a school proxy — the
+game falls back to tung's own head at its strongest, the name over the board
+changes to say so, and the reason stays on screen for the rest of the game.
+
+It has to be the **single-threaded** build (`games/tung/stockfish/README.md`).
+The one this shipped with first was the multi-threaded build, which needs
+`SharedArrayBuffer`, and browsers only allow that on a page served with
+cross-origin isolation headers, which GitHub Pages does not send and a tab the
+shrine writes a game into never has. So it never started: every "stockfish"
+game waited out the ten-second timeout and was quietly played by tung's own
+head under stockfish's name. The single-threaded build needs nothing from the
+host and answers in a fraction of a second. When the shrine is embedded on
+another site, the game tab belongs to that site and a worker cannot be started
+straight from this one, so the page starts a one-line worker of its own that
+pulls the engine in by its full address. Either way nothing goes near the
+backend, and `scripts/test-chess.ts` checks the build and that it never does.
+
+Two things can no longer move a piece for you: an answer still on its way from
+a game you have left is only ever played in the game it was asked about, and
+the computer never moves on your turn, whichever timer woke it — the one that
+has him open as white used to go off in the next game, where white was you.
 
 **Take it back** goes back until it is *your* move, however many plies that is,
 rather than counting two off the end: one back from a mate he has just delivered
@@ -1124,7 +1143,19 @@ connected client is holding, and winding it back would make the next messages
 reuse numbers those clients have already passed, so they would never arrive.
 
 There are two bans on the **Manage users** pane and they are not the same ban.
-**ban** shuts the whole shrine: chat, casino, the pit, the veil, everything.
+**ban** shuts the whole shrine: chat, casino, the pit, the veil, the catalog,
+tung's originals, everything — and so does a **timeout**, until it runs out.
+The page shows it as one screen over all of it, wherever the member is when it
+lands: "you are timed out" with a countdown (or "you are banned"). It used to be
+the room's own ban screen, which only the Shrine tile ever showed, so "back"
+walked straight past it into everything else. Whichever of the page's existing
+requests hears it first — `/status` on open, the room's poll that runs under
+every view, or the casino being refused — puts the screen up; it stops the
+room, the conversations and the casino behind it, closes every game tab the
+page opened, and refuses every view while it is up. A timeout counts down,
+asks once when it runs out, and is re-checked every five seconds so one lifted
+early from here is picked up too; nothing on the server was added for any of
+it. `scripts/test-lockout.ts`.
 **ban from chat** shuts the room and only the room — they cannot read a line and
 cannot post one, and their DMs go with it in both directions, while the casino,
 the pit, the catalog, the shop, tips and the veil keep working exactly as

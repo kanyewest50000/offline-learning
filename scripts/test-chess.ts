@@ -512,10 +512,26 @@ must(Math.abs((winAfter + loseAfter) - (winBefore + loseBefore)) < 1e-9,
   // it never reaches for the network — that is the whole point of it being here
   must(!/fetch\(|XMLHttpRequest|SHRINE_API/.test(engineSrc),
     "the computer opponent must not talk to the backend");
-  must(engineSrc.includes('new Worker("stockfish/stockfish.js")'),
+  must(engineSrc.includes('new URL("stockfish/stockfish.js", base).href') && engineSrc.includes("return new Worker(src);"),
     "stockfish must be loaded from this host as a static file");
   must(/playing tung's own head instead/.test(engineSrc),
     "and it must fall back when stockfish cannot be fetched at all");
+  // The build has to be one a static host can run. The threaded one needs
+  // SharedArrayBuffer, which only a cross-origin-isolated page gets, so it
+  // never started and every "stockfish" game was tung's own head in disguise.
+  const sfDir = `${ROOT}/games/tung/stockfish`;
+  const sfJs = await Deno.readTextFile(`${sfDir}/stockfish.js`);
+  must(!/SharedArrayBuffer/.test(sfJs), "the vendored stockfish must be the single-threaded build");
+  for (const f of ["stockfish.wasm", "stockfish.asm.js", "Copying.txt"]) {
+    must((await Deno.stat(`${sfDir}/${f}`).catch(() => null))?.isFile, "stockfish/" + f + " must ship with it");
+  }
+  must(!(await Deno.stat(`${sfDir}/stockfish.worker.js`).catch(() => null)), "the threaded build's worker must be gone");
+  // embedded on another site, the worker cannot come straight from here
+  must(/new Blob\(\["importScripts\(" \+ JSON\.stringify\(src\) \+ "\);"\]/.test(engineSrc) &&
+    engineSrc.includes('"#" + new URL("stockfish/stockfish.wasm", base).href'),
+    "stockfish must still start when the page is on another host");
+  // and when it falls back, the page is told who is really playing
+  must(engineSrc.includes("playing tung's own head instead.\", true);"), "the fallback must say it fell back");
   // A search runs for the better part of a second and the board can move
   // underneath it — a take-back is exactly that. Two `go`s outstanding at once
   // and the bestmove that comes back answers whichever position it feels like,
@@ -534,6 +550,16 @@ must(Math.abs((winAfter + loseAfter) - (winBefore + loseBefore)) < 1e-9,
     "it must go back until it is your turn");
   must(/if \(!yours\(\)\) setTimeout\(botMove/.test(page),
     "and ask him to play again if there is no game left to go back through");
+  // An answer, or a timer, left over from a game you walked away from must
+  // not move a piece in the next one — least of all yours.
+  must(page.includes("if (G !== game || G.over || G.turn !== asked || G.fen !== fen) return;"),
+    "an answer is only ever played in the game it was asked about");
+  must(page.includes('if (R.chessParse(G.fen).w === (G.you === "w")) return;'),
+    "and he never moves on your turn, whatever timer woke him");
+  // if stockfish falls back, the name over the board says who is really playing
+  must(/if \(fellBack\)\{ topName\.textContent = "tung's own head"; game\.note = msg \|\| ""; \}/.test(page),
+    "a fallback must rename the opponent");
+  must(page.includes('thinkEl.textContent = G.note || "";'), "and keep the reason on screen past the next move");
 
   // The move list must not be able to move the board. In normal flow it added
   // its height to the row the board sits in, the centred game grew upward, and

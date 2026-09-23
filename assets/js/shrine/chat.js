@@ -30,6 +30,9 @@
        flag is never on anything the room can see, so a moderator looks exactly
        like everybody else to everybody else. */
     'var IS_MOD=false,APPROVED=false,OPENED=false;' +
+    /* LOCKED: a timeout or a ban, as {reason, until}, or null. PLAYS: the tabs
+       this page opened, so a lockout can close what is already running. */
+    'var LOCKED=null,lockTick=null,PLAYS=[];' +
     'if(typeof SHRINE_BOOT_TOKEN==="string"&&SHRINE_BOOT_TOKEN){try{if(!localStorage.getItem(TKEY))localStorage.setItem(TKEY,SHRINE_BOOT_TOKEN);}catch(e){}}' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
@@ -42,6 +45,11 @@
     'var banEl=document.getElementById("banView");' +
     'var banTitle=document.getElementById("banTitle");' +
     'var banUntil=document.getElementById("banUntil");' +
+    'var lockEl=document.getElementById("lockout");' +
+    'var lockTitleEl=document.getElementById("lockTitle");' +
+    'var lockWhyEl=document.getElementById("lockWhy");' +
+    'var lockLeftEl=document.getElementById("lockLeft");' +
+    'var lockUntilEl=document.getElementById("lockUntil");' +
     'var applyForm=document.getElementById("applyForm");' +
     'var gu=document.getElementById("gu");' +
     'var ga=document.getElementById("ga");' +
@@ -116,7 +124,7 @@
     /* ---- the chooser + tung curated catalog ---- */
     /* the main header swaps identity with the view: shrine title everywhere, a
        full casino header (back / title / balance / shop) once inside the casino. */
-    'function topShow(v){chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";veilEl.style.display=v==="veil"?"flex":"none";settingsEl.style.display=v==="settings"?"flex":"none";' +
+    'function topShow(v){if(LOCKED)v="shrine";chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";veilEl.style.display=v==="veil"?"flex":"none";settingsEl.style.display=v==="settings"?"flex":"none";' +
     /* casino is a chooser destination; the header swaps identity once you are in it */
     'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";if(v!=="originals")hideOrigPlay();}' +
     /* the holding page wears one of two faces: the veil is shut, or the veil is
@@ -267,8 +275,10 @@
     '<\\/script></body></html>`;' +
     'w.document.open();w.document.write(doc);w.document.close();}' +
     'function openPlay(g){' +
+    'if(LOCKED)return;' +
     'var w=window.open("about:blank","_blank");' +
     'if(!w){alert(' + JSON.stringify(LBL_POPUP) + ');return;}' +
+    'PLAYS=PLAYS.filter(function(x){try{return !x.closed;}catch(e){return false;}});PLAYS.push(w);' +
     'var ct=cloakTitle(),cf=cloakFav();' +
     'w.document.open();w.document.write(playShell(ct,cf,"loading\\u2026"));w.document.close();' +
     'var url=gameUrl(g.u);' +
@@ -466,7 +476,55 @@
        both re-check /status so access comes back on its own — the timeout when
        its clock passes, the chat ban when tung lifts it. */
     'function pageHidden(){return !!document.hidden;}' +
-    'function showBan(info){polling=false;var why=(info&&info.reason)||"";var isTo=why==="timeout";var isChat=why==="chatban";' +
+    /* ---- the lockout ----
+       A timeout or a full ban shuts the whole shrine, not just the room: the
+       chooser, the catalog, tung's originals, the casino and the veil with it.
+       It used to be the room's ban screen, which only the Shrine tile ever
+       showed, so "back" walked straight past it and every other tile found out
+       on its own when clicked, or never. Now whichever part of the page hears
+       it first — the /status check on open, the room's poll that runs under
+       every view, or the casino being refused — puts ONE screen over all of
+       it, stops everything behind it, and closes the game tabs this page
+       opened. Nothing new is asked of the server: those three were already
+       asking. A chat ban is still the room's own screen; that one is meant to
+       be narrow. */
+    'function lockFmt(ms){var s=Math.max(0,Math.ceil(ms/1000)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;' +
+    'if(d)return d+"d "+h+"h";if(h)return h+"h "+m+"m";if(m)return m+"m "+(x<10?"0":"")+x+"s";return x+"s";}' +
+    'function lockPaint(){if(!LOCKED||!lockEl)return;var to=LOCKED.reason!=="banned",left=LOCKED.until-Date.now();' +
+    'lockTitleEl.textContent=to?"you are timed out":"you are banned";' +
+    'lockWhyEl.textContent=to?"the whole shrine is shut to you until it lifts — the chat, the casino, the games and tung’s originals.":"tung has barred you from the shrine — the chat, the casino, the games and tung’s originals.";' +
+    'lockLeftEl.textContent=to&&LOCKED.until?(left>0?"lifts in "+lockFmt(left):"lifting…"):"";' +
+    'lockUntilEl.textContent=to&&LOCKED.until?"until "+new Date(LOCKED.until).toLocaleString():"";}' +
+    'function closePlays(){for(var i=0;i<PLAYS.length;i++){try{if(PLAYS[i]&&!PLAYS[i].closed)PLAYS[i].close();}catch(e){}}PLAYS=[];}' +
+    'function lockOut(info){' +
+    'var first=!LOCKED,u=Number(info&&info.until)||0;' +
+    /* `asked` is whether the clock reaching zero has already asked once for
+       this deadline, so a clock a little ahead of the server's asks once and
+       then leaves it to the five-second check, rather than asking every second */
+    'LOCKED={reason:info&&info.reason==="banned"?"banned":"timeout",until:u,asked:!!(LOCKED&&LOCKED.until===u&&LOCKED.asked)};' +
+    'if(first){' +
+    /* everything behind it stops, and nothing it could still reach stays open */
+    'polling=false;if(pollT){clearTimeout(pollT);pollT=null;}' +
+    'if(dmListT){clearInterval(dmListT);dmListT=null;}dmStop();' +
+    'try{if(window.__casinoHalt)window.__casinoHalt();}catch(e){}' +
+    'closePlays();' +
+    'if(profEl)profEl.style.display="none";if(tipEl)tipEl.style.display="none";if(keyEl)keyEl.style.display="none";' +
+    'topShow("shrine");' +
+    'document.body.classList.add("locked");if(lockEl)lockEl.style.display="flex";}' +
+    'lockPaint();' +
+    'if(lockTick){clearInterval(lockTick);lockTick=null;}' +
+    /* the clock runs down on screen, and when it reaches zero the shrine is
+       asked straight away rather than at the next five-second mark */
+    'if(LOCKED.reason!=="banned"&&LOCKED.until)lockTick=setInterval(function(){if(!LOCKED)return;lockPaint();if(!LOCKED.asked&&Date.now()>=LOCKED.until){LOCKED.asked=true;refreshGate();}},1000);' +
+    /* tung can also lift a timeout early, so it is re-asked on the clock the
+       room's ban screen always used; a ban never was, and is not now */
+    'if(statusT){clearTimeout(statusT);statusT=null;}' +
+    'if(LOCKED.reason!=="banned"&&!pageHidden())statusT=setTimeout(refreshGate,5000);}' +
+    'function unlock(){if(!LOCKED)return;LOCKED=null;if(lockTick){clearInterval(lockTick);lockTick=null;}' +
+    'document.body.classList.remove("locked");if(lockEl)lockEl.style.display="none";}' +
+    /* the casino hears it too, when the tables refuse it before the room does */
+    'window.__shrineLock=function(s){if(s&&(s.reason==="timeout"||s.reason==="banned"))lockOut(s);};' +
+    'function showBan(info){if(info&&(info.reason==="timeout"||info.reason==="banned")){lockOut(info);return;}polling=false;var why=(info&&info.reason)||"";var isTo=why==="timeout";var isChat=why==="chatban";' +
     'banTitle.textContent=isTo?"you are timed out":(isChat?"the room is shut to you":"you are banned");' +
     'if(isTo&&info.until){banUntil.textContent="until "+new Date(info.until).toLocaleString();banUntil.style.display="";}' +
     'else if(isChat){banUntil.textContent="tung has barred you from the chat. you cannot read it and you cannot speak in it. everything else is still yours — the casino, the pit, the games, the shop.";banUntil.style.display="";}' +
@@ -523,6 +581,7 @@
     '}' +
     'function syncAccess(s){' +
     'if(s&&s.banished){APPROVED=false;IS_MOD=false;banish();return;}' +
+    'if(LOCKED&&!(s&&s.status==="approved"&&s.blocked))unlock();' +
     'APPROVED=!!(s&&s.status==="approved");IS_MOD=APPROVED&&s.mod===true;paintGate();}' +
     'function pokeAccess(){var t=loadToken();if(!t){syncAccess(null);return;}api("/status?token="+encodeURIComponent(t)).then(function(s){if(s&&typeof s.status==="string")syncAccess(s);}).catch(function(){});}' +
     'function refreshGate(){TOKEN=loadToken();paintKey();if(!TOKEN){syncAccess(null);show("apply");return;}if(pageHidden())return;api("/status?token="+encodeURIComponent(TOKEN)).then(function(s){if(!s||typeof s.status!=="string")return;syncAccess(s);if(s.status==="approved"){if(s.blocked){showBan(s);}else if(s.chatBanned){showBan({reason:"chatban"});}else{startChat(s.username||"");}}else if(s.status==="pending"){show("pending");paintKey();renderThread(s.thread);if(statusT)clearTimeout(statusT);if(!pageHidden())statusT=setTimeout(refreshGate,3000);}else if(s.status==="none"||s.status==="rejected"){clearToken();TOKEN=null;paintKey();show("apply");}}).catch(function(){});}' +
@@ -772,6 +831,7 @@
        catalog uses (same cloaked title and favicon, same header, same hidden
        nested-iframe lines). closed, or unreachable -> the holding page. */
     'chooseVeil.addEventListener("click",function(){' +
+    'if(LOCKED)return;' +
     /* loadToken(), not the cached TOKEN: TOKEN is only filled in once you have
        entered the shrine view, and the veil is reachable straight from the
        chooser. the saved key is the real source either way. */
@@ -788,7 +848,7 @@
     '});' +
     'oback.addEventListener("click",function(){if(origplay.style.display==="flex"){hideOrigPlay();}else{topShow("choose");}});' +
     'pback.addEventListener("click",function(){topShow("choose");});' +
-    'chooseCasino.addEventListener("click",function(){if(!APPROVED)return;topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
+    'chooseCasino.addEventListener("click",function(){if(!APPROVED||LOCKED)return;topShow("casino");if(window.__casinoOpen)window.__casinoOpen();});' +   /* casino is a chooser bigbtn, same flow as the old header chip */
     'gback.addEventListener("click",function(){topShow("choose");});' +   /* "back" returns from the catalog grid to the chooser screen */
     'cback.addEventListener("click",function(){if(window.__casinoBack)window.__casinoBack();topShow("choose");});' +   /* casino "← back" returns to the chooser */
     'shopBtn.addEventListener("click",function(){if(window.__casinoShop)window.__casinoShop();});' +   /* shop lives on the casino header */
@@ -811,7 +871,9 @@
        the chooser and gate only the casino tile; this is that rule made
        general, which is why the casino no longer needs one of its own. */
     'topShow("shrine");show("apply");refreshGate();' +
-    'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}if(polling)poll();' +
+    'document.addEventListener("visibilitychange",function(){if(pageHidden()){if(pollT){clearTimeout(pollT);pollT=null;}if(statusT){clearTimeout(statusT);statusT=null;}return;}' +
+    'if(LOCKED){refreshGate();return;}' +
+    'if(polling)poll();' +
     /* the conversations went quiet with the tab; catch them up now rather than
        leaving the rail a few seconds stale on the way back in */
     'if(DM){dmStop();dmPoll();}dmListRefresh();' +

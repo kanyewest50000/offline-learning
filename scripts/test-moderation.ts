@@ -131,7 +131,8 @@ must(!chatJs.includes("paintCasinoGate"),
 must(/function paintGate\(\)/.test(chatJs), "…and that one gate has to exist");
 must(/APPROVED=!!\(s&&s\.status==="approved"\)/.test(chatJs),
   "APPROVED must come from /status saying approved, nothing softer");
-must(/chooseCasino\.addEventListener\("click",function\(\)\{if\(!APPROVED\)return;/.test(chatJs),
+// (and while the whole page is locked out — see scripts/test-lockout.ts)
+must(/chooseCasino\.addEventListener\("click",function\(\)\{if\(!APPROVED(\|\|LOCKED)?\)return;/.test(chatJs),
   "the tile itself must refuse, in case the door is forced open from the console");
 
 // ===========================================================================

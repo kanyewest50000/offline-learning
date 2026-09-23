@@ -545,40 +545,57 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
   const players = [a, b];
   const look = async (who = a) => (await call("/duel/state?token=" + who.token + "&id=" + id)).duel.poker;
 
-  // get it all in before the flop
-  let p = await look();
-  const first = p.toAct;
-  await post("/duel/poker", { token: players[first].token, id, action: "allin", amount: 0 });
-  p = await look();
-  must(p.toAct === 1 - first, "the other player must be asked to call the all-in");
-  await post("/duel/poker", { token: players[p.toAct].token, id, action: "call", amount: 0 });
+  // Both of them sit down with the same stack, so a split pot knocks nobody
+  // out and the table simply deals the next hand — which is a draw, not the
+  // last hand this is about. So a chop is played again, from the next deal.
+  // deno-lint-ignore no-explicit-any
+  let p: any = null, done: any = null, streets = new Set<number>(), sawRunout = 0;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    // get it all in before the flop
+    p = await look();
+    const first = p.toAct;
+    await post("/duel/poker", { token: players[first].token, id, action: "allin", amount: 0 });
+    p = await look();
+    must(p.toAct === 1 - first, "the other player must be asked to call the all-in");
+    await post("/duel/poker", { token: players[p.toAct].token, id, action: "call", amount: 0 });
 
-  // the moment the call lands the hand must NOT be over
-  p = await look();
-  must(!p.show, "an all-in called before the flop must not resolve on the spot");
-  must(p.street < 3, "the board must still have cards to come, got street " + p.street);
-  must(p.runout, "the table must be running the board out");
-  must(p.toAct < 0, "nobody may be asked to act during a runout");
-  must(p.reveal, "the hands must be face up once every chip is in");
-  for (const s of p.seats) {
-    must(s.cards.length === 2, s.name + "'s hand must be face up during a runout, got " + s.cards.length);
-  }
+    // the moment the call lands the hand must NOT be over
+    p = await look();
+    must(!p.show, "an all-in called before the flop must not resolve on the spot");
+    must(p.street < 3, "the board must still have cards to come, got street " + p.street);
+    must(p.runout, "the table must be running the board out");
+    must(p.toAct < 0, "nobody may be asked to act during a runout");
+    must(p.reveal, "the hands must be face up once every chip is in");
+    for (const s of p.seats) {
+      must(s.cards.length === 2, s.name + "'s hand must be face up during a runout, got " + s.cards.length);
+    }
 
-  // and the streets have to arrive one at a time rather than all at once
-  const streets = new Set<number>([p.street]);
-  let sawRunout = 0, done = null;
-  for (let i = 0; i < 150; i++) {
-    await nap(200);
-    const q = await look();
-    streets.add(q.street);
-    if (q.runout) sawRunout++;
-    if (q.show) { done = q; break; }
+    // and the streets have to arrive one at a time rather than all at once
+    streets = new Set<number>([p.street]);
+    sawRunout = 0;
+    done = null;
+    for (let i = 0; i < 150; i++) {
+      await nap(200);
+      const q = await look();
+      streets.add(q.street);
+      if (q.runout) sawRunout++;
+      if (q.show) { done = q; break; }
+    }
+    must(done, "the runout never finished");
+    must(sawRunout > 0, "the runout was never visible — it resolved in one go");
+    must(streets.size >= 2, "the board arrived all at once: only saw street " + [...streets].join(","));
+    must(done!.board.length === 5, "a runout must deal the whole board, got " + done!.board.length);
+    must(done!.show.length === 2, "both hands must be shown down, got " + done!.show.length);
+    if (!done!.seats.every((s: { chips: number }) => s.chips > 0)) break;
+    // chopped: wait for the next deal and go again
+    const was = done!.hand;
+    for (let i = 0; i < 100; i++) {
+      await nap(200);
+      const q = await look();
+      if (q.hand > was && q.toAct >= 0) break;
+    }
   }
-  must(done, "the runout never finished");
-  must(sawRunout > 0, "the runout was never visible — it resolved in one go");
-  must(streets.size >= 2, "the board arrived all at once: only saw street " + [...streets].join(","));
-  must(done!.board.length === 5, "a runout must deal the whole board, got " + done!.board.length);
-  must(done!.show.length === 2, "both hands must be shown down, got " + done!.show.length);
+  must(!done!.seats.every((s: { chips: number }) => s.chips > 0), "six split pots in a row — the hand never ended the tournament");
 
   // ---- and the table is not whipped away the moment the pot is paid --------
   // Both of them are all in, so this hand ends the tournament — and the duel

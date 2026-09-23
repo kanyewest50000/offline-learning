@@ -183,6 +183,16 @@
       '<h3>copy login key</h3>' +
       '<p class="ovsub">this key spends sahurs and opens every gate. anyone who holds it is you.</p>' +
       '<div class="ovacts"><button id="keyConfirm" type="button">copy anyway</button><button id="keyCancel" class="ghost" type="button">cancel</button></div>' +
+      '</div></div>' +
+      /* ---- the lockout: a timeout or a ban, over the whole page at once ----
+         last in the body and above every layer, so wherever the member is
+         standing when it lands, this is what they see. chat.js fills it in. */
+      '<div id="lockout" role="alertdialog" aria-modal="true" aria-labelledby="lockTitle">' +
+      '<div class="lockcard">' +
+      '<h2 id="lockTitle">you are timed out</h2>' +
+      '<p id="lockWhy"></p>' +
+      '<p id="lockLeft"></p>' +
+      '<p id="lockUntil"></p>' +
       '</div></div>';
   };
 })();

@@ -6,8 +6,9 @@
      tung's own head   a few hundred lines of alpha-beta search right here.
                        Starts instantly, costs nothing to fetch, and plays
                        somewhere around a decent club player at "thinking".
-     stockfish         the real engine, 350KB of WebAssembly served from this
-                       site, run in a Worker and spoken to in UCI.
+     stockfish         the real engine — Stockfish 10, about 370KB of
+                       WebAssembly served from this site, run in a Worker and
+                       spoken to in UCI. Single-threaded on purpose: see below.
 
    Neither one touches the shrine's backend. A game against the computer is a
    thing that happens entirely inside this tab — no table, no escrow, no polling
@@ -183,10 +184,35 @@
      host as an ordinary static file — it never goes near the backend, and it
      is cached by the browser after the first game.
 
+     It is the single-threaded build (nmrugg's stockfish.js, Stockfish 10). The
+     build that used to sit here was the multi-threaded one, which needs
+     SharedArrayBuffer, and a browser only hands that to a page served with
+     cross-origin isolation headers — which a static host does not send and a
+     tab this shrine writes into never has. So it never started: every
+     "stockfish" game waited out the ten seconds below and was then played by
+     tung's own head under stockfish's name. This one needs nothing from the
+     host, answers in a fraction of a second, and falls back to plain
+     JavaScript on its own where WebAssembly is unavailable.
+
      If it cannot be fetched at all (a network that blocks .wasm, an ad
      blocker, a locked-down school proxy) the game does not break: it falls
      back to tung's own head at its strongest and says so.
      --------------------------------------------------------------------- */
+  /* A worker has to come from the page's own host. When the shrine is
+     embedded on somebody else's site the game tab is theirs and the engine is
+     still ours, so the browser refuses it outright — and the fallback would
+     have been playing every one of those games. A one-line worker of the
+     tab's own pulls the engine in by its full address instead (a worker may
+     import a script from anywhere), and is told where the wasm is through the
+     part of its address the engine reads for exactly that. */
+  function startWorker() {
+    var base = document.baseURI || location.href;
+    var src = new URL("stockfish/stockfish.js", base).href;
+    try { return new Worker(src); } catch (e) { /* another host: below */ }
+    var boot = new Blob(["importScripts(" + JSON.stringify(src) + ");"], { type: "text/javascript" });
+    return new Worker(URL.createObjectURL(boot) + "#" + new URL("stockfish/stockfish.wasm", base).href);
+  }
+
   function stockfish(note) {
     var w = null, ready = false, waiting = null, dead = false;
     /* whether a `go` is outstanding, and the request that is to follow it. Two
@@ -204,13 +230,15 @@
       busy = false;
       try { if (w) w.terminate(); } catch (e) {}
       w = null;
-      note(why + " — playing tung's own head instead.");
+      // the second argument says who is really playing now, so the page can
+      // stop calling this stockfish
+      note(why + " — playing tung's own head instead.", true);
       if (queued) { waiting = queued; queued = null; }
       if (waiting) { var f = waiting; waiting = null; fallback.pick(f.fen, f.done); }
     }
 
     try {
-      w = new Worker("stockfish/stockfish.js");
+      w = startWorker();
     } catch (e) {
       giveUp("stockfish would not start");
     }
