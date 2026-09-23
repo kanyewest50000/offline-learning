@@ -242,12 +242,22 @@ a moderator has (two clicks, so one stray tap cannot do it). In the room it is
 their own: whose a line is lives in the server-side quote index as the author's
 id, never in the event the room replays, so a rename cannot hand somebody
 another member's old lines. In a DM it is `POST /dm/delete {with, seq}`, only
-ever on your own line. The line is deleted and a small marker takes the next
-seq in its place, so the other end's open window drops it on its next ordinary
-poll without any poll paying an extra read to find out. The preview on both
-rails moves to the newest line still standing, and the unread badge never
+ever on your own line. The line is marked deleted and a small marker takes the
+next seq in its place, so the other end's open window drops it on its next
+ordinary poll without any poll paying an extra read to find out. The preview on
+both rails moves to the newest line still standing, and the unread badge never
 counts what was taken back (the reader's row keeps the seqs to skip until they
 read past them). `scripts/test-own-delete.ts`.
+
+**Deleted is not destroyed.** A deleted line — taken back by its author, or
+removed by a moderator or with the admin key — stays where it was, marked, and
+keeps the clock it already had, so it ages out when it would have anyway. No
+member ever sees it again: the room's window, its poll, a fresh open of a
+conversation and its poll all skip it. The admin panel is the one place it
+still shows: the **Chat log** dump lists it tagged "(deleted by its author)" or
+"(deleted by <whoever>)" with the time, and the **Direct messages** dump and
+tung's inbox show a taken-back DM line tagged "(deleted)" — the plain-text copy
+included. Deleting an account, and **clear chat log**, still wipe for real.
 
 The chat ban covers all of it, in both directions. Somebody shut out of the room
 can neither send a DM nor be sent one: their own three routes answer `chatban`
@@ -1178,11 +1188,12 @@ hands power out rather than taking it away. A moderator gets a bin next to the
 react and reply buttons on every chat message and can delete any of them;
 everybody else gets it only on their own lines, and `POST /delete` refuses them
 anybody else's — including somebody whose flag was taken back — and refuses
-somebody barred from the room outright. A delete is not a hidden flag on the
-line — the `["ev", seq]` entry stops existing, so a fresh open never replays it,
-the `["msg", id]` quote index goes with it, so the line can no longer be quoted
-or reacted to, and a `del` event tells every client already holding it on screen
-to drop it. The flag itself is deliberately invisible: it rides on `/status` and
+somebody barred from the room outright. A delete marks the `["ev", seq]`
+entry deleted, so no member's window or poll ever serves it again while the
+admin chat dump keeps it, tagged with who deleted it and when; the
+`["msg", id]` quote index goes, so the line can no longer be quoted or reacted
+to; and a `del` event tells every client already holding it on screen to drop
+it. The flag itself is deliberately invisible: it rides on `/status` and
 `/login` to the account that holds it and on `/admin/users` to this page, and
 nowhere else — no event, no reaction, no profile and no room dump carries it, so
 nobody in the chat can work out who the moderators are.

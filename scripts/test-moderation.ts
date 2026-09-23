@@ -54,9 +54,9 @@ must(/allow\("del:/.test(del), "/delete must be rate limited per account");
 
 // what a delete actually does to the store
 must(
-  /async function deleteMessage[\s\S]*?kv\.delete\(\["ev", seq\]\)[\s\S]*?kv\.delete\(\["msg", id\]\)[\s\S]*?appendEvent\(\{ type: "del", id \}\)/
+  /async function deleteMessage[\s\S]*?kv\.set\(\s*\["ev", seq\],\s*\{ \.\.\.line, deleted: true[\s\S]*?kv\.delete\(\["msg", id\]\)[\s\S]*?appendEvent\(\{ type: "del", id \}\)/
     .test(src),
-  "deleteMessage() must drop the log entry, drop the quote index and announce the removal",
+  "deleteMessage() must mark the log entry deleted (kept for the admin dump), drop the quote index and announce the removal",
 );
 
 // the flag is granted through its own admin route, and read back on the list
@@ -160,10 +160,12 @@ const say = async (token: string, text: string) => {
   must(r.body?.ok === true, "send failed: " + JSON.stringify(r.body));
   return id;
 };
-const roomSaid = async (): Promise<{ id: string; text: string }[]> =>
-  ((await j("/admin/chat?key=" + encodeURIComponent(ADMIN))).body.messages as
-    { id: string; text: string }[] || []);
-const inRoom = async (id: string) => (await roomSaid()).some((m) => m.id === id);
+type Said = { id: string; text: string; deleted?: boolean; deletedBy?: string };
+const roomSaid = async (): Promise<Said[]> =>
+  ((await j("/admin/chat?key=" + encodeURIComponent(ADMIN))).body.messages as Said[] || []);
+// in the room = in the log and not deleted; a deleted line stays in the dump, marked
+const inRoom = async (id: string) => (await roomSaid()).some((m) => m.id === id && !m.deleted);
+const dumped = async (id: string) => (await roomSaid()).find((m) => m.id === id);
 const setMod = (id: string, mod: boolean) => post("/admin/mod", { key: ADMIN, id, mod });
 
 const A = await approved("mdA");   // says things
@@ -216,7 +218,10 @@ must(!/"mod"\s*:/.test(JSON.stringify(await roomSaid())), "the room dump must no
 const before = (await j("/events?since=0&token=" + encodeURIComponent(B.token))).body.cursor as number;
 const killed = await post("/delete", { token: C.token, id: first });
 must(killed.body?.ok === true && killed.body?.id === first, "the moderator's delete failed: " + JSON.stringify(killed.body));
-must(!(await inRoom(first)), "the line must be out of the retained log");
+must(!(await inRoom(first)), "the line must be out of the room");
+const kept = await dumped(first);
+must(kept?.deleted === true && kept.text === "the first thing anyone said" && kept.deletedBy === C.name,
+  "…and still in the admin dump, marked deleted and by whom: " + JSON.stringify(kept));
 const after = await j("/events?since=0&token=" + encodeURIComponent(B.token));
 must(!JSON.stringify(after.body).includes("the first thing anyone said"),
   "a fresh open must never replay a deleted line");
@@ -254,6 +259,7 @@ must(await inRoom(third), "and the line must still be there");
 // tung's own key still works, so the room can be cleaned without handing out a flag
 must((await post("/delete", { key: ADMIN, id: third })).body?.ok === true, "the admin key must be able to delete");
 must(!(await inRoom(third)), "the admin key's delete must land");
+must((await dumped(third))?.deletedBy === "tung", "and the dump says it was tung's");
 
 // ===========================================================================
 // live: the casino really is shut to someone who has not been approved

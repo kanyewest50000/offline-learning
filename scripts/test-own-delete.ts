@@ -69,9 +69,10 @@ const say = async (tok: string, text: string) => {
   must(r.body?.ok === true, "could not say " + text + ": " + JSON.stringify(r.body));
   return id;
 };
-const inRoom = async (id: string) =>
-  ((await j("/admin/chat?key=" + encodeURIComponent(ADMIN))).body.messages as { id: string }[] || [])
-    .some((m) => m.id === id);
+type Said = { id: string; text: string; deleted?: boolean; deletedBy?: string };
+const said = async () => ((await j("/admin/chat?key=" + encodeURIComponent(ADMIN))).body.messages as Said[]) || [];
+// in the room = in the log and not deleted; a deleted line stays in the admin dump, marked
+const inRoom = async (id: string) => (await said()).some((m) => m.id === id && !m.deleted);
 
 const mine = await say(A.token, "something i will regret");
 const theirs = await say(B.token, "something b said");
@@ -86,6 +87,11 @@ const cursor = (await j("/events?since=0&token=" + encodeURIComponent(B.token)))
 const own = await post("/delete", { token: A.token, id: mine });
 must(own.body?.ok === true && own.body.id === mine, "A must be able to delete their own line: " + JSON.stringify(own.body));
 must(!(await inRoom(mine)), "the line is out of the room");
+const keptLine = (await said()).find((m) => m.id === mine);
+must(keptLine?.deleted === true && keptLine.text === "something i will regret" && keptLine.deletedBy === A.name,
+  "…but kept in the admin dump, marked deleted by its author: " + JSON.stringify(keptLine));
+must(!JSON.stringify((await j("/events?since=0&token=" + encodeURIComponent(B.token))).body).includes("something i will regret"),
+  "and no member's window ever carries it again");
 must(await inRoom(theirs), "and nobody else's went with it");
 const after = (await j("/events?since=" + cursor + "&token=" + encodeURIComponent(B.token))).body.events as
   { type: string; id?: string }[];
@@ -146,12 +152,22 @@ const marks = tick.body.msgs as { seq: number; del?: number; text: string }[];
 must(marks.length === 1 && marks[0].del === s2 && marks[0].text === "", "the poll carries a marker, and no words: " + JSON.stringify(marks));
 // and a fresh open never shows it
 const fresh = JSON.stringify((await withOf(A.token, B.id)).body);
-must(!fresh.includes("second thing"), "the line is gone for good");
+must(!fresh.includes("second thing"), "the line is gone from the members' view");
 must(fresh.includes("first thing") && fresh.includes("b's reply"), "and only that line");
 // the admin dump shows the conversation as it now stands, markers and all left out
 const dump = await post("/admin/dm/thread", { key: ADMIN, user: A.id, peer: B.id });
-const dumped = dump.body.msgs as { text: string }[];
-must(dumped.length === 2 && !JSON.stringify(dumped).includes("second thing"), "the dump has two lines: " + JSON.stringify(dumped));
+const dumped = dump.body.msgs as { text: string; deleted?: boolean }[];
+must(dumped.length === 3, "the dump keeps all three lines, markers left out: " + JSON.stringify(dumped));
+must(dumped.filter((m) => m.deleted).length === 1 && dumped.find((m) => m.deleted)?.text === "second thing",
+  "…with the taken-back one marked deleted: " + JSON.stringify(dumped));
+// and the dump's picker counts the same lines the dump shows, not the marker
+const peerRow = ((await post("/admin/dm/peers", { key: ADMIN, id: A.id })).body.peers as { id: string; seq: number }[])
+  .find((p) => p.id === B.id);
+must(peerRow?.seq === dumped.length, "the picker must count " + dumped.length + " lines: " + JSON.stringify(peerRow));
+// and neither end's window ever serves it again, however it is opened
+for (const [tok, other] of [[A.token, B.id], [B.token, A.id]] as const) {
+  must(!JSON.stringify((await withOf(tok, other)).body).includes("second thing"), "a member's open never shows it");
+}
 
 // unread: C gets two lines, A takes both back before C looks — nothing waits
 const C = await member("odC");
@@ -171,6 +187,12 @@ await send(A.token, C.id, "hello again");
 must((await rail(C.token)).find((c) => c.id === A.id)?.unread === 1, "a new line counts as one");
 await withOf(C.token, A.id);
 must((await rail(C.token)).find((c) => c.id === A.id)?.unread === 0, "and reading it clears it");
+
+// a line taken back in a conversation with tung stays in his inbox, marked
+const tSeq = await send(A.token, "tung", "never mind, tung");
+must((await del(A.token, "tung", tSeq)).body?.ok === true, "A can take back a line to tung");
+const inbox = (await post("/admin/talk/thread", { key: ADMIN, user: A.id })).body.msgs as { text: string; deleted?: boolean }[];
+must(inbox.some((m) => m.text === "never mind, tung" && m.deleted === true), "his inbox shows it, marked deleted: " + JSON.stringify(inbox));
 
 // a shut conversation has nothing to take back
 must((await post("/dm/block", { token: B.token, to: A.id, blocked: true })).body?.blocked === true, "block failed");

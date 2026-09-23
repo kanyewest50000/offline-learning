@@ -994,6 +994,8 @@ async function appendEvent(ev: Record<string, unknown>, uid?: string) {
 // fresh open and on a reconnect alike. The reverse scan stops the moment it has
 // OPEN_MSGS messages in hand instead of always reading the full HISTORY, so a
 // reopen costs about that many KV reads in the common case, not five hundred.
+// A line somebody deleted is still in the log, for the admin dump, and is
+// never part of anybody's window.
 // deno-lint-ignore no-explicit-any
 async function recentWindow(): Promise<{ events: any[]; floor: number }> {
   // deno-lint-ignore no-explicit-any
@@ -1001,6 +1003,7 @@ async function recentWindow(): Promise<{ events: any[]; floor: number }> {
   let msgs = 0;
   // deno-lint-ignore no-explicit-any
   for await (const e of kv.list<any>({ prefix: ["ev"] }, { reverse: true, limit: HISTORY })) {
+    if (deletedLine(e.value)) continue;
     collected.push(e.value);
     if (e.value?.type === "msg" && ++msgs >= OPEN_MSGS) break;
   }
@@ -1009,38 +1012,58 @@ async function recentWindow(): Promise<{ events: any[]; floor: number }> {
   return { events: collected, floor };
 }
 
-// Take one line out of the room, for good. The log is append-only, so a delete
-// is three things at once: the ["ev", seq] entry stops existing, so a fresh
-// open never replays it; the ["msg", id] quote index goes with it, so nothing
-// can be replied to or reacted to after the fact; and a "del" event is appended
-// so every client already holding the line on screen drops it on its next poll.
+// A line somebody deleted: still in the log, for the admin dump and nothing else.
+// deno-lint-ignore no-explicit-any
+function deletedLine(ev: any): boolean {
+  return !!ev && ev.type === "msg" && ev.deleted === true;
+}
+
+// Take one line out of the room. The log is append-only, so a delete is three
+// things at once: the ["ev", seq] entry is marked deleted — kept, so the admin
+// dump still has it and says so, and skipped by everything a member reads, so
+// no window ever replays it; the ["msg", id] quote index goes, so nothing can
+// be replied to or reacted to after the fact; and a "del" event is appended so
+// every client already holding the line on screen drops it on its next poll.
+// The marked line keeps the clock it had: it ages out when it would have.
 // The seq normally comes off the quote index; a message posted before that
 // field existed falls back to one bounded reverse walk of the retained window.
-// Returns false when there was nothing there — aged out, or never said.
-async function deleteMessage(id: string): Promise<boolean> {
+// Returns false when there was nothing there — aged out, never said, or
+// already deleted. `by` is who did it, for the dump.
+async function deleteMessage(id: string, by = ""): Promise<boolean> {
   const ref = await kv.get<MsgRef>(["msg", id]);
   let seq = typeof ref.value?.seq === "number" ? ref.value.seq : 0;
   let found = !!ref.value;
+  // deno-lint-ignore no-explicit-any
+  let line: any = null;
   if (seq) {
     // the index can outlive its log entry (the log is trimmed to HISTORY, the
     // index is not), and an id is only ever claimed once, so a mismatch here
     // means the entry is already gone rather than that we have the wrong one.
     // deno-lint-ignore no-explicit-any
     const at = await kv.get<any>(["ev", seq]);
-    if (!at.value || at.value.type !== "msg" || at.value.id !== id) seq = 0;
+    if (!at.value || at.value.type !== "msg" || at.value.id !== id || deletedLine(at.value)) seq = 0;
+    else line = at.value;
   } else {
     // deno-lint-ignore no-explicit-any
     for await (const e of kv.list<any>({ prefix: ["ev"] }, { reverse: true, limit: HISTORY })) {
       const v = e.value;
-      if (v && v.type === "msg" && v.id === id) {
+      if (v && v.type === "msg" && v.id === id && !deletedLine(v)) {
         seq = typeof v.seq === "number" ? v.seq : Number(e.key[1]);
+        line = v;
         found = true;
         break;
       }
     }
   }
   if (!found) return false;
-  if (seq) await kv.delete(["ev", seq]);
+  if (seq && line) {
+    const left = TTL_MS - (Date.now() - (Number(line.ts) || Date.now()));
+    await kv.set(
+      ["ev", seq],
+      { ...line, deleted: true, deletedAt: Date.now(), ...(by ? { deletedBy: by } : {}) },
+      { expireIn: Math.max(60_000, left) },
+    );
+  }
   await kv.delete(["msg", id]);
   await appendEvent({ type: "del", id });
   return true;
@@ -1068,6 +1091,10 @@ async function listChatMessages(): Promise<unknown[]> {
       gift: ev.gift ?? null,
       seq: ev.seq,
       ts: typeof ev.ts === "number" ? ev.ts : 0,
+      // the dump is the one place a deleted line still shows, marked
+      ...(deletedLine(ev)
+        ? { deleted: true, deletedAt: Number(ev.deletedAt) || 0, deletedBy: ev.deletedBy || "" }
+        : {}),
     });
   }
   return messages;
@@ -1178,11 +1205,15 @@ async function dmConvCount(uid: string, n: number): Promise<number> {
 // It rides the conversation's own stream so that a window already showing
 // that line drops it on its next poll, at no cost to any poll — see
 // dmRetract(). It is never drawn and never counted as something said.
-type DmMsg = { seq: number; from: string; text: string; ts: number; del?: number };
+// `deleted` is on the line that was taken back: it stays where it was, for the
+// admin dump, and no member's read ever serves it again.
+type DmMsg = { seq: number; from: string; text: string; ts: number; del?: number; deleted?: boolean; deletedAt?: number };
 // `hid` is the seqs above `read` that are not something to read — a line its
 // author took back, and the marker that says so. Unread is everything past the
 // read mark less those; reading past them drops them. Almost always absent.
-type DmConv = { name: string; last: string; ts: number; seq: number; read: number; hid?: number[] };
+// `dels` counts the retraction markers in the stream, so seq less dels is how
+// many lines were written — what the admin dump's picker says. Usually absent.
+type DmConv = { name: string; last: string; ts: number; seq: number; read: number; hid?: number[]; dels?: number };
 function dmUnread(v: DmConv): number {
   const read = Number(v.read) || 0;
   const hid = (v.hid || []).filter((s) => s > read).length;
@@ -1310,6 +1341,7 @@ async function dmAppend(from: any, to: any, text: string): Promise<DmMsg | null>
       // the sender has by definition read their own line
       .set(["dmconv", from.id, to.id], {
         name: to.username, last: preview, ts: msg.ts, seq, read: seq,
+        ...(mineE.value?.dels ? { dels: mineE.value.dels } : {}),
       }, { expireIn: DM_TTL })
       // the recipient's read mark is left exactly where it was, which is what
       // turns into their unread count
@@ -1317,6 +1349,7 @@ async function dmAppend(from: any, to: any, text: string): Promise<DmMsg | null>
         name: from.username, last: preview, ts: msg.ts, seq,
         read: Number(theirsE.value?.read) || 0,
         ...(theirsE.value?.hid?.length ? { hid: theirsE.value.hid } : {}),
+        ...(theirsE.value?.dels ? { dels: theirsE.value.dels } : {}),
       }, { expireIn: DM_TTL })
       .commit();
     if (res.ok) return msg;
@@ -1324,8 +1357,9 @@ async function dmAppend(from: any, to: any, text: string): Promise<DmMsg | null>
   return null;
 }
 
-// Take back one of your own lines. The line itself is deleted, and a marker
-// takes the next seq in its place, so the other end's open window — which
+// Take back one of your own lines. The line itself is marked deleted (kept for
+// the admin dump, never served to a member again), and a marker takes the next
+// seq in its place, so the other end's open window — which
 // only ever asks for what is past the seq it has — learns about it on its next
 // ordinary poll. Keeping a separate list of deletions instead would put one
 // more read on every poll of every open conversation, forever.
@@ -1339,7 +1373,7 @@ async function dmRetract(me: any, other: any, target: number): Promise<"ok" | "g
   const conv = convOf(me.id, other.id);
   for (let attempt = 0; attempt < 8; attempt++) {
     const line = await kv.get<DmMsg>(["dmev", conv, target]);
-    if (!line.value || line.value.del) return "gone";
+    if (!line.value || line.value.del || line.value.deleted) return "gone";
     if (line.value.from !== me.id) return "forbidden";
     const seqE = await kv.get<number>(["dmseq", conv]);
     const mineE = await kv.get<DmConv>(["dmconv", me.id, other.id]);
@@ -1351,18 +1385,21 @@ async function dmRetract(me: any, other: any, target: number): Promise<"ok" | "g
       const e of kv.list<DmMsg>({ prefix: ["dmev", conv] }, { reverse: true, limit: 25 })
     ) {
       const v = e.value;
-      if (!v || v.del || v.seq === target) continue;
+      if (!v || v.del || v.deleted || v.seq === target) continue;
       last = String(v.text || "").slice(0, 120);
       break;
     }
     const mark: DmMsg = { seq, from: me.id, text: "", ts: Date.now(), del: target };
+    // the line keeps the clock it had, and is marked rather than removed: the
+    // admin dump still shows it, as deleted, and nothing a member reads does
+    const left = DM_TTL - (Date.now() - (Number(line.value.ts) || Date.now()));
     const op = kv.atomic()
       .check(line).check(seqE).check(mineE).check(theirsE)
-      .delete(["dmev", conv, target])
+      .set(["dmev", conv, target], { ...line.value, deleted: true, deletedAt: Date.now() }, { expireIn: Math.max(60_000, left) })
       .set(["dmseq", conv], seq, { expireIn: DM_TTL })
       .set(["dmev", conv, seq], mark, { expireIn: DM_TTL });
     if (mineE.value) {
-      const mine: DmConv = { ...mineE.value, last, seq, read: seq };
+      const mine: DmConv = { ...mineE.value, last, seq, read: seq, dels: (Number(mineE.value.dels) || 0) + 1 };
       delete mine.hid; // everything up to here is read on this side
       op.set(["dmconv", me.id, other.id], mine, { expireIn: DM_TTL });
     }
@@ -1372,7 +1409,9 @@ async function dmRetract(me: any, other: any, target: number): Promise<"ok" | "g
       // the badge read a little high, never grows the row without end
       const hid = (theirsE.value.hid || []).filter((s) => s > was)
         .concat(target > was ? [target, seq] : [seq]).slice(-200);
-      op.set(["dmconv", other.id, me.id], { ...theirsE.value, last, seq, hid }, { expireIn: DM_TTL });
+      op.set(["dmconv", other.id, me.id], {
+        ...theirsE.value, last, seq, hid, dels: (Number(theirsE.value.dels) || 0) + 1,
+      }, { expireIn: DM_TTL });
     }
     if ((await op.commit()).ok) return "ok";
   }
@@ -1455,7 +1494,7 @@ async function purgeRoomOf(dead: Set<string>, deadNames: Set<string>): Promise<n
       const uid = uidOf.get(String(v.id));
       if (gone.has(String(v.id)) || ownedBy({ uid, name: v.name, from: v.from })) {
         gone.add(String(v.id));
-        shown.push(String(v.id));
+        if (!deletedLine(v)) shown.push(String(v.id));
         drop.push(e.key);
         continue;
       }
@@ -4101,7 +4140,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       }
       // deno-lint-ignore no-explicit-any
       for await (const e of kv.list<any>({ prefix: ["ev"], start: ["ev", since + 1] }, { limit: HISTORY })) {
-        events.push(e.value);
+        if (!deletedLine(e.value)) events.push(e.value);
         cursor = e.value.seq;
       }
     }
@@ -4313,6 +4352,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const v = e.value;
       if (!v) continue;
       top = Math.max(top, v.seq);
+      // a line its author took back is only ever the admin dump's
+      if (v.deleted) continue;
       // a retraction: the window drops that seq, and draws nothing
       if (v.del) {
         msgs.push({ seq: v.seq, text: "", ts: v.ts, mine: v.from === u.id, del: v.del });
@@ -4495,9 +4536,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // first handing the flag to an account.
     const byKey = ADMIN_KEY !== "" && String(b.key ?? "") === ADMIN_KEY;
     const id = clip(b.id, 32);
+    let deleter = "";
     if (!byKey) {
       const user = await authUser(b.token);
       if (!user) return json({ error: "unauthorized" }, 401);
+      deleter = String(user.username || "");
       const dbs = chatBlock(user);
       if (dbs.blocked) return json({ error: "blocked", reason: dbs.reason, until: dbs.until }, 403);
       if (!allow("del:" + user.id, 20, 10_000)) return tooMany(10);
@@ -4511,7 +4554,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       }
     }
     if (!id) return json({ error: "bad" }, 400);
-    if (!await deleteMessage(id)) return json({ error: "gone" }, 404);
+    if (!await deleteMessage(id, byKey ? "tung" : deleter)) return json({ error: "gone" }, 404);
     return json({ ok: true, id });
   }
 
@@ -5362,7 +5405,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       if (!v) continue;
       peers.push({
         id: String(e.key[2]), name: v.name, last: v.last,
-        ts: Number(v.ts) || 0, seq: Number(v.seq) || 0,
+        // lines written, deleted ones included (the dump shows them marked);
+        // the markers that record a deletion are not lines
+        ts: Number(v.ts) || 0, seq: Math.max(0, (Number(v.seq) || 0) - (Number(v.dels) || 0)),
       });
     }
     // The name on the row is whatever the other end was called when the last
@@ -5407,14 +5452,18 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // Newest first out of KV, then flipped, so that a conversation longer than
     // the cap gives back its END rather than its beginning. A truncated dump
     // that stops a thousand lines ago is not the half anybody wants.
-    const msgs: { seq: number; from: string; text: string; ts: number }[] = [];
+    const msgs: { seq: number; from: string; text: string; ts: number; deleted?: boolean; deletedAt?: number }[] = [];
     for await (
       const e of kv.list<DmMsg>({ prefix: ["dmev", pair] }, { limit: DM_DUMP, reverse: true })
     ) {
       const v = e.value;
-      // a retraction marker is not a line; the line it names is already gone
+      // a retraction marker is not a line; the line it names is still here,
+      // marked deleted, and shows as such
       if (!v || v.del) continue;
-      msgs.push({ seq: v.seq, from: v.from, text: v.text, ts: v.ts });
+      msgs.push({
+        seq: v.seq, from: v.from, text: v.text, ts: v.ts,
+        ...(v.deleted ? { deleted: true, deletedAt: Number(v.deletedAt) || 0 } : {}),
+      });
     }
     msgs.reverse();
     const bl = await dmBlockOf(one, two);
@@ -5509,7 +5558,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       return json({ error: "gone" }, 404);
     }
     const pair = convOf(TUNG_DM_ID, id);
-    const msgs: { seq: number; text: string; ts: number; mine: boolean; from?: "tung" }[] = [];
+    const msgs: { seq: number; text: string; ts: number; mine: boolean; from?: "tung"; deleted?: boolean }[] = [];
     let top = 0;
     for await (
       const e of kv.list<DmMsg>({ prefix: ["dmev", pair] }, { limit: DM_DUMP, reverse: true })
@@ -5517,8 +5566,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const v = e.value;
       if (!v) continue;
       top = Math.max(top, v.seq);
-      if (v.del) continue; // a line they took back, not a line
+      if (v.del) continue; // the marker of a line taken back, not a line
       msgs.push({
+        ...(v.deleted ? { deleted: true } : {}),
         seq: v.seq, text: v.text, ts: v.ts, mine: v.from === TUNG_DM_ID,
         ...(v.from === TUNG_DM_ID ? { from: "tung" as const } : {}),
       });
@@ -7096,6 +7146,8 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 #pane-talk .who.tung{display:flex;align-items:center;gap:6px;color:#f2c063;font-weight:800;letter-spacing:.02em}
 #pane-talk .tungimg{width:15px;height:15px;border-radius:3px;object-fit:cover;flex:0 0 auto}
 #pane-talk .when{font-size:10px;font-weight:500;color:#8a6a3a;white-space:nowrap}
+.deltag{display:inline-block;margin-left:8px;padding:1px 6px;border-radius:4px;background:#5a1f1f;color:#ffb3b3;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:none;vertical-align:1px}
+.app.deleted p,.tmsg.deleted,#pane-talk .msg.deleted .body{opacity:.72}
 #pane-talk .msg.me .when{color:#d4b48a}
 #pane-talk .body{display:block;white-space:pre-wrap;word-break:break-word}
 #pane-talk .talkform{display:flex;gap:8px;padding:10px;background:#2b1a0a;border-top:1px solid #3a2410}
@@ -7150,7 +7202,7 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 </section>
 <section class="pane" id="pane-chat">
 <h2>Chat log</h2>
-<p class="hint">The last 500 retained chat lines. Not loaded with the other lists — dump only when you need it. Clearing wipes every retained message and reaction; accounts, balances and shop items are untouched.</p>
+<p class="hint">The last 500 retained chat lines. Not loaded with the other lists — dump only when you need it. Lines somebody deleted are still here, tagged <b>(deleted)</b> with who did it and when; members never see them again. Clearing wipes every retained message and reaction; accounts, balances and shop items are untouched.</p>
 <div class="row" style="margin-bottom:14px"><button class="load" id="dumpChat">dump last 500</button><button class="no" id="clearChat">clear chat log</button></div>
 <div id="chatlog"><div class="empty">not loaded. click dump last 500.</div></div>
 </section>
@@ -7345,6 +7397,11 @@ function postAs(){
     }).catch(function(){out.textContent="network error.";});
 }
 
+/* "(deleted)", and by whom and when where that is known */
+function delLabel(by,author,at){
+  var who=by?(String(by).toLowerCase()===String(author||"").toLowerCase()?" by its author":" by "+by):"";
+  return "(deleted"+who+(at?" \u00b7 "+new Date(at).toLocaleString():"")+")";
+}
 function dumpChat(){
   var key=keyEl.value.trim();
   chatlog.innerHTML='<div class="empty">loading...</div>';
@@ -7359,6 +7416,8 @@ function dumpChat(){
       var h=document.createElement("h3");h.textContent=m.name||"";
       if(m.from==="tung"){var tg=document.createElement("span");tg.className="tungtag";tg.textContent="the shrine";h.appendChild(tg);el.classList.add("tungline");}
       if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=" · "+new Date(m.ts).toLocaleString();h.appendChild(tm);}
+      /* deleted in the room, kept here: members never see it again */
+      if(m.deleted){var dt=document.createElement("span");dt.className="deltag";dt.textContent=delLabel(m.deletedBy,m.name,m.deletedAt);h.appendChild(dt);el.classList.add("deleted");}
       el.appendChild(h);
       if(m.reply&&m.reply.text){
         var rp=document.createElement("small");rp.textContent="reply to "+(m.reply.name||"")+" — "+m.reply.text;el.appendChild(rp);
@@ -7862,6 +7921,8 @@ function dmPaintThread(d){
   var head=document.createElement("div");head.className="app";
   var h=document.createElement("h3");h.textContent=d.a.name+" \u2194 "+d.b.name;head.appendChild(h);
   var bits=d.count+(d.count===1?" line":" lines");
+  var gone=(d.msgs||[]).filter(function(m){return m.deleted;}).length;
+  if(gone)bits+=" ("+gone+" deleted)";
   if(d.truncated)bits+=" \u2014 the newest kept, older ones not shown";
   if(d.blockedBy&&d.blockedBy.length){
     bits+=" \u00b7 blocked by "+d.blockedBy.map(function(id){return dmWhoseName(d,id);}).join(" and ");
@@ -7876,9 +7937,11 @@ function dmPaintThread(d){
   var thread=document.createElement("div");thread.className="thread";
   d.msgs.forEach(function(m){
     var row=document.createElement("div");
-    row.className="tmsg "+(m.from===d.a.id?"dmfrom":"dmto");
+    row.className="tmsg "+(m.from===d.a.id?"dmfrom":"dmto")+(m.deleted?" deleted":"");
     var w=document.createElement("span");w.className="twhen";
     w.textContent=dmWhoseName(d,m.from)+" \u00b7 "+new Date(m.ts).toLocaleString();
+    /* taken back by whoever wrote it — a DM line is only ever deleted by its author */
+    if(m.deleted){var dt=document.createElement("span");dt.className="deltag";dt.textContent=delLabel("",null,m.deletedAt);w.appendChild(dt);}
     row.appendChild(w);
     row.appendChild(document.createTextNode(m.text||""));
     thread.appendChild(row);
@@ -7889,7 +7952,7 @@ function dmPaintThread(d){
   dmout.appendChild(lab);
   var ta=document.createElement("textarea");ta.id="dmtext";ta.readOnly=true;
   ta.value=d.msgs.map(function(m){
-    return "["+new Date(m.ts).toISOString()+"] "+dmWhoseName(d,m.from)+": "+(m.text||"");
+    return "["+new Date(m.ts).toISOString()+"] "+dmWhoseName(d,m.from)+(m.deleted?" (deleted)":"")+": "+(m.text||"");
   }).join(NL);
   dmout.appendChild(ta);
 }
@@ -7952,11 +8015,12 @@ function talkFace(w,name){
    (yours, from this seat) on the right, theirs on the left */
 function talkLine(m,theirName){
   var isT=m.from==="tung";
-  var row=document.createElement("div");row.className=isT?"msg me":"msg";
+  var row=document.createElement("div");row.className=(isT?"msg me":"msg")+(m.deleted?" deleted":"");
   var meta=document.createElement("div");meta.className="meta";
   if(isT)talkFace(meta.appendChild(document.createElement("span")),"tung");
   else{var w=document.createElement("span");w.className="who";w.textContent=theirName||"";meta.appendChild(w);}
   if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();meta.appendChild(tm);}
+  if(m.deleted){var dt=document.createElement("span");dt.className="deltag";dt.textContent="(deleted)";meta.appendChild(dt);}
   row.appendChild(meta);
   var bd=document.createElement("span");bd.className="body";bd.textContent=m.text||"";row.appendChild(bd);
   return row;

@@ -67,7 +67,8 @@ must(shrine.includes('if(DM.tung)paintTungWho(convname,DM.name||"tung",true)'), 
 must(shrine.includes('if(c.tung)paintTungWho(n,c.name||"tung",true)'), "and his row on the rail, under the room's own row");
 // and from the panel's seat, his lines are the sender's: on the right
 const talkPane = src.slice(src.indexOf("function talkLine("), src.indexOf("function talkAdd("));
-must(talkPane.includes('row.className=isT?"msg me":"msg"'), "the panel draws his lines as sent, on the right");
+must(talkPane.includes('row.className=(isT?"msg me":"msg")+(m.deleted?" deleted":"")'), "the panel draws his lines as sent, on the right");
+must(talkPane.includes('dt.textContent="(deleted)"'), "and a line the member took back stays, marked");
 must(!/tungmark/.test(src.slice(src.indexOf("#pane-talk"), src.indexOf("</style>", src.indexOf("#pane-talk")))),
   "the panel's DM pane carries no room mark");
 must(!/msg tung/.test(src.slice(src.indexOf("Talk to da people.") )), "nor the room's line shape");

@@ -130,10 +130,21 @@ const tidy = async () => {
 // ===========================================================================
 // leftovers from before: an account removed the old way
 // ===========================================================================
-let kv: Deno.Kv | null = null;
+// The database is a SQLite file the server is using at the same time, and a
+// connection held open in here competes with it for the lock — the server's
+// next write then fails with "database is locked". So it is opened for each
+// read or write and closed straight after, never held across a request.
 const canWrite = (await Deno.permissions.query({ name: "write" })).state === "granted";
-if (KV_PATH && canWrite && typeof Deno.openKv === "function") kv = await Deno.openKv(KV_PATH);
-if (!kv) {
+const reach = !!KV_PATH && canWrite && typeof Deno.openKv === "function";
+async function withKv<T>(f: (kv: Deno.Kv) => Promise<T>): Promise<T> {
+  const k = await Deno.openKv(KV_PATH);
+  try {
+    return await f(k);
+  } finally {
+    k.close();
+  }
+}
+if (!reach) {
   await tidy();
   console.log(
     "account purge: deleting an account takes its room lines, reactions, quotes of it and both " +
@@ -144,15 +155,18 @@ if (!kv) {
 }
 // what the old /admin/delete did: the account, and none of its words
 async function oldDelete(p: { id: string; name: string }) {
-  await kv!.delete(["app", p.id]);
-  await kv!.delete(["name", p.name.toLowerCase()]);
+  await withKv(async (kv) => {
+    await kv.delete(["app", p.id]);
+    await kv.delete(["name", p.name.toLowerCase()]);
+  });
 }
-const dmKeys = async (a: string, b: string) => {
-  const conv = a < b ? a + "~" + b : b + "~" + a;
-  let n = 0;
-  for await (const _e of kv!.list({ prefix: ["dmev", conv] })) n++;
-  return n;
-};
+const dmKeys = (a: string, b: string) =>
+  withKv(async (kv) => {
+    const conv = a < b ? a + "~" + b : b + "~" + a;
+    let n = 0;
+    for await (const _e of kv.list({ prefix: ["dmev", conv] })) n++;
+    return n;
+  });
 
 const H = await member("pgH");
 
@@ -199,7 +213,6 @@ must(JSON.stringify((await post("/admin/dm/thread", { key: ADMIN, user: E.id, pe
   "E and F's conversation survives the clean-up");
 const again = await post("/admin/purgegone", { key: ADMIN });
 must(again.body?.ok === true && again.body.accounts === 0, "a second pass finds nothing: " + JSON.stringify(again.body));
-kv.close();
 await tidy();
 
 console.log(
