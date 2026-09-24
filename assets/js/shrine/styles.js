@@ -130,6 +130,13 @@
       '.giftbtn:disabled{cursor:default;opacity:.85}' +
       '.giftbtn.taken{background:transparent;color:#8a6a3a;border:1px solid #3a2410;font-weight:600}' +
       '.giftnote{font-size:12px;color:#c8823c;font-style:italic}' +
+      /* his giveaway with entries: the prize, the winners, the clock, enter */
+      '.rafflebox{margin-top:10px;padding:10px 12px;border:1px solid #7a5a1a;border-radius:10px;background:rgba(242,192,99,.06);display:flex;flex-direction:column;gap:8px;max-width:560px}' +
+      '.raffletop{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}' +
+      '.raffleprize{font-size:18px;font-weight:800;color:#f2c063;font-style:normal}' +
+      '.rafflewin{font-size:12px;color:#c8823c;font-style:normal}' +
+      '.rafflebot{display:flex;align-items:center;gap:10px;flex-wrap:wrap}' +
+      '.raffleleft{font-size:12px;color:#e9d9c2;font-style:normal;font-variant-numeric:tabular-nums}' +
       /* his profile card: no join date, no balance, so the ordinary rows go */
       '#profExtra{display:none}' +
       '.ovcard.tung h3{display:flex;align-items:center;gap:7px}' +

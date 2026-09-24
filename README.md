@@ -371,6 +371,54 @@ and on a private conversation it made his DM read as the room itself. In the
 panel his lines sit on the right, as the sender's, and theirs on the left. A
 chat ban or their block still shuts it. `scripts/test-admin-talk.ts`.
 
+**general chat** is pinned above his conversations: the room itself, from his
+seat. Everybody's lines sit on the left under their names and his on the
+right; **reply** on any line quotes it; and what he writes goes to everyone
+with his mark — it is `/admin/postas` as tung, the same kind of line a Wisdom
+is. The whole retained log is read once when it opens, and after that each
+pass asks `GET /admin/chat?since=<cursor>` for only what landed past the
+newest line it holds — usually nothing — every three seconds, and only while
+this pane and this conversation are open and the tab is in view. Deletions
+come back on the same pass as ids, so a line taken back is marked
+**(deleted)** where it sits. **Post as…** no longer offers tung: it is for
+members' names, and points here.
+
+## tung's giveaways, with entries
+
+The panel's **Giveaways** pane posts one to the room as tung: his line (or
+yours — leave it blank and he picks one of `RAFFLE_LINES`; `{n}` and `{w}` in
+either become the prize and "3 winners"), and under it a card with the prize,
+how many win it, a countdown and an **enter** button. It is not the
+first-to-click gift his Wisdoms sometimes carry: everyone who enters before the
+timer runs out is in the draw once, and speed buys nothing. When it runs out
+the server draws the winners at random (the platform's CSPRNG, no modulo bias),
+splits the prize between them to the cent, pays it into their balances and
+announces who won in a line of his own, which is also what turns every open
+copy of the card into the result. Fewer entrants than winners means everyone
+who entered wins; nobody entering means nobody is paid, and he says so.
+
+The pane lists what has been posted: the countdown for open ones, **who
+entered**, **roll it now**, and **call it off** (nobody wins; the room is told).
+It reads the list when it opens, after anything done there, and once more a few
+seconds after an open one runs out so the winners show. It does not poll.
+
+Members: one entry each (entering twice, or five times at once, is still one);
+a chat ban or the sahur watch's "barred, giveaways too" shuts the button; the
+countdown is the page's own clock; which ones you entered is remembered on the
+device, per name, so a reload still says so. Somebody banned, timed out or shut
+out of the room after entering is passed over in the draw, and a winner the
+sahur watch has on reduced claims is paid their percent.
+
+Nothing polls for the end. The room's `/events` poll carries a check that is a
+comparison against a number held in memory until something is due (and one KV
+read a minute otherwise, to hear about one another isolate posted); the isolate
+that posted it also sets a timer for its end. A roll is three commits, each safe
+to repeat: close entries and write down the winners (checked against the
+record, so two rollers cannot both draw), pay each winner behind a per-winner
+"paid" mark in the same commit as their balance, then mark it done — and only
+the commit that did that may announce it. Five rolls at once, or the timer and
+**roll it now** together, pay nobody twice. `scripts/test-giveaways.ts`.
+
 ## the pit
 
 Four tables in the casino where the opponent is another member rather than the
@@ -1134,7 +1182,9 @@ and penalty with it, and wiping every account from **Wipe data** clears the lot.
 
 Nothing here polls. The rules run inside the claim request (twelve faucet
 claims a day at most, per member) and when the pane asks, and a failure inside
-the watch never refuses the claim it follows. One thing to know when reading a
+the watch never refuses the claim it follows. `/cas/claim` itself is capped at
+six requests in ten seconds per member, so a script asking over and over for
+the cooldown to end is turned away before it costs more than a counter. One thing to know when reading a
 flag: a page opened before this shipped sends no click proof, so an old tab
 left open reads as "no real click" until it is reloaded. `scripts/test-sahur-watch.ts`.
 
@@ -1203,9 +1253,11 @@ of the script — it has to be written `\\n`. That is worth a look before
 wondering why a pane is empty.
 
 `/admin` has a **Post as…** pane: drop a line into the chat under an approved
-member's name, or as tung, who posts with his own mark. It is the one place in
-the app where a message's author is not the account that sent the request —
-key-gated, and the name still has to belong to somebody real.
+member's name. It is the one place in the app where a message's author is not
+the account that sent the request — key-gated, and the name still has to belong
+to somebody real. Tung speaks from **Talk to da people → general chat**, where
+the room he is talking to is in front of him; the route behind both
+(`/admin/postas`) still takes his name.
 
 **Clearing the chat log** takes the words with it, not just the log. A line
 lives in two places: the `["ev", seq]` entry the room replays, and `["msg", id]`

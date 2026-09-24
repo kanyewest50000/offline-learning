@@ -27,7 +27,8 @@
 //   POST /tip           {token, to, amount}               -> {ok, amount, fromBalance, toBalance, to}
 //   GET  /admin                                           -> admin page (html)
 //   GET  /admin/pending?key=                              -> {pending:[...]}
-//   GET  /admin/chat?key=                                 -> {messages:[...]} last HISTORY chat lines
+//   GET  /admin/chat?key=&since=                          -> {messages:[...], cursor, dels?} last HISTORY chat lines,
+//                                                            or only what came after `since`
 //   POST /admin/clearchat {key}                           -> {ok, cleared}
 //   POST /admin/purgegone {key}                           -> {ok, accounts, conversations, lines}
 //   POST /admin/decide  {key, id, action:"approve"|"reject"} -> {ok, status}
@@ -46,6 +47,12 @@
 //   POST /admin/watch/punish {key, id, ban?, reduce?, slow?, takeBack?, note?} -> {ok, penalty, taken, verdict}
 //   POST /admin/watch/dismiss {key, id, quietDays}        -> {ok, quietDays}
 //   POST /admin/watch/lift   {key, id}                    -> {ok}
+//   POST /raffle/enter  {token, id}                       -> {ok, already, entries, endsAt}  (a giveaway with entries)
+//   POST /admin/raffle/create {key, text?, amount, winners, minutes} -> {ok, raffle}
+//   POST /admin/raffle/list   {key}                       -> {ok, raffles}
+//   POST /admin/raffle/entries {key, id}                  -> {ok, names}
+//   POST /admin/raffle/end    {key, id}                   -> {ok, raffle}  (roll it now)
+//   POST /admin/raffle/cancel {key, id}                   -> {ok, raffle}  (nobody wins)
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
 //   POST /duel/create   {token, game, bet, seats?}        -> {ok, duel, balance}
 //   POST /duel/cancel   {token, id}                       -> {ok, refunded, balance}
@@ -942,6 +949,190 @@ async function maybeWisdom() {
 }
 
 // ---------------------------------------------------------------------------
+// Tung's giveaways, the kind with entries.
+//
+// Posted from the panel, not rolled by the wisdom clock: a line from tung with a
+// card under it — the prize, how many winners, a countdown — and an "enter"
+// button. Unlike the first-to-click gift above, speed buys nothing: everyone
+// who enters before the timer runs out is in the draw once, and when it runs
+// out the drum picks the winners at random and the prize is split between them.
+//
+// Nothing polls for the end. The room's own /events traffic carries a check
+// that costs a comparison against a number held in memory, and reads KV only
+// when a giveaway is actually due (or once a minute, to hear about one another
+// isolate posted). The isolate that posted one also sets a timer for its end.
+// Whichever gets there first rolls it; the rest find it rolled.
+//
+// Rolling is three commits, each safe to repeat. The first closes entries and
+// writes down who won, guarded by a check on the record, so two rollers cannot
+// both pick. Each winner is then paid behind a per-winner "paid" marker in the
+// same commit as their balance, so resuming a roll that died halfway pays
+// nobody twice. The last marks it done and announces it, and only the commit
+// that moved it to done may announce.
+//
+// KV:
+//   ["raffle", id]            -> Raffle
+//   ["raffleq", endsAt, id]   -> 1       open ones, soonest first; gone once rolled
+//   ["raffle_in", id, uid]    -> {name, ts}  one entry per member
+//   ["rafflen", id]           -> KvU64   how many entered (a sum: entries never conflict)
+//   ["raffle_paid", id, uid]  -> amount  a winner already paid
+type Raffle = {
+  id: string; amount: number; winners: number; endsAt: number; createdAt: number;
+  text: string; msgId: string;
+  status: "open" | "rolling" | "done" | "cancelled";
+  picked?: { uid: string; name: string }[];
+  each?: number; entries?: number; doneAt?: number;
+};
+const RAFFLE_TTL = 14 * 24 * 60 * 60 * 1000;   // kept this long after it ends
+const RAFFLE_MAX_ENTRIES = 5000;
+// What tung says when the panel leaves the message blank. {n} is the prize and
+// {w} the winners ("1 winner", "3 winners"); a custom message may use them too.
+const RAFFLE_LINES = [
+  "tung is feeling generous. {n} sahurs for {w}. put your hand in the drum.",
+  "the drum has {n} sahurs inside it. {w} will hear it ring. enter before it stops.",
+  "tung opens his palm. {n} sahurs rest in it. {w} will carry them home.",
+  "a giveaway from the wood itself: {n} sahurs, {w}. enter, then wait.",
+  "{n} sahurs. {w}. the drum rolls when the sand runs out.",
+  "tung has counted out {n} sahurs and cannot decide who deserves them. {w}. the drum will decide.",
+];
+function raffleFill(text: string, amount: number, winners: number): string {
+  const w = winners + (winners === 1 ? " winner" : " winners");
+  return text.replaceAll("{n}", String(amount)).replaceAll("{w}", w);
+}
+// an unbiased whole number below n, from the platform's CSPRNG
+function randBelow(n: number): number {
+  const lim = Math.floor(0x100000000 / n) * n;
+  const b = new Uint32Array(1);
+  for (;;) {
+    crypto.getRandomValues(b);
+    if (b[0] < lim) return b[0] % n;
+  }
+}
+let raffleDueSeen = 0;     // soonest end this isolate knows of; 0 = never looked
+let raffleLookedAt = 0;
+let raffleBusy = false;
+// Cheap enough to sit on the room's poll: a comparison, until something is due.
+async function raffleTick(): Promise<void> {
+  const now = Date.now();
+  if (raffleBusy || (now < raffleDueSeen && now - raffleLookedAt < 60_000)) return;
+  raffleBusy = true;
+  try {
+    raffleLookedAt = now;
+    let next = Infinity;
+    for await (const e of kv.list({ prefix: ["raffleq"] }, { limit: 20 })) {
+      const endsAt = Number(e.key[1]);
+      if (endsAt > now) { next = endsAt; break; }
+      await rollRaffle(String(e.key[2]));
+    }
+    raffleDueSeen = next;
+  } catch (_e) {
+    raffleDueSeen = 0; // look again next time rather than trusting a half-read
+  } finally {
+    raffleBusy = false;
+  }
+}
+function raffleSoon(endsAt: number) {
+  if (!raffleDueSeen || endsAt < raffleDueSeen) raffleDueSeen = endsAt;
+  // best effort: an isolate that sleeps before then leaves it to the tick
+  const wait = Math.max(0, endsAt - Date.now()) + 250;
+  if (wait < 2 ** 31 - 1) setTimeout(() => { raffleTick().catch(() => {}); }, wait);
+}
+// who is in, and a fair draw of up to `winners` of them who are still members
+// in good standing. A member banned, timed out or shut out of the room since
+// they entered is passed over — the same gate entering answers to — and so is
+// an account that no longer exists.
+async function rafflePick(r: Raffle): Promise<{ picked: { uid: string; name: string }[]; entries: number }> {
+  const pool: { uid: string; name: string }[] = [];
+  for await (const e of kv.list<{ name: string }>({ prefix: ["raffle_in", r.id] }, { limit: RAFFLE_MAX_ENTRIES })) {
+    pool.push({ uid: String(e.key[2]), name: String(e.value?.name || "") });
+  }
+  const picked: { uid: string; name: string }[] = [];
+  // a partial Fisher-Yates: each draw takes one of those not yet drawn
+  let looked = 0;
+  for (let i = 0; i < pool.length && picked.length < r.winners && looked < r.winners * 5 + 50; i++, looked++) {
+    const j = i + randBelow(pool.length - i);
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+    // deno-lint-ignore no-explicit-any
+    const app = (await kv.get<any>(["app", pool[i].uid])).value;
+    if (!app || app.status !== "approved" || chatBlock(app).blocked) continue;
+    picked.push({ uid: pool[i].uid, name: String(app.username || pool[i].name) });
+  }
+  return { picked, entries: pool.length };
+}
+// one winner's share, once — the marker and the balance ride in one commit
+async function rafflePay(id: string, uid: string, each: number): Promise<void> {
+  // the sahur watch's penalties reach giveaways: barred (giveaways too) takes
+  // nothing, a reduced member takes their percent
+  const pen = penaltyNow(await claimPenalty(uid));
+  const amt = pen.banned && pen.banGifts ? 0 : round2(each * pen.reducePct / 100);
+  for (let i = 0; i < 8; i++) {
+    const paid = await kv.get(["raffle_paid", id, uid]);
+    if (paid.value !== null) return;
+    const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", uid]);
+    const rec = cur.value ?? { bal: 0, lastClaim: 0 };
+    const base = Number.isFinite(rec.bal) ? rec.bal : 0;
+    const res = await kv.atomic().check(paid).check(cur)
+      .set(["raffle_paid", id, uid], amt, { expireIn: RAFFLE_TTL })
+      .set(["cas", uid], { ...rec, bal: round2(base + amt) }, { expireIn: CAS_TTL })
+      .commit();
+    if (res.ok) return;
+  }
+}
+// Roll one giveaway if it is due (or now, when the panel says so). Safe to call
+// any number of times from anywhere; returns the record as it ends up.
+async function rollRaffle(id: string, force = false): Promise<Raffle | null> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    let e = await kv.get<Raffle>(["raffle", id]);
+    let r = e.value;
+    if (!r) {
+      for await (const q of kv.list({ prefix: ["raffleq"] }, { limit: 200 })) if (q.key[2] === id) await kv.delete(q.key);
+      return null;
+    }
+    if (r.status === "done" || r.status === "cancelled") {
+      await kv.delete(["raffleq", r.endsAt, id]);
+      return r;
+    }
+    if (r.status === "open") {
+      const now = Date.now();
+      if (!force && now < r.endsAt) return r;
+      const { picked, entries } = await rafflePick(r);
+      const each = picked.length ? Math.floor(r.amount * 100 / picked.length) / 100 : 0;
+      const next: Raffle = { ...r, status: "rolling", picked, each, entries, ...(now < r.endsAt ? { endsAt: now } : {}) };
+      const op = kv.atomic().check(e).set(["raffle", id], next, { expireIn: RAFFLE_TTL });
+      if (next.endsAt !== r.endsAt) op.delete(["raffleq", r.endsAt, id]).set(["raffleq", next.endsAt, id], 1, { expireIn: RAFFLE_TTL });
+      if (!(await op.commit()).ok) continue; // another roller got there; read what it did
+      e = await kv.get<Raffle>(["raffle", id]);
+      r = e.value;
+      if (!r) return null;
+    }
+    // rolling: pay everyone owed, then close it — exactly one commit announces
+    for (const w of r.picked || []) await rafflePay(id, w.uid, Number(r.each) || 0);
+    const cur = await kv.get<Raffle>(["raffle", id]);
+    if (!cur.value || cur.value.status !== "rolling") return cur.value;
+    const done: Raffle = { ...cur.value, status: "done", doneAt: Date.now() };
+    const fin = await kv.atomic().check(cur)
+      .set(["raffle", id], done, { expireIn: RAFFLE_TTL })
+      .delete(["raffleq", cur.value.endsAt, id])
+      .commit();
+    if (!fin.ok) continue;
+    const names = (done.picked || []).map((w) => w.name);
+    const list = names.length <= 1 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+    const text = !done.entries
+      ? "nobody put a hand in the drum. tung keeps his " + done.amount + " sahurs."
+      : !names.length
+      ? "the drum stopped on nobody who could take it. tung keeps his " + done.amount + " sahurs."
+      : "the drum stopped on " + list + ". " + done.each + " sahurs" + (names.length > 1 ? " each" : "") +
+        ". (" + done.entries + " entered)";
+    await appendEvent({
+      type: "msg", id: rid(8), name: WISDOM_NAME, text, reply: null, from: "tung",
+      raffleEnd: { id, winners: names, each: done.each, entries: done.entries || 0 },
+    });
+    return done;
+  }
+  return (await kv.get<Raffle>(["raffle", id])).value;
+}
+
+// ---------------------------------------------------------------------------
 // The global half of the web veil. This says the veil is open at all; whether
 // it is open to a given member is their own per-account flag (see /veil). Both
 // halves live outside the deploy — the flag in KV, flipped from /admin, so the
@@ -1078,7 +1269,29 @@ async function deleteMessage(id: string, by = ""): Promise<boolean> {
 
 // Admin dump of retained chat lines. Public /events?since=0 only ships
 // OPEN_MSGS; this walks the same HISTORY window and returns every msg.
-async function listChatMessages(): Promise<unknown[]> {
+// One room line as the panel reads it.
+// deno-lint-ignore no-explicit-any
+function chatLine(ev: any) {
+  return {
+    id: ev.id,
+    name: ev.name,
+    text: ev.text,
+    reply: ev.reply ?? null,
+    from: ev.from ?? null,
+    gift: ev.gift ?? null,
+    ...(ev.raffle ? { raffle: ev.raffle } : {}),
+    ...(ev.raffleEnd ? { raffleEnd: ev.raffleEnd } : {}),
+    seq: ev.seq,
+    ts: typeof ev.ts === "number" ? ev.ts : 0,
+    // the dump is the one place a deleted line still shows, marked
+    ...(deletedLine(ev)
+      ? { deleted: true, deletedAt: Number(ev.deletedAt) || 0, deletedBy: ev.deletedBy || "" }
+      : {}),
+  };
+}
+// The retained log, and the seq of the newest event in it — where a reader
+// that goes on to poll picks up from.
+async function listChatMessages(): Promise<{ messages: unknown[]; cursor: number }> {
   // deno-lint-ignore no-explicit-any
   const recent: any[] = [];
   // deno-lint-ignore no-explicit-any
@@ -1087,24 +1300,13 @@ async function listChatMessages(): Promise<unknown[]> {
   }
   recent.reverse();
   const messages: unknown[] = [];
+  let cursor = 0;
   for (const ev of recent) {
+    if (ev && typeof ev.seq === "number") cursor = Math.max(cursor, ev.seq);
     if (!ev || ev.type !== "msg") continue;
-    messages.push({
-      id: ev.id,
-      name: ev.name,
-      text: ev.text,
-      reply: ev.reply ?? null,
-      from: ev.from ?? null,
-      gift: ev.gift ?? null,
-      seq: ev.seq,
-      ts: typeof ev.ts === "number" ? ev.ts : 0,
-      // the dump is the one place a deleted line still shows, marked
-      ...(deletedLine(ev)
-        ? { deleted: true, deletedAt: Number(ev.deletedAt) || 0, deletedBy: ev.deletedBy || "" }
-        : {}),
-    });
+    messages.push(chatLine(ev));
   }
-  return messages;
+  return { messages, cursor };
 }
 
 // Change some fields on an application record without clobbering whatever else
@@ -4398,6 +4600,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   if (req.method === "GET" && path === "/events") {
     const user = await authUser(url.searchParams.get("token"));
     if (!user) return json({ error: "unauthorized" }, 401);
+    // a giveaway whose timer has run out is rolled on the room's own traffic;
+    // until one is due this is a comparison and nothing else
+    await raffleTick();
     // banned / timed-out / chat-banned users get a blocked payload instead of
     // the room, so the client shows the ban screen and stops polling. This is
     // the read half of the chat ban: no events, so no messages, no reactions,
@@ -4953,6 +5158,45 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // the next pass re-reads and finds out which.
     }
     return json({ error: "busy" }, 503);
+  }
+
+  // ---------- enter one of tung's giveaways ----------
+  // One entry per member, and entering is all it is: nothing is paid here, so
+  // there is nothing to race. The commit is checked against the giveaway's own
+  // record, which only changes when it is rolled or called off, so an entry can
+  // never land in a draw that has already been made.
+  if (req.method === "POST" && path === "/raffle/enter") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    const user = await authUser(b.token);
+    if (!user) return json({ error: "unauthorized" }, 401);
+    // the card lives in the room, so it answers to the room's gate
+    if (chatBlock(user).blocked) return json({ error: "blocked" }, 403);
+    const id = clip(b.id, 32);
+    if (!id) return json({ error: "missing" }, 400);
+    if (!allow("raffle:" + user.id, 20, 10_000)) return tooMany(10);
+    await raffleTick();
+    const pen = penaltyNow(await claimPenalty(user.id));
+    if (pen.banned && pen.banGifts) return json({ error: "claim_banned", until: pen.banUntil }, 403);
+    const re = await kv.get<Raffle>(["raffle", id]);
+    const r = re.value;
+    if (!r) return json({ error: "gone" }, 404);
+    if (r.status !== "open" || Date.now() >= r.endsAt) return json({ error: "over", status: r.status }, 409);
+    const mine = await kv.get(["raffle_in", id, user.id]);
+    let already = mine.value !== null;
+    if (!already) {
+      const res = await kv.atomic().check(re).check(mine)
+        .set(["raffle_in", id, user.id], { name: user.username, ts: Date.now() }, { expireIn: RAFFLE_TTL })
+        .sum(["rafflen", id], 1n)
+        .commit();
+      if (!res.ok) {
+        // either they entered twice at once, or the draw was made in between
+        if ((await kv.get(["raffle_in", id, user.id])).value !== null) already = true;
+        else return json({ error: "over" }, 409);
+      }
+    }
+    const n = (await kv.get<Deno.KvU64>(["rafflen", id])).value;
+    return json({ ok: true, already, entries: n ? Number(n.value) : 0, endsAt: r.endsAt });
   }
 
   // ======================= THE PIT (player vs player) =======================
@@ -5695,8 +5939,30 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   // ---------- admin: dump retained chat (not part of the other list loads) ----------
   if (req.method === "GET" && path === "/admin/chat") {
     if (!adminOk(req, url)) return json({ error: "forbidden" }, 403);
-    const messages = await listChatMessages();
-    return json({ messages, count: messages.length });
+    // ?since= is Talk to da people's room view keeping up: only what landed
+    // after the cursor it already holds — usually nothing, or a line or two —
+    // rather than the whole log again on every pass. Deletions ride along as
+    // ids so the lines it is already showing can be marked.
+    const since = Number(url.searchParams.get("since") || "0") || 0;
+    if (since > 0) {
+      const messages: unknown[] = [], dels: string[] = [];
+      let cursor = since;
+      // deno-lint-ignore no-explicit-any
+      for await (const e of kv.list<any>({ prefix: ["ev"], start: ["ev", since + 1] }, { limit: HISTORY })) {
+        const ev = e.value;
+        if (!ev) continue;
+        if (typeof ev.seq === "number") cursor = Math.max(cursor, ev.seq);
+        if (ev.type === "msg") messages.push(chatLine(ev));
+        else if (ev.type === "del") {
+          for (const d of Array.isArray(ev.ids) ? ev.ids : [ev.id]) if (typeof d === "string") dels.push(d);
+        }
+      }
+      return json({ messages, dels, cursor });
+    }
+    const { messages, cursor } = await listChatMessages();
+    // an empty log still has a counter, so a reader starts from where the
+    // next line will land rather than from nothing
+    return json({ messages, count: messages.length, cursor: cursor || ((await kv.get<number>(["seq"])).value ?? 0) });
   }
 
   // ---------- admin: read a conversation ----------
@@ -6037,6 +6303,92 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       from: asTung ? "tung" : null,
     });
     return json({ ok: true, id, username: name, tung: asTung });
+  }
+
+  // ---------- admin: tung's giveaways with entries ----------
+  // Post one, see them, roll one early, call one off, see who entered. All
+  // key-gated POSTs. See the giveaways section near the top for how a roll works.
+  if (req.method === "POST" && path.startsWith("/admin/raffle/")) {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const what = path.slice("/admin/raffle/".length);
+    await raffleTick();
+
+    if (what === "create") {
+      const amount = round2(Number(b.amount));
+      const winners = Math.round(Number(b.winners));
+      const minutes = Number(b.minutes);
+      if (!Number.isFinite(amount) || amount < 1 || amount > 1_000_000) return json({ error: "the prize must be 1 to 1,000,000 sahurs" }, 400);
+      if (!Number.isFinite(winners) || winners < 1 || winners > 50) return json({ error: "1 to 50 winners" }, 400);
+      if (!Number.isFinite(minutes) || minutes < 1 || minutes > 7 * 24 * 60) return json({ error: "it can run 1 minute to 7 days" }, 400);
+      if (amount / winners < 0.01) return json({ error: "too many winners for that prize" }, 400);
+      const custom = clip(b.text, 300);
+      const text = raffleFill(custom || RAFFLE_LINES[randBelow(RAFFLE_LINES.length)], amount, winners);
+      const now = Date.now();
+      const id = rid(10), msgId = rid(8);
+      const endsAt = now + Math.round(minutes * 60_000);
+      const r: Raffle = { id, amount, winners, endsAt, createdAt: now, text, msgId, status: "open" };
+      // the record and its place in the queue before the line that advertises it,
+      // so the first click cannot arrive before there is something to enter
+      await kv.atomic()
+        .set(["raffle", id], r, { expireIn: endsAt - now + RAFFLE_TTL })
+        .set(["raffleq", endsAt, id], 1, { expireIn: endsAt - now + RAFFLE_TTL })
+        .commit();
+      await appendEvent({
+        type: "msg", id: msgId, name: WISDOM_NAME, text, reply: null, from: "tung",
+        raffle: { id, amount, winners, endsAt },
+      });
+      raffleSoon(endsAt);
+      return json({ ok: true, raffle: r });
+    }
+
+    if (what === "list") {
+      const all: (Raffle & { count: number })[] = [];
+      for await (const e of kv.list<Raffle>({ prefix: ["raffle"] }, { limit: 300 })) {
+        if (e.value && e.key.length === 2) all.push({ ...e.value, count: 0 });
+      }
+      all.sort((x, y) => y.createdAt - x.createdAt);
+      const out = all.slice(0, 30);
+      for (const r of out) {
+        const n = (await kv.get<Deno.KvU64>(["rafflen", r.id])).value;
+        r.count = n ? Number(n.value) : 0;
+      }
+      return json({ ok: true, raffles: out, lines: RAFFLE_LINES });
+    }
+
+    const id = clip(b.id, 32);
+    const re = id ? await kv.get<Raffle>(["raffle", id]) : null;
+    if (!re || !re.value) return json({ error: "not found" }, 404);
+
+    if (what === "entries") {
+      const names: string[] = [];
+      for await (const e of kv.list<{ name: string }>({ prefix: ["raffle_in", id] }, { limit: 1000 })) {
+        names.push(String(e.value?.name || ""));
+      }
+      return json({ ok: true, names });
+    }
+
+    if (what === "end") {
+      if (re.value.status !== "open" && re.value.status !== "rolling") return json({ error: "it is already over" }, 409);
+      return json({ ok: true, raffle: await rollRaffle(id, true) });
+    }
+
+    if (what === "cancel") {
+      if (re.value.status !== "open") return json({ error: "only an open giveaway can be called off" }, 409);
+      const r: Raffle = { ...re.value, status: "cancelled", doneAt: Date.now() };
+      const res = await kv.atomic().check(re)
+        .set(["raffle", id], r, { expireIn: RAFFLE_TTL })
+        .delete(["raffleq", re.value.endsAt, id])
+        .commit();
+      if (!res.ok) return json({ error: "it changed under you — look again" }, 409);
+      await appendEvent({
+        type: "msg", id: rid(8), name: WISDOM_NAME, text: "tung closed his palm. the giveaway is off.",
+        reply: null, from: "tung", raffleEnd: { id, cancelled: true },
+      });
+      return json({ ok: true, raffle: r });
+    }
+    return json({ error: "not found" }, 404);
   }
 
   if (req.method === "GET" && path === "/admin/veil") {
@@ -6660,6 +7012,9 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    // a person presses this once every two hours; a script asking again and
+    // again for the cooldown to end is exactly what this caps
+    if (!allow("claim:" + u.id, 6, 10_000)) return tooMany(10);
     // a penalty from the sahur watch: barred outright, paid less, or made to
     // wait longer — see the watch section above /cas/me
     const pen = penaltyNow(await claimPenalty(u.id));
@@ -7623,6 +7978,19 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .app h3 .when{margin-left:8px;font-size:11px;font-weight:500;color:#c8823c;letter-spacing:0;text-transform:none}
 .danger p{color:#e9d9c2;line-height:1.45}
 .content.roomy{max-width:1180px}
+.rfform textarea{margin:4px 0 12px}
+.rflab{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:#c8823c;letter-spacing:.02em}
+.rflab small{font-weight:500}
+.rfgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.rfgrid .row{flex-wrap:nowrap}
+.rfgrid select{min-width:0;flex:0 0 120px}
+.rfnote{font-size:12px;color:#c8823c}
+.rfitem .rfline{margin:2px 0 8px;color:#e9d9c2;font-size:13px}
+.rfitem .rftext{margin:0 0 8px;color:#f5efe0;font-style:italic;white-space:pre-wrap;word-break:break-word}
+.rfitem .rfwho{margin-top:8px;font-size:12px;color:#e9d9c2;line-height:1.6}
+.wchip.rfopen{background:#4a3410;color:#f2c063}
+.wchip.rfdone{background:#1f3a24;color:#b7e4bf}
+.wchip.rfoff{background:#3a2a24;color:#d9b8a8}
 .wtabs{display:flex;gap:6px;margin:0 0 16px}
 .wtabs button{background:#241505;color:#e9d9c2;border:1px solid #3a2410}
 .wtabs button.on{background:#c8823c;color:#1d1206;border-color:#c8823c}
@@ -7702,6 +8070,18 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 #pane-talk .msg.me .when{color:#d4b48a}
 #pane-talk .body{display:block;white-space:pre-wrap;word-break:break-word}
 #pane-talk .talkform{display:flex;gap:8px;padding:10px;background:#2b1a0a;border-top:1px solid #3a2410}
+#pane-talk .talkroom{padding:0 8px 6px}
+#pane-talk .talkroomrow .dmname{color:#f2c063}
+#pane-talk .talkrb{margin-left:auto;padding:1px 9px;font-size:10px;font-weight:700;border-radius:999px;border:1px solid #3a2410;background:transparent;color:#c8823c;cursor:pointer;opacity:.45}
+#pane-talk .msg:hover .talkrb,#pane-talk .talkrb:focus{opacity:1}
+#pane-talk .msg.me .talkrb{color:#f5efe0;border-color:#a8773f}
+#pane-talk .talkquote{display:block;font-size:11px;color:#c8a878;border-left:2px solid #c8823c;padding:1px 0 1px 8px;margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pane-talk .msg.me .talkquote{color:#f5e2c4;border-left-color:#f2c063}
+#pane-talk .talkgift{font-size:10px;font-weight:800;color:#1d1206;background:#f2c063;border-radius:999px;padding:1px 7px}
+#pane-talk .talkreply{display:flex;align-items:center;gap:8px;padding:7px 12px;background:#241505;border-top:1px solid #3a2410;font-size:12px;color:#c8a878}
+#pane-talk .talkreply[hidden]{display:none}
+#pane-talk .talkreply span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pane-talk .talkreply button{padding:0 9px;font-size:15px;line-height:22px;border-radius:7px;border:1px solid #3a2410;background:transparent;color:#c8823c;cursor:pointer}
 #pane-talk .talkform input{flex:1;min-width:0}
 #pane-talk .talkform input:disabled{opacity:.55}
 </style></head><body>
@@ -7717,6 +8097,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn" data-pane="dms">Direct messages <span class="count" id="count-dms"></span></button>
 <button type="button" class="navbtn" data-pane="talk">Talk to da people <span class="count" id="count-talk"></span></button>
 <button type="button" class="navbtn" data-pane="postas">Post as&hellip;</button>
+<button type="button" class="navbtn" data-pane="raffles">Giveaways <span class="count" id="count-raffles"></span></button>
 <button type="button" class="navbtn" data-pane="veil">Web veil <span class="count" id="count-veil"></span></button>
 <button type="button" class="navbtn" data-pane="danger">Wipe data</button>
 </aside>
@@ -7770,9 +8151,11 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 </section>
 <section class="pane" id="pane-talk">
 <h2>Talk to da people</h2>
-<p class="hint">Pick a member and write to them as tung. It is a private direct message: it lands in <b>their</b> conversations as a DM from tung, nobody else sees it, and their replies land here. A chat ban still covers this.</p>
+<p class="hint"><b>general chat</b>, pinned at the top, is the room: what you write there goes to everyone as tung, with his mark, and you can reply to any line. Pick a member instead to write to them as tung in private: it lands in <b>their</b> conversations as a DM from tung, nobody else sees it, and their replies land here. A chat ban still covers a DM.</p>
 <div class="talkbox">
 <div class="talkrail">
+<div class="talkrailhead">the room</div>
+<div class="talkroom"><button type="button" class="dmrow talkroomrow" id="talkRoom"><span class="dmtop"><span class="dmname">general chat</span></span><span class="dmlast">speak to everyone as tung</span></button></div>
 <div class="talkrailhead">conversations</div>
 <div class="talknew"><select id="talkWho"><option value="">load first, then pick somebody&hellip;</option></select></div>
 <div id="talklist" class="talklist"></div>
@@ -7780,17 +8163,35 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 <div class="talkmain">
 <div class="talkhead"><span class="talkname" id="talkname">nobody yet</span><span class="talksub" id="talksub">pick somebody</span></div>
 <div id="talklog" class="talklog"><div class="talkempty">his conversations are on the left. pick a member to start one.</div></div>
+<div class="talkreply" id="talkreply" hidden><span id="talkreplytext"></span><button type="button" id="talkreplyx" title="don't quote it">&times;</button></div>
 <form class="talkform" id="talkform"><input id="talkinput" autocomplete="off" maxlength="1000" placeholder="message them as tung&hellip;" disabled><button class="load" id="talksend" type="submit">send</button></form>
 </div>
 </div>
 </section>
 <section class="pane" id="pane-postas">
 <h2>Post as&hellip;</h2>
-<p class="hint">Drop a message into the chat under somebody else's name. The name must belong to an approved member, or be <b>tung</b> — who posts with his own mark, exactly like a Wisdom. Reply-to is optional: give the id of a message (the chat log shows one under each line) and the quote is filled in from what that message actually says.</p>
-<div class="field"><label for="paName">post as</label><input id="paName" class="uname" placeholder="username, or tung" autocomplete="off"></div>
+<p class="hint">Drop a message into the chat under an approved member's name. Reply-to is optional: give the id of a message (the chat log shows one under each line) and the quote is filled in from what that message actually says. To speak as <b>tung</b>, use <b>Talk to da people</b> &rarr; general chat.</p>
+<div class="field"><label for="paName">post as</label><input id="paName" class="uname" placeholder="username" autocomplete="off"></div>
 <div class="field"><label for="paText">message</label><textarea id="paText" class="uname" placeholder="what they said"></textarea></div>
 <div class="field"><label for="paReply">reply to (optional message id)</label><input id="paReply" class="uname" placeholder="leave empty for no quote" autocomplete="off"></div>
 <div class="row" style="margin-top:12px"><button class="load" id="paSend">post it</button><span id="paMsg" class="hint"></span></div>
+</section>
+<section class="pane" id="pane-raffles">
+<h2>Giveaways</h2>
+<p class="hint">Post a giveaway to the room as tung. Members press <b>enter</b> on it — once each, and being first counts for nothing. When the timer runs out the drum picks the winners at random and the prize is split between them; tung announces who won and it is paid straight into their balance. Leave the message blank and tung says one of his own lines. <b>{n}</b> and <b>{w}</b> in a message become the prize and the winners.</p>
+<div class="app rfform">
+<label class="rflab" for="rfText">message <small>(optional)</small></label>
+<textarea id="rfText" maxlength="300" placeholder="leave blank and tung picks one of his lines"></textarea>
+<div class="rfgrid">
+<label class="rflab">prize, in sahurs<input id="rfAmount" type="number" min="1" step="any" value="100"></label>
+<label class="rflab">winners<input id="rfWinners" type="number" min="1" max="50" step="1" value="1"></label>
+<label class="rflab">runs for<span class="row"><input id="rfLen" type="number" min="1" step="any" value="10"><select id="rfUnit"><option value="1">minutes</option><option value="60">hours</option><option value="1440">days</option></select></span></label>
+</div>
+<div class="row" style="margin-top:12px"><button class="load" id="rfPost" type="button">post giveaway</button><span id="rfPreview" class="rfnote"></span></div>
+<small id="rfMsg" class="rfnote" style="display:block;margin-top:6px"></small>
+</div>
+<div class="row" style="margin:18px 0 10px"><h3 style="margin:0;flex:1">posted</h3><button type="button" id="rfRefresh" style="background:#241505;color:#e9d9c2;border:1px solid #3a2410">refresh</button></div>
+<div id="rflist"><div class="empty">enter your admin key and open this pane.</div></div>
 </section>
 <section class="pane" id="pane-veil">
 <h2>Web veil</h2>
@@ -7915,8 +8316,9 @@ function showPane(id){
   for(var j=0;j<btns.length;j++) btns[j].classList.toggle("on", btns[j].getAttribute("data-pane")===id);
   var content=document.querySelector(".content");
   if(content)content.classList.toggle("wide", id==="talk");
-  if(content)content.classList.toggle("roomy", id==="watch");
+  if(content)content.classList.toggle("roomy", id==="watch"||id==="raffles");
   if(id==="watch")watchOpen();
+  if(id==="raffles")rfOpen();else rfStop();
   if(id==="talk")talkOpen();else talkStop();
 }
 var navBtns=document.querySelectorAll(".navbtn");
@@ -7951,6 +8353,8 @@ function postAs(){
   var replyTo=document.getElementById("paReply").value.trim();
   var out=document.getElementById("paMsg");
   if(!name||!text.trim()){out.textContent="need a name and a message.";return;}
+  /* tung talks from his own pane now, where he can see the room he is talking to */
+  if(/^tung$/i.test(name)){out.textContent="tung speaks from Talk to da people \u2192 general chat now.";return;}
   out.textContent="posting...";
   fetch("/admin/postas",{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({key:key,username:name,text:text,replyTo:replyTo})})
@@ -7960,7 +8364,7 @@ function postAs(){
           (d.error==="no such message"?"no message with that id — it may have aged out.":d.error);
         return;
       }
-      out.textContent="posted as "+d.username+(d.tung?" (the shrine)":"")+".";
+      out.textContent="posted as "+d.username+".";
       document.getElementById("paText").value="";
       document.getElementById("paReply").value="";
     }).catch(function(){out.textContent="network error.";});
@@ -8572,7 +8976,7 @@ function talkFillUsers(){
   dmOption(talkWho,"",usersCache?"message somebody\u2026":"load first, then pick somebody\u2026");
   (usersCache||[]).forEach(function(u){dmOption(talkWho,u.id,u.username);});
   if(prev)talkWho.value=prev;
-  else if(talkUser)talkWho.value=talkUser.id;
+  else if(talkUser&&!talkUser.room)talkWho.value=talkUser.id;
 }
 function talkFace(w,name){
   w.className="who tung";
@@ -8619,13 +9023,14 @@ function talkPaintList(convs){
   var listSig=rows.map(function(c){return c.id+"/"+c.unread+"/"+(c.last||"")+"/"+(c.closed?1:0)+"/"+c.name;}).join("|")+(talkUser?"#"+talkUser.id:"");
   if(listSig===talkListSig&&talklist.childNodes.length)return;
   talkListSig=listSig;
+  if(talkRoomBtn)talkRoomBtn.classList.toggle("on",talkIsRoom());
   talklist.innerHTML="";
   var seen=false;
   rows.forEach(function(c){
     if(talkUser&&c.id===talkUser.id)seen=true;
     talklist.appendChild(talkRow(c));
   });
-  if(talkUser&&!seen){
+  if(talkUser&&!talkUser.room&&!seen){
     talklist.insertBefore(talkRow({id:talkUser.id,name:talkUser.name,last:"",unread:0,closed:false}),talklist.firstChild);
   }
   if(!rows.length&&!talkUser){
@@ -8687,6 +9092,7 @@ function talkArm(){if(talkT)clearTimeout(talkT);talkT=setTimeout(talkPoll,2500);
 function talkPoll(){
   if(talkSending){talkT=setTimeout(talkPoll,400);return;}
   if(!talkUser)return;
+  if(talkUser.room){roomFetch();return;}
   talkFetchThread(true);
 }
 function talkFetchThread(silent){
@@ -8706,6 +9112,8 @@ function talkFetchThread(silent){
 function talkOpenUser(id,name){
   if(!id)return;
   talkUser={id:id,name:name||""};
+  talkReply(null);
+  talkinput.placeholder="message them as tung\u2026";
   talkSig="";
   talkListSig="";
   talkClosed=false;
@@ -8722,6 +9130,7 @@ function talkOpenUser(id,name){
 }
 function talkSend(){
   if(!talkUser){talksub.textContent="pick somebody first.";return;}
+  if(talkUser.room){roomSend();return;}
   var text=talkinput.value.trim();
   if(!text)return;
   if(talkClosed){talksub.textContent=talkWhy(talkReason||"closed");return;}
@@ -8743,7 +9152,8 @@ function talkOpen(){
   talkStop();
   talkFetchList();
   talkListT=setInterval(function(){talkFetchList();},8000);
-  if(talkUser)talkFetchThread(true);
+  if(talkUser&&talkUser.room)roomFetch();
+  else if(talkUser)talkFetchThread(true);
 }
 if(talkWho)talkWho.onchange=function(){
   var id=talkWho.value;if(!id)return;
@@ -8751,6 +9161,121 @@ if(talkWho)talkWho.onchange=function(){
   talkOpenUser(id,label?label.textContent:"");
 };
 if(talkform)talkform.addEventListener("submit",function(ev){ev.preventDefault();talkSend();});
+/* ---- general chat: the room, from his seat ----
+   Everybody's lines on the left under their names, his on the right, and what
+   he writes goes to everyone with his mark (it is /admin/postas as tung, the
+   same line a Wisdom is). The whole retained log is read once when it opens;
+   after that each pass asks only for what landed after the newest line it
+   holds (?since=), which is usually nothing, every three seconds, and only
+   while this pane and this conversation are open and the tab is in view. */
+var talkRoomBtn=document.getElementById("talkRoom"),talkreply=document.getElementById("talkreply");
+var talkreplytext=document.getElementById("talkreplytext"),talkReplyTo=null;
+var roomCursor=0,roomLoaded=false,roomLines={};
+function talkIsRoom(){return !!(talkUser&&talkUser.room);}
+function talkReply(m){
+  talkReplyTo=m||null;
+  if(!talkreply)return;
+  talkreply.hidden=!talkReplyTo;
+  if(talkReplyTo){talkreplytext.textContent="replying to "+(m.name||"")+": "+String(m.text||"").slice(0,140);talkinput.focus();}
+}
+if(document.getElementById("talkreplyx"))document.getElementById("talkreplyx").onclick=function(){talkReply(null);};
+function roomLine(m){
+  var isT=m.from==="tung";
+  var row=document.createElement("div");row.className=(isT?"msg me":"msg")+(m.deleted?" deleted":"");
+  var meta=document.createElement("div");meta.className="meta";
+  if(isT)talkFace(meta.appendChild(document.createElement("span")),m.name||"tung");
+  else{var w=document.createElement("span");w.className="who";w.textContent=m.name||"";meta.appendChild(w);}
+  if(m.ts){var tm=document.createElement("span");tm.className="when";tm.textContent=new Date(m.ts).toLocaleString();meta.appendChild(tm);}
+  if(m.gift&&m.gift.amount){var gt=document.createElement("span");gt.className="talkgift";gt.textContent="giveaway \u00b7 "+m.gift.amount+" sahurs";meta.appendChild(gt);}
+  if(m.raffle&&m.raffle.amount){var rt=document.createElement("span");rt.className="talkgift";rt.textContent="giveaway \u00b7 "+m.raffle.amount+" sahurs \u00b7 "+m.raffle.winners+(m.raffle.winners===1?" winner":" winners")+" \u00b7 ends "+new Date(m.raffle.endsAt).toLocaleTimeString();meta.appendChild(rt);}
+  if(m.deleted){var dt=document.createElement("span");dt.className="deltag";dt.textContent="(deleted)";meta.appendChild(dt);}
+  else if(String(m.id).indexOf("pending-")!==0){
+    var rb=document.createElement("button");rb.type="button";rb.className="talkrb";rb.textContent="reply";
+    rb.onclick=function(){talkReply(m);};meta.appendChild(rb);
+  }
+  row.appendChild(meta);
+  if(m.reply&&m.reply.name){var q=document.createElement("span");q.className="talkquote";q.textContent=m.reply.name+": "+(m.reply.text||"");row.appendChild(q);}
+  var bd=document.createElement("span");bd.className="body";bd.textContent=m.text||"";row.appendChild(bd);
+  row._m=m;
+  return row;
+}
+/* one line in, or the newer copy of one already shown (a delete, or the real
+   line replacing the one drawn while it was sending) */
+function roomAdd(m){
+  if(!m||!m.id)return;
+  var empty=talklog.querySelector(".talkempty");if(empty)empty.remove();
+  var row=roomLine(m),old=roomLines[m.id];
+  if(old&&old.parentNode)old.parentNode.replaceChild(row,old);else talklog.appendChild(row);
+  roomLines[m.id]=row;
+  while(talklog.childNodes.length>600){var f=talklog.firstChild;if(f._m)delete roomLines[f._m.id];talklog.removeChild(f);}
+}
+function roomDel(id){var r=roomLines[id];if(!r||!r._m||r._m.deleted)return;var m=r._m;m.deleted=true;roomAdd(m);}
+function roomArm(){if(talkT)clearTimeout(talkT);talkT=setTimeout(talkPoll,document.hidden?9000:3000);}
+function roomFetch(){
+  var who=talkUser,run=talkRun;
+  if(!who||!who.room)return;
+  if(document.hidden&&roomLoaded){roomArm();return;}
+  if(!keyEl.value.trim()){talksub.textContent="enter your admin key first.";return;}
+  aget("/admin/chat"+(roomLoaded?"?since="+roomCursor:"")).then(function(r){return r.json();}).then(function(d){
+    if(run!==talkRun||talkUser!==who)return;
+    if(d.error){talksub.textContent=talkWhy(d.error);roomArm();return;}
+    var first=!roomLoaded,atBottom=talklog.scrollHeight-talklog.scrollTop-talklog.clientHeight<90;
+    if(first){talklog.innerHTML="";roomLines={};}
+    (d.messages||[]).forEach(roomAdd);
+    (d.dels||[]).forEach(roomDel);
+    if(typeof d.cursor==="number"&&d.cursor>roomCursor)roomCursor=d.cursor;
+    roomLoaded=true;
+    if(first&&!talklog.childNodes.length){var e=document.createElement("div");e.className="talkempty";e.textContent="nobody has said anything yet. the first line can be his.";talklog.appendChild(e);}
+    if(first||atBottom)talklog.scrollTop=talklog.scrollHeight;
+    roomArm();
+  }).catch(function(){if(run===talkRun&&talkUser===who){talksub.textContent="network error.";roomArm();}});
+}
+function talkOpenRoom(){
+  talkUser={id:"#room",name:"general chat",room:true};
+  talkSig="";talkListSig="";talkClosed=false;talkReason=null;
+  roomCursor=0;roomLoaded=false;roomLines={};
+  if(talkWho)talkWho.value="";
+  talkname.textContent="general chat";
+  talksub.textContent="as tung \u00b7 everyone in the room sees this";
+  talkinput.disabled=false;talkinput.placeholder="say it to the room as tung\u2026";
+  if(talksend)talksend.disabled=false;
+  talkReply(null);
+  talklog.innerHTML='<div class="talkempty">loading\u2026</div>';
+  talkPaintList(talkConvs||[]);
+  if(talkT){clearTimeout(talkT);talkT=null;}
+  roomFetch();
+}
+if(talkRoomBtn)talkRoomBtn.addEventListener("click",talkOpenRoom);
+function roomSend(){
+  var text=talkinput.value.trim();
+  if(!text)return;
+  var who=talkUser,rep=talkReplyTo;
+  talkinput.value="";talkReply(null);
+  talkSending++;
+  var tmp={id:"pending-"+Date.now(),name:"tung",from:"tung",text:text,ts:Date.now(),
+    reply:rep?{name:rep.name,text:String(rep.text||"").slice(0,140)}:null};
+  roomAdd(tmp);talklog.scrollTop=talklog.scrollHeight;
+  talksub.textContent="sending\u2026";
+  apost("/admin/postas",{username:"tung",text:text,replyTo:rep?rep.id:""}).then(function(d){
+    talkSending--;
+    var row=roomLines[tmp.id];delete roomLines[tmp.id];
+    if(talkUser!==who)return;
+    if(d.error){
+      if(row&&row.parentNode)row.parentNode.removeChild(row);
+      talkinput.value=text;talkReply(rep);
+      talksub.textContent=d.error==="no such message"?"that line has gone, so it cannot be quoted.":talkWhy(d.error);
+      return;
+    }
+    /* the real line (with the server's clock) replaces this one when it lands */
+    if(row){if(roomLines[d.id]){if(row.parentNode)row.parentNode.removeChild(row);}else{tmp.id=d.id;roomLines[d.id]=row;}}
+    talksub.textContent="as tung \u00b7 everyone in the room sees this";
+    roomFetch();
+  }).catch(function(){
+    talkSending--;
+    var row=roomLines[tmp.id];delete roomLines[tmp.id];if(row&&row.parentNode)row.parentNode.removeChild(row);
+    if(talkUser===who){talkinput.value=text;talkReply(rep);talksub.textContent="network error.";}
+  });
+}
 /* ---------------------------------------------------------------------------
    Sahur watch.
 
@@ -9066,4 +9591,110 @@ function paintRules(cfg,msg){
     }).catch(function(){out.textContent="network error.";});
   };
 }
+/* ---------------------------------------------------------------------------
+   Giveaways.
+
+   Posting one, and the ones already posted: a countdown for each open one
+   (this page's clock — nothing is asked of the server for it), roll it now,
+   call it off, see who entered. The list is read when the pane opens, after
+   anything done here, and once more a few seconds after an open one's timer
+   runs out so its winners show. Nothing polls while the pane is shut. */
+var rfList=document.getElementById("rflist"),rfT=null,rfData=null,rfAgain=null;
+function rfStop(){if(rfT){clearInterval(rfT);rfT=null;}if(rfAgain){clearTimeout(rfAgain);rfAgain=null;}}
+function rfFmt(ms){var s=Math.max(0,Math.ceil(ms/1000)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return d?d+"d "+h+"h "+m+"m":h?h+"h "+m+"m "+x+"s":m?m+"m "+x+"s":x+"s";}
+function rfMinutes(){return Number(document.getElementById("rfLen").value)*Number(document.getElementById("rfUnit").value);}
+function rfPreview(){
+  var a=Number(document.getElementById("rfAmount").value),w=Math.round(Number(document.getElementById("rfWinners").value)),mins=rfMinutes();
+  var out=document.getElementById("rfPreview");
+  if(!(a>=1)||!(w>=1)||!(mins>=1)){out.textContent="";return;}
+  out.textContent=(w===1?"one winner takes "+a:"each of "+w+" winners takes "+(Math.floor(a*100/w)/100))+" sahurs \u00b7 ends around "+new Date(Date.now()+mins*60000).toLocaleString();
+}
+["rfAmount","rfWinners","rfLen","rfUnit"].forEach(function(id){var el=document.getElementById(id);el.addEventListener("input",rfPreview);el.addEventListener("change",rfPreview);});
+function rfOpen(){rfPreview();rfLoad();}
+function rfLoad(){
+  if(!keyEl.value.trim()){rfList.innerHTML='<div class="empty">enter your admin key first.</div>';return;}
+  apost("/admin/raffle/list",{}).then(function(d){
+    if(d.error){rfList.innerHTML="";rfList.appendChild(wEl("div","empty",d.error+" \u2014 check your key."));setCount("raffles","");return;}
+    rfData=d.raffles||[];rfPaint();
+  }).catch(function(){rfList.innerHTML='<div class="empty">network error.</div>';});
+}
+function rfPaint(){
+  rfStop();rfList.innerHTML="";
+  var open=rfData.filter(function(r){return r.status==="open"||r.status==="rolling";}).length;
+  setCount("raffles",open||"");
+  if(!rfData.length){rfList.appendChild(wEl("div","empty","no giveaways yet."));return;}
+  var clocks=[];
+  rfData.forEach(function(r){
+    var c=wEl("div","app rfitem"),h=wEl("h3",null,r.amount+" sahurs \u00b7 "+r.winners+(r.winners===1?" winner":" winners"));
+    var st=r.status==="open"?["rfopen","open"]:r.status==="rolling"?["rfopen","rolling"]:r.status==="done"?["rfdone","done"]:["rfoff","called off"];
+    h.appendChild(wEl("span","wchip "+st[0],st[1]));
+    h.appendChild(wEl("span","when","posted "+new Date(r.createdAt).toLocaleString()));
+    c.appendChild(h);
+    c.appendChild(wEl("p","rftext",r.text));
+    var line=wEl("div","rfline");c.appendChild(line);
+    if(r.status==="open"){clocks.push({r:r,el:line});}
+    else if(r.status==="done"){
+      var ws=(r.picked||[]).map(function(p){return p.name;});
+      line.textContent=(r.entries||0)+" entered \u00b7 "+(ws.length?"won by "+ws.join(", ")+" \u2014 "+r.each+" sahurs"+(ws.length>1?" each":""):"nobody won it")+" \u00b7 rolled "+new Date(r.doneAt||r.endsAt).toLocaleString();
+    }else if(r.status==="rolling")line.textContent=r.count+" entered \u00b7 the drum is rolling\u2026";
+    else line.textContent=r.count+" had entered \u00b7 called off "+new Date(r.doneAt||r.createdAt).toLocaleString();
+    var acts=wEl("div","row"),who=wEl("button",null,"who entered ("+r.count+")");who.type="button";
+    who.style.cssText="background:#241505;color:#e9d9c2;border:1px solid #3a2410";
+    var list=wEl("div","rfwho");list.style.display="none";
+    who.onclick=function(){
+      if(list.style.display!=="none"){list.style.display="none";return;}
+      list.style.display="";list.textContent="loading\u2026";
+      apost("/admin/raffle/entries",{id:r.id}).then(function(d){
+        if(d.error){list.textContent=d.error;return;}
+        list.textContent=d.names.length?d.names.join(", "):"nobody yet.";
+      }).catch(function(){list.textContent="network error.";});
+    };
+    acts.appendChild(who);
+    if(r.status==="open"||r.status==="rolling"){
+      var roll=wEl("button","load","roll it now");roll.type="button";
+      roll.onclick=function(){
+        if(!confirm("Roll this giveaway now? Whoever has entered so far is in the draw."))return;
+        roll.disabled=true;apost("/admin/raffle/end",{id:r.id}).then(function(d){if(d.error)alert(d.error);rfLoad();}).catch(function(){roll.disabled=false;});
+      };
+      acts.appendChild(roll);
+    }
+    if(r.status==="open"){
+      var off=wEl("button","no","call it off");off.type="button";
+      off.onclick=function(){
+        if(!confirm("Call this giveaway off? Nobody wins and tung says so in the room."))return;
+        off.disabled=true;apost("/admin/raffle/cancel",{id:r.id}).then(function(d){if(d.error)alert(d.error);rfLoad();}).catch(function(){off.disabled=false;});
+      };
+      acts.appendChild(off);
+    }
+    c.appendChild(acts);c.appendChild(list);rfList.appendChild(c);
+  });
+  function tick(){
+    var due=false;
+    clocks.forEach(function(k){
+      var left=k.r.endsAt-Date.now();
+      k.el.textContent=k.r.count+" entered \u00b7 "+(left>0?"ends in "+rfFmt(left)+" ("+new Date(k.r.endsAt).toLocaleTimeString()+")":"time is up \u2014 the drum is rolling\u2026");
+      if(left<=0)due=true;
+    });
+    /* once one runs out, read the list again a few seconds later so the winners show */
+    if(due&&!rfAgain){rfAgain=setTimeout(function(){rfAgain=null;rfLoad();},4000);}
+  }
+  if(clocks.length){tick();rfT=setInterval(tick,1000);}
+}
+document.getElementById("rfRefresh").onclick=rfLoad;
+document.getElementById("rfPost").onclick=function(){
+  var btn=this,msg=document.getElementById("rfMsg");
+  var body={text:document.getElementById("rfText").value.trim(),amount:Number(document.getElementById("rfAmount").value),
+    winners:Math.round(Number(document.getElementById("rfWinners").value)),minutes:rfMinutes()};
+  if(!(body.amount>=1)){msg.textContent="the prize has to be at least 1 sahur.";return;}
+  if(!(body.winners>=1&&body.winners<=50)){msg.textContent="1 to 50 winners.";return;}
+  if(!(body.minutes>=1)){msg.textContent="it has to run at least a minute.";return;}
+  if(!confirm("Post a giveaway of "+body.amount+" sahurs for "+body.winners+(body.winners===1?" winner":" winners")+", running "+rfFmt(body.minutes*60000)+"?"))return;
+  btn.disabled=true;msg.textContent="posting\u2026";
+  apost("/admin/raffle/create",body).then(function(d){
+    btn.disabled=false;
+    if(d.error){msg.textContent=d.error;return;}
+    msg.textContent="posted. tung said: \u201c"+d.raffle.text+"\u201d";
+    document.getElementById("rfText").value="";rfLoad();
+  }).catch(function(){btn.disabled=false;msg.textContent="network error.";});
+};
 </script></body></html>`;

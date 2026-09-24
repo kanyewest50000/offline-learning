@@ -360,6 +360,10 @@ try {
     must(left === 0, "a deleted account must take its claim log, penalty and flag with it (" + left + " left)");
     timing = "checked";
   }
+  // a script asking over and over for the cooldown to end is capped per member
+  const hammer = await Promise.all(Array.from({ length: 12 }, () => claim(V1, PROOF)));
+  must(hammer.some((r) => r.status === 429 && r.body.error === "slow down"),
+    "a burst of claims must hit the per-member cap, not just the cooldown: " + JSON.stringify(hammer.map((r) => r.body.error)));
   must((await post("/admin/delete", { key: ADMIN, id: V2.id })).body?.ok, "delete failed");
   const after = await flags();
   must(![...after.open, ...after.closed].some((f) => f.uid === V2.id), "a deleted account leaves the review queue");

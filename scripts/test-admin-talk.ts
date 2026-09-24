@@ -173,8 +173,33 @@ must(blk.body?.blocked === true, "the block did not take: " + JSON.stringify(blk
 const blocked = await post("/admin/talk/send", { key: ADMIN, user: P.id, text: "hello again" });
 must(blocked.status === 403 && blocked.body.error === "blocked", "their block must stop him: " + JSON.stringify(blocked.body));
 
+// ---- general chat: the room from his seat ----
+must(src.includes('id="talkRoom"') && src.includes("function talkOpenRoom(){"), "general chat is pinned on his rail");
+must(src.includes('aget("/admin/chat"+(roomLoaded?"?since="+roomCursor:""))'),
+  "the room is read whole once, then only past the cursor it holds");
+must(src.includes('apost("/admin/postas",{username:"tung",text:text,replyTo:rep?rep.id:""})'), "and he speaks in it as tung");
+must(src.includes("if(/^tung$/i.test(name)){"), "Post as sends tung here instead");
+const kq = "key=" + encodeURIComponent(ADMIN);
+const full = await j("/admin/chat?" + kq);
+must(typeof full.body.cursor === "number" && Array.isArray(full.body.messages), "a whole read says where it got to: " + JSON.stringify(full.body).slice(0, 200));
+const lineId = "rm" + Math.random().toString(36).slice(2, 8);
+must((await post("/send", { token: Q.token, id: lineId, text: "is anyone there" })).body?.ok, "Q could not speak");
+const said = await post("/admin/postas", { key: ADMIN, username: "tung", text: "always", replyTo: lineId });
+must(said.body?.ok && said.body.tung === true, "he could not answer in the room: " + JSON.stringify(said.body));
+must((await post("/delete", { token: Q.token, id: lineId })).body?.ok, "Q could not take it back");
+const inc = await j("/admin/chat?since=" + full.body.cursor + "&" + kq);
+const incMsgs = inc.body.messages as { id: string; from?: string; reply?: { id: string }; deleted?: boolean }[];
+must(incMsgs.some((m) => m.id === lineId) && incMsgs.some((m) => m.from === "tung" && m.reply?.id === lineId),
+  "the next pass brings only what is new, his answer quoting the line: " + JSON.stringify(inc.body));
+must((inc.body.dels as string[]).includes(lineId), "and the delete, so the line can be marked where it sits");
+must(Number(inc.body.cursor) > Number(full.body.cursor), "and moves the cursor on");
+const past = await j("/admin/chat?since=" + inc.body.cursor + "&" + kq);
+must((past.body.messages as unknown[]).length === 0, "past the cursor there is nothing");
+must((await j("/admin/chat?since=1")).status === 403, "and none of it without the key");
+
 console.log(
   "talk to da people: a line from the panel arrives in the member's own menu as a DM " +
     "from tung, drawn as a DM rather than as the room, a reply comes back, reading his " +
-    "inbox does not clear their badge, and a chat ban or a block still shuts it",
+    "inbox does not clear their badge, and a chat ban or a block still shuts it; general chat reads the room " +
+    "past a cursor and speaks in it as him",
 );

@@ -435,6 +435,45 @@
     'g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";' +
     'g.note.textContent=(r&&r.error==="blocked")?"not you.":"the shrine did not answer. try again.";' +
     '}).catch(function(){g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";g.note.textContent="the shrine did not answer. try again.";});}' +
+    /* his other kind of giveaway, posted from the panel: a card with the prize,
+       how many win it and a countdown, and an enter button. speed buys nothing
+       here — everyone who enters before the timer runs out is in the draw once,
+       and the server rolls it when the time is up and says who won in a line of
+       his own, which is what turns every copy of the card into the result. the
+       countdown is this page's clock; nothing is asked of the server for it.
+       which ones you entered is remembered on this device, per name, so a
+       reload still says so. */
+    'var RAFFLES={},raffleT=null;' +
+    'function raffleKey(){return "shrine-raffles-"+(ME||"");}' +
+    'function raffleMine(){try{return JSON.parse(localStorage.getItem(raffleKey())||"{}")||{};}catch(e){return {};}}' +
+    'function raffleRemember(id){try{var o=raffleMine();o[id]=Date.now();var ks=Object.keys(o);if(ks.length>60){ks.sort(function(a,b){return o[a]-o[b];});for(var i=0;i<ks.length-60;i++)delete o[ks[i]];}localStorage.setItem(raffleKey(),JSON.stringify(o));}catch(e){}}' +
+    'function raffleFmt(ms){var s=Math.max(0,Math.ceil(ms/1000)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),mi=Math.floor(s%3600/60),x=s%60;return d?d+"d "+h+"h":h?h+"h "+mi+"m":mi?mi+"m "+x+"s":x+"s";}' +
+    'function rafflePaintOne(R){if(R.done)return;var left=R.endsAt-Date.now(),open=left>0;' +
+    'R.left.textContent=open?"ends in "+raffleFmt(left):(left>-600000?"the drum is rolling\u2026":"ended");' +
+    'if(R.banned||R.busy)return;R.btn.disabled=!open||R.entered;R.btn.classList.toggle("taken",!open||R.entered);' +
+    'R.btn.textContent=R.entered?"you\u2019re in":(open?"enter":"closed");}' +
+    'function raffleAll(){var any=false;for(var k in RAFFLES){if(!RAFFLES[k].done){any=true;rafflePaintOne(RAFFLES[k]);}}if(!any&&raffleT){clearInterval(raffleT);raffleT=null;}}' +
+    'function raffleCard(row,r){var box=document.createElement("div");box.className="rafflebox";' +
+    'var top=document.createElement("div");top.className="raffletop";var pz=document.createElement("b");pz.className="raffleprize";pz.textContent=r.amount+" sahurs";' +
+    'var wn=document.createElement("span");wn.className="rafflewin";wn.textContent=r.winners+(r.winners===1?" winner":" winners, split between them");top.appendChild(pz);top.appendChild(wn);box.appendChild(top);' +
+    'var bot=document.createElement("div");bot.className="rafflebot";var btn=document.createElement("button");btn.type="button";btn.className="giftbtn rafflebtn";btn.textContent="enter";' +
+    'var left=document.createElement("span");left.className="raffleleft";var note=document.createElement("span");note.className="giftnote";' +
+    'bot.appendChild(btn);bot.appendChild(left);bot.appendChild(note);box.appendChild(bot);row.appendChild(box);' +
+    'var R={id:r.id,endsAt:Number(r.endsAt)||0,btn:btn,left:left,note:note,done:null,entered:!!raffleMine()[r.id]};RAFFLES[r.id]=R;' +
+    'btn.addEventListener("click",function(ev){ev.stopPropagation();raffleEnter(R);});rafflePaintOne(R);if(!raffleT)raffleT=setInterval(raffleAll,1000);}' +
+    'function raffleEnter(R){if(!TOKEN||R.done||R.entered||R.busy)return;R.busy=true;R.btn.disabled=true;R.btn.textContent="entering\u2026";R.note.textContent="";' +
+    'apiPost("/raffle/enter",{token:TOKEN,id:R.id}).then(function(r){R.busy=false;' +
+    'if(r&&r.ok){R.entered=true;raffleRemember(R.id);R.note.textContent=r.already?"you were already in.":(r.entries>1?"you and "+(r.entries-1)+" other"+(r.entries===2?"":"s")+" so far.":"the first hand in the drum.");rafflePaintOne(R);return;}' +
+    'if(r&&r.error==="over"){R.endsAt=Math.min(R.endsAt,Date.now());rafflePaintOne(R);return;}' +
+    'if(r&&r.error==="gone"){raffleFinish(R.id,{gone:true});return;}' +
+    'if(r&&r.error==="claim_banned"){R.banned=true;R.btn.disabled=true;R.btn.textContent="not for you";R.note.textContent="tung has closed his hands to you until "+new Date(r.until).toLocaleString()+".";return;}' +
+    'rafflePaintOne(R);R.note.textContent=(r&&r.error==="blocked")?"not you.":"the shrine did not answer. try again.";' +
+    '}).catch(function(){R.busy=false;rafflePaintOne(R);R.note.textContent="the shrine did not answer. try again.";});}' +
+    'function raffleFinish(id,e){var R=RAFFLES[id];if(!R||R.done)return;R.done=e||{};R.btn.disabled=true;R.btn.classList.add("taken");' +
+    'if(e.cancelled){R.btn.textContent="called off";R.left.textContent="";R.note.textContent="tung closed his palm.";return;}' +
+    'if(e.gone){R.btn.textContent="gone";R.left.textContent="";R.note.textContent="";return;}' +
+    'var ws=e.winners||[],won=ws.indexOf(ME)>=0;R.btn.textContent=won?"you won "+e.each+" sahurs":"ended";if(won)R.btn.classList.remove("taken");' +
+    'R.left.textContent=(e.entries||0)+" entered";R.note.textContent=ws.length?"won by "+ws.join(", "):"nobody won it.";}' +
     /* taking a line off this screen — because a del event said so, or because we
        just pressed the bin — and asking the shrine to take it off everyone else's.
        already gone counts as done, so pressing twice is not an error. */
@@ -476,6 +515,7 @@
     'GIFTS[m.gift.id]={btn:gb,note:gn,amount:m.gift.amount};' +
     'gb.addEventListener("click",function(ev){ev.stopPropagation();claimGift(m.gift.id,ev);});' +
     'gw.appendChild(gb);gw.appendChild(gn);row.appendChild(gw);}' +
+    'if(m.raffle&&m.raffle.id)raffleCard(row,m.raffle);' +
     'var rc=document.createElement("div");rc.className="reacts";row.appendChild(rc);' +
     'MSGS[m.id]={reactEl:rc,counts:{},mine:{},meta:meta,row:row};' +
     'log.appendChild(row);log.scrollTop=log.scrollHeight;}' +
@@ -544,7 +584,7 @@
     'show("ban");if(statusT)clearTimeout(statusT);if(pollT){clearTimeout(pollT);pollT=null;}' +
     'if((isTo||isChat)&&!pageHidden())statusT=setTimeout(refreshGate,isChat?15000:5000);}' +
     'function applyWarn(t){if(warnEl)warnEl.textContent=t;}' +
-    'function applyEvent(ev){if(!ev)return;if(ev.type==="del"){if(ev.ids&&ev.ids.length){for(var di=0;di<ev.ids.length;di++)dropMsg(ev.ids[di]);}else dropMsg(ev.id);return;}if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id]){if(MSGS[ev.id].meta)stampWhen(MSGS[ev.id].meta,ev.ts);return;}add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null,ts:ev.ts||null});}}' +
+    'function applyEvent(ev){if(!ev)return;if(ev.type==="del"){if(ev.ids&&ev.ids.length){for(var di=0;di<ev.ids.length;di++)dropMsg(ev.ids[di]);}else dropMsg(ev.id);return;}if(ev.type==="react"){if(seenEids[ev.eid])return;seenEids[ev.eid]=1;applyReact(ev.id,ev.e,ev.op);return;}if(ev.type==="gift"){retireGift(ev.id,ev.by,ev.by===ME);return;}if(ev.type==="msg"){if(MSGS[ev.id]){if(MSGS[ev.id].meta)stampWhen(MSGS[ev.id].meta,ev.ts);return;}add({id:ev.id,name:ev.name,text:ev.text,mine:ev.name===ME,reply:ev.reply||null,from:ev.from||null,gift:ev.gift||null,raffle:ev.from==="tung"&&ev.raffle||null,ts:ev.ts||null});if(ev.from==="tung"&&ev.raffleEnd&&ev.raffleEnd.id)raffleFinish(ev.raffleEnd.id,ev.raffleEnd);}}' +
     /* hidden tabs do not hit /events. coming back fires one /events?since= catch-up, then every 4s. */
     'function poll(){if(!polling||pageHidden())return;if(pollT){clearTimeout(pollT);pollT=null;}api("/events?since="+cursor+"&token="+encodeURIComponent(TOKEN)).then(function(r){if(r&&r.error==="unauthorized"){polling=false;refreshGate();return;}if(r&&r.blocked){showBan(r);return;}if(r&&r.events){r.events.forEach(applyEvent);if(typeof r.cursor==="number")cursor=r.cursor;}if(r&&r.mine)markMine(r.mine);}).catch(function(){}).then(function(){if(polling&&!pageHidden())pollT=setTimeout(poll,4000);});}' +
     'function startPoll(){if(polling)return;polling=true;poll();}' +
