@@ -59,6 +59,7 @@
     'var lockEl=document.getElementById("lockout");' +
     'var lockTitleEl=document.getElementById("lockTitle");' +
     'var lockWhyEl=document.getElementById("lockWhy");' +
+    'var lockNoteEl=document.getElementById("lockNote");' +
     'var lockLeftEl=document.getElementById("lockLeft");' +
     'var lockUntilEl=document.getElementById("lockUntil");' +
     'var applyForm=document.getElementById("applyForm");' +
@@ -542,9 +543,15 @@
        be narrow. */
     'function lockFmt(ms){var s=Math.max(0,Math.ceil(ms/1000)),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;' +
     'if(d)return d+"d "+h+"h";if(h)return h+"h "+m+"m";if(m)return m+"m "+(x<10?"0":"")+x+"s";return x+"s";}' +
-    'function lockPaint(){if(!LOCKED||!lockEl)return;var to=LOCKED.reason!=="banned",left=LOCKED.until-Date.now();' +
-    'lockTitleEl.textContent=to?"you are timed out":"you are banned";' +
-    'lockWhyEl.textContent=to?"the whole shrine is shut to you until it lifts — the chat, the casino, the games and tung’s originals.":"tung has barred you from the shrine — the chat, the casino, the games and tung’s originals.";' +
+    /* a timeout for farming the altar is sahur's own catch, and says so in his
+       voice; any timeout can also carry the words tung gave for it */
+    'var SAHUR_CAUGHT=["sahur keeps count of every hand at his altar. yours came back too often, too exactly, at hours when the faithful sleep. the shrine is closed to you until he has finished looking.",' +
+    '"the altar pours for the faithful, not for machines wearing their hands. sahur noticed. sit outside and think about what a hand is for.",' +
+    '"sahur does not sleep, and he saw that you do not either. farming his altar is not devotion. the doors stay shut until the drum says otherwise."];' +
+    'function lockPaint(){if(!LOCKED||!lockEl)return;var to=LOCKED.reason!=="banned",left=LOCKED.until-Date.now(),sah=to&&LOCKED.kind==="sahur";' +
+    'lockTitleEl.textContent=sah?"sahur caught you":(to?"you are timed out":"you are banned");' +
+    'lockWhyEl.textContent=sah?SAHUR_CAUGHT[Math.floor(LOCKED.until/1000)%SAHUR_CAUGHT.length]:(to?"the whole shrine is shut to you until it lifts — the chat, the casino, the games and tung’s originals.":"tung has barred you from the shrine — the chat, the casino, the games and tung’s originals.");' +
+    'if(lockNoteEl)lockNoteEl.textContent=to&&LOCKED.why?"tung says: \u201c"+LOCKED.why+"\u201d":"";' +
     'lockLeftEl.textContent=to&&LOCKED.until?(left>0?"lifts in "+lockFmt(left):"lifting…"):"";' +
     'lockUntilEl.textContent=to&&LOCKED.until?"until "+new Date(LOCKED.until).toLocaleString():"";}' +
     'function closePlays(){for(var i=0;i<PLAYS.length;i++){try{if(PLAYS[i]&&!PLAYS[i].closed)PLAYS[i].close();}catch(e){}}PLAYS=[];}' +
@@ -553,7 +560,8 @@
     /* `asked` is whether the clock reaching zero has already asked once for
        this deadline, so a clock a little ahead of the server's asks once and
        then leaves it to the five-second check, rather than asking every second */
-    'LOCKED={reason:info&&info.reason==="banned"?"banned":"timeout",until:u,asked:!!(LOCKED&&LOCKED.until===u&&LOCKED.asked)};' +
+    'LOCKED={reason:info&&info.reason==="banned"?"banned":"timeout",until:u,asked:!!(LOCKED&&LOCKED.until===u&&LOCKED.asked),' +
+    'why:String((info&&info.why)||"").slice(0,200),kind:info&&info.kind==="sahur"?"sahur":""};' +
     'if(first){' +
     /* everything behind it stops, and nothing it could still reach stays open */
     'polling=false;if(pollT){clearTimeout(pollT);pollT=null;}' +

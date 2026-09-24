@@ -99,7 +99,8 @@
       '#lockTitle{margin:0;font-size:30px;font-weight:800;color:#f5efe0}' +
       '#lockWhy{margin:0;font-size:15px;line-height:1.5;color:#c8823c}' +
       '#lockLeft{margin:8px 0 0;font-size:24px;font-weight:800;color:#f2c063;font-variant-numeric:tabular-nums}' +
-      '#lockLeft:empty,#lockUntil:empty{display:none}' +
+      '#lockNote{margin:0;font-size:15px;line-height:1.5;color:#f5efe0;font-style:italic}' +
+      '#lockLeft:empty,#lockUntil:empty,#lockNote:empty{display:none}' +
       '#lockUntil{margin:0;font-size:13px;color:#8a6a3a}' +
       '#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}' +
       '.msg{max-width:75%;padding:8px 12px;border-radius:12px;background:#2b1a0a;align-self:flex-start;word-wrap:break-word}' +
@@ -1125,6 +1126,7 @@
       '& #lockout{background:{bgSunk}}' +
       '& #lockTitle{color:{text}}' +
       '& #lockWhy{color:{muted}}' +
+      '& #lockNote{color:{text}}' +
       '& #lockLeft{color:{heading}}' +
       '& #lockUntil{color:{textDim}}' +
       '& .gtile{background:linear-gradient(155deg,{raisedHi},{bgCore});border-color:{line};color:{text}}' +

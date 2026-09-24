@@ -191,6 +191,7 @@
       '<div class="lockcard">' +
       '<h2 id="lockTitle">you are timed out</h2>' +
       '<p id="lockWhy"></p>' +
+      '<p id="lockNote"></p>' +
       '<p id="lockLeft"></p>' +
       '<p id="lockUntil"></p>' +
       '</div></div>';

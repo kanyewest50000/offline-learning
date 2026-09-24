@@ -1168,7 +1168,8 @@ highlighted. Then a verdict, any mix of:
 - **make them wait** a multiple of the two hours between faucet claims;
 - **take back** everything the log shows they claimed in the last so many days,
   never below zero;
-- **time them out** of the whole site, through the same timeout as Manage users;
+- **time them out** of the whole site, through the same timeout as Manage users —
+  their lockout says **sahur caught you**, with any words you add under it;
 - **warn them as tung** in a DM — sent before the timeout, which would shut
   tung's DM out.
 
@@ -1286,6 +1287,13 @@ page opened, and refuses every view while it is up. A timeout counts down,
 asks once when it runs out, and is re-checked every five seconds so one lifted
 early from here is picked up too; nothing on the server was added for any of
 it. `scripts/test-lockout.ts`.
+A timeout can carry a **reason**, typed next to it on the card; the lockout
+reads it back to them as *tung says: "…"*, and clearing the timeout clears it.
+Tick **farming sahurs** (or time them out from the Sahur watch, which always
+does) and the screen becomes sahur's own catch — **sahur caught you**, and a
+line from him about hands and altars — with the reason, if any, under it. Both
+ride on the answers the page already gets (`/status`, the room's poll,
+`/login`) as `why` and `kind: "sahur"`; the embed's chat says the same.
 **ban from chat** shuts the room and only the room — they cannot read a line and
 cannot post one, and their DMs go with it in both directions, while the casino,
 the pit, the catalog, the shop, tips and the veil keep working exactly as

@@ -453,8 +453,16 @@ button.ghost{background:transparent;color:#c8823c;border:1px solid #3a2410}
     var why = (info && info.reason) || "";
     var isTo = why === "timeout";
     var isChat = why === "chatban";
-    banTitle.textContent = isTo ? "you are timed out" : (isChat ? "the room is shut to you" : "you are banned");
-    if (isTo && info.until) { banUntil.textContent = "until " + new Date(info.until).toLocaleString(); banUntil.style.display = ""; }
+    // a timeout for farming the altar is sahur's own catch; any timeout can
+    // carry the words tung gave for it
+    var isSahur = isTo && info.kind === "sahur";
+    banTitle.textContent = isSahur ? "sahur caught you" : (isTo ? "you are timed out" : (isChat ? "the room is shut to you" : "you are banned"));
+    if (isTo && info.until) {
+      banUntil.textContent = (isSahur ? "sahur keeps count of every hand at his altar, and yours came back too often. " : "") +
+        "until " + new Date(info.until).toLocaleString() +
+        (info.why ? " \u2014 tung says: \u201c" + String(info.why).slice(0, 200) + "\u201d" : "");
+      banUntil.style.display = "";
+    }
     else if (isChat) { banUntil.textContent = "tung has barred you from the chat. you cannot read it and you cannot speak in it. everything else is still yours — the casino, the pit, the games, the shop."; banUntil.style.display = ""; }
     else banUntil.style.display = "none";
     show("ban");

@@ -138,6 +138,35 @@ const sc = await status(C.token);
 must(sc.blocked === false && sc.chatBanned === true, "a chat ban is not a block — it stays the room's own: " + JSON.stringify(sc));
 must((await events(C.token)).reason === "chatban", "and the room's poll names it as such");
 
+// ---- a reason, and sahur's own catch ----
+must(markup.includes('<p id="lockNote"></p>'), "the lockout needs a line for tung's words");
+must(chat.includes('lockTitleEl.textContent=sah?"sahur caught you":(to?"you are timed out":"you are banned");'),
+  "a timeout for farming sahurs is sahur's catch");
+must(chat.includes('"tung says: \\u201c"+LOCKED.why+"\\u201d"'), "and any timeout can say why");
+must(chat.includes('why:String((info&&info.why)||"").slice(0,200),kind:info&&info.kind==="sahur"?"sahur":""'),
+  "whatever puts the screen up hands both over");
+const embedChat = await Deno.readTextFile(new URL("../embed/chat.html", import.meta.url));
+must(embedChat.includes('"sahur caught you"') && embedChat.includes("tung says:"), "the embed says the same");
+const W = await member("lkW");
+const why = "you know what you did. " + "x".repeat(400);
+must(!!(await post("/admin/timeout", { key: ADMIN, id: W.id, until, why, kind: "sahur" })).body?.ok, "timeout with a reason failed");
+const ws = await status(W.token);
+must(ws.blocked === true && ws.kind === "sahur" && typeof ws.why === "string" && (ws.why as string).length === 200 &&
+  (ws.why as string).startsWith("you know what you did."), "/status carries the reason (clipped) and the catch: " + JSON.stringify(ws).slice(0, 300));
+const we = await events(W.token);
+must(we.kind === "sahur" && typeof we.why === "string", "so does the room's poll");
+const wl = await post("/login", { token: W.token });
+must(wl.body.kind === "sahur" && typeof wl.body.why === "string", "and /login");
+must(!!(await post("/admin/timeout", { key: ADMIN, id: W.id, until, kind: "whatever" })).body?.ok, "re-timeout failed");
+const ws2 = await status(W.token);
+must(ws2.blocked === true && ws2.why === undefined && ws2.kind === undefined, "a new timeout without them has neither: " + JSON.stringify(ws2));
+await post("/admin/timeout", { key: ADMIN, id: W.id, until, why: "spam", kind: "sahur" });
+must(!!(await post("/admin/timeout", { key: ADMIN, id: W.id, until: 0 })).body?.ok, "lifting failed");
+const ws3 = await status(W.token);
+must(ws3.blocked === false && ws3.why === undefined && ws3.kind === undefined, "lifting it clears the reason with it");
+const wu = ((await j("/admin/users?key=" + encodeURIComponent(ADMIN))).body.users as Record<string, unknown>[] || []).find((x) => x.id === W.id);
+must(wu && wu.timeoutWhy === "" && wu.timeoutKind === "", "and the panel's list agrees: " + JSON.stringify(wu));
+
 // lifting it is what takes the screen down
 must(!!(await post("/admin/timeout", { key: ADMIN, id: T.id, until: 0 })).body?.ok, "lifting failed");
 must((await status(T.token)).blocked === false, "a lifted timeout reads as open at once");
@@ -148,6 +177,6 @@ console.log(
   "lockout: a timeout or a ban puts one screen over the whole page, above every layer, from " +
     "whichever of /status, the room's poll or the casino hears it first; it stops the room, the " +
     "conversations and the casino, closes every game tab the page opened, refuses every view, game, " +
-    "the casino and the veil while it is up, counts a timeout down and lifts itself — and a chat ban " +
-    "stays the room's own screen",
+    "the casino and the veil while it is up, counts a timeout down and lifts itself, says the reason tung " +
+    "gave and says sahur caught them when it was for farming — and a chat ban stays the room's own screen",
 );

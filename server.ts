@@ -1346,10 +1346,16 @@ async function authUser(token: string | null): Promise<any | null> {
 // This is the wide gate: the casino, the pit, the veil and the chat all sit
 // behind it. The chat-only ban is deliberately NOT here — see chatBlock().
 // deno-lint-ignore no-explicit-any
-function blockState(u: any): { blocked: boolean; reason?: string; until?: number } {
+function blockState(u: any): { blocked: boolean; reason?: string; until?: number; why?: string; kind?: string } {
   if (u.banned) return { blocked: true, reason: "banned", until: 0 };
   if (u.timeoutUntil && u.timeoutUntil > Date.now()) {
-    return { blocked: true, reason: "timeout", until: u.timeoutUntil };
+    // what tung wrote when he did it, and "sahur" when it was for farming the
+    // altar — the lockout reads both; neither changes what is shut
+    return {
+      blocked: true, reason: "timeout", until: u.timeoutUntil,
+      ...(u.timeoutWhy ? { why: String(u.timeoutWhy) } : {}),
+      ...(u.timeoutKind === "sahur" ? { kind: "sahur" } : {}),
+    };
   }
   return { blocked: false };
 }
@@ -1366,7 +1372,7 @@ function blockState(u: any): { blocked: boolean; reason?: string; until?: number
 // The flag is read truthily, not `=== true`, so a record that somehow carries a
 // non-boolean still fails closed.
 // deno-lint-ignore no-explicit-any
-function chatBlock(u: any): { blocked: boolean; reason?: string; until?: number } {
+function chatBlock(u: any): { blocked: boolean; reason?: string; until?: number; why?: string; kind?: string } {
   const bs = blockState(u);
   if (bs.blocked) return bs;
   if (u.chatBanned) return { blocked: true, reason: "chatban", until: 0 };
@@ -4513,6 +4519,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       blocked: bs.blocked,
       reason: bs.reason,
       until: bs.until,
+      ...(bs.why ? { why: bs.why } : {}),
+      ...(bs.kind ? { kind: bs.kind } : {}),
       chatBanned: !!app.value.chatBanned,
       banished: !!app.value.banished,
       mod: app.value.mod === true,
@@ -4560,7 +4568,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // `blocked` is the shrine-wide verdict (the casino gate reads it too);
     // `chatBanned` is the narrow one, so a client can shut the room without
     // shutting anything else.
-    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, chatBanned: !!app.value.chatBanned, banished: !!app.value.banished, mod: app.value.mod === true, thread: app.value.thread || [] });
+    return json({ status: app.value.status, username: app.value.username, blocked: bs.blocked, reason: bs.reason, until: bs.until, ...(bs.why ? { why: bs.why } : {}), ...(bs.kind ? { kind: bs.kind } : {}), chatBanned: !!app.value.chatBanned, banished: !!app.value.banished, mod: app.value.mod === true, thread: app.value.thread || [] });
   }
 
   // ---------- respond (applicant replies to tung's follow-up question) ----------
@@ -4608,7 +4616,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // the read half of the chat ban: no events, so no messages, no reactions,
     // no giveaway announcements — nothing of the room reaches them at all.
     const bs = chatBlock(user);
-    if (bs.blocked) return json({ blocked: true, reason: bs.reason, until: bs.until, events: [], cursor: Number(url.searchParams.get("since") || "0") || 0 });
+    if (bs.blocked) return json({ blocked: true, reason: bs.reason, until: bs.until, ...(bs.why ? { why: bs.why } : {}), ...(bs.kind ? { kind: bs.kind } : {}), events: [], cursor: Number(url.searchParams.get("since") || "0") || 0 });
     let since = Number(url.searchParams.get("since") || "0") || 0;
     // The admin dashboard (and its exports) may walk the whole retained log;
     // it proves itself with the admin key. Everyone else is held to the public
@@ -6497,6 +6505,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
           id: e.value.id, username: e.value.username, ts: e.value.ts,
           banned: !!e.value.banned, chatBanned: !!e.value.chatBanned,
           timeoutUntil: e.value.timeoutUntil || 0,
+          timeoutWhy: e.value.timeoutWhy || "",
+          timeoutKind: e.value.timeoutKind || "",
           note: e.value.note || "", veil: e.value.veil === true,
           mod: e.value.mod === true,
         });
@@ -6914,8 +6924,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const app = await kv.get<any>(["app", clip(b.id, 32)]);
     if (!app.value) return json({ error: "not found" }, 404);
     const until = Number(b.until) > 0 ? Math.floor(Number(b.until)) : 0; // 0 clears the timeout
-    await kv.set(["app", app.value.id], { ...app.value, timeoutUntil: until });
-    return json({ ok: true, timeoutUntil: until });
+    // the reason they will read on the lockout, and whether it was the sahur
+    // watch's catch; clearing the timeout clears both
+    const why = until ? clip(b.why, 200) : "";
+    const kind = until && b.kind === "sahur" ? "sahur" : "";
+    // deno-lint-ignore no-unused-vars
+    const { timeoutWhy, timeoutKind, ...rest } = app.value;
+    await kv.set(["app", app.value.id], {
+      ...rest, timeoutUntil: until, ...(why ? { timeoutWhy: why } : {}), ...(kind ? { timeoutKind: kind } : {}),
+    });
+    return json({ ok: true, timeoutUntil: until, why, kind });
   }
 
   // ---------- admin: rename an existing user ----------
@@ -7969,6 +7987,8 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .empty{color:#c8823c;padding:20px 0}
 .uname{flex:1;min-width:120px}
 .tin{flex:0 1 220px;min-width:150px}
+.twhy{min-width:120px}
+.tsah{display:flex;align-items:center;gap:6px;font-size:13px;color:#e9d9c2;white-space:nowrap;cursor:pointer}
 .app small.rev{color:#e0908a}
 .thread{margin:12px 0 0;display:flex;flex-direction:column;gap:6px}
 .tmsg{padding:7px 11px;border-radius:10px;font-size:.86rem;max-width:85%;white-space:pre-wrap;word-break:break-word}
@@ -8508,11 +8528,19 @@ function renderUsers(){
     var trow=document.createElement("div");trow.className="row";
     var dt=document.createElement("input");dt.type="datetime-local";dt.className="tin";
     if(u.timeoutUntil&&u.timeoutUntil>Date.now())dt.value=toLocalInput(u.timeoutUntil);
+    /* the reason is theirs to read on the lockout; "farming sahurs" makes it
+       sahur's catch, with his own words over the top of it */
+    var why=document.createElement("input");why.className="uname twhy";why.maxLength=200;why.placeholder="reason (they will read it)";
+    var live=u.timeoutUntil&&u.timeoutUntil>Date.now();
+    if(live)why.value=u.timeoutWhy||"";
+    var sahL=document.createElement("label");sahL.className="tsah";sahL.title="the lockout says sahur caught them, in his own words";
+    var sah=document.createElement("input");sah.type="checkbox";sah.checked=!!(live&&u.timeoutKind==="sahur");
+    sahL.appendChild(sah);sahL.appendChild(document.createTextNode(" farming sahurs"));
     var apply=document.createElement("button");apply.className="no";apply.textContent="time out until";
-    apply.onclick=function(){if(!dt.value){alert("pick a date/time first");return;}var ms=new Date(dt.value).getTime();if(!(ms>Date.now())){alert("pick a time in the future");return;}setTimeoutUntil(u.id,ms);};
+    apply.onclick=function(){if(!dt.value){alert("pick a date/time first");return;}var ms=new Date(dt.value).getTime();if(!(ms>Date.now())){alert("pick a time in the future");return;}setTimeoutUntil(u.id,ms,why.value.trim(),sah.checked?"sahur":"");};
     var clr=document.createElement("button");clr.className="load";clr.textContent="clear timeout";
     clr.onclick=function(){setTimeoutUntil(u.id,0);};
-    trow.appendChild(dt);trow.appendChild(apply);trow.appendChild(clr);
+    trow.appendChild(dt);trow.appendChild(why);trow.appendChild(sahL);trow.appendChild(apply);trow.appendChild(clr);
     el.appendChild(trow);
     // the narrow ban: shuts the room and leaves the rest of the shrine alone.
     // deliberately its own row and its own wording so it is never mistaken for
@@ -8566,7 +8594,7 @@ function renderUsers(){
     var cbline=u.chatBanned?" · chat banned":"";
     var modline=u.mod?" · moderator":"";
     if(u.banned){meta.textContent="banned (permanent)"+cbline+modline+idline;meta.className="rev";}
-    else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString()+cbline+modline+idline;meta.className="rev";}
+    else if(u.timeoutUntil&&u.timeoutUntil>Date.now()){meta.textContent="timed out until "+new Date(u.timeoutUntil).toLocaleString()+(u.timeoutKind==="sahur"?" · sahur caught them":"")+(u.timeoutWhy?" · \u201c"+u.timeoutWhy+"\u201d":"")+cbline+modline+idline;meta.className="rev";}
     else if(u.chatBanned){meta.textContent="chat banned · everything else open · joined "+new Date(u.ts).toLocaleString()+modline+idline;meta.className="rev";}
     else{meta.textContent="active · joined "+new Date(u.ts).toLocaleString()+modline+idline;}
     el.appendChild(meta);
@@ -8619,8 +8647,8 @@ function setMod(id,mod,name){
   if(mod&&!confirm("Give "+name+" moderator powers?\\n\\nThey will be able to delete any message in the chat. A bin appears next to react and reply for them only — nobody else in the room can tell they have it."))return;
   fetch("/admin/mod",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,mod:mod})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
-function setTimeoutUntil(id,until){
-  fetch("/admin/timeout",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,until:until})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
+function setTimeoutUntil(id,until,why,kind){
+  fetch("/admin/timeout",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,until:until,why:why||"",kind:kind||""})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
 }
 function setVeilUser(id,allowed){
   fetch("/admin/veiluser",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({key:keyEl.value.trim(),id:id,allowed:allowed})}).then(function(r){return r.json();}).then(function(d){if(d.error)alert(d.error);refreshUsers();});
@@ -9473,8 +9501,9 @@ function watchPunish(d){
   wLine(f,[slowOn," make them wait ×",slowX," as long between faucet claims, for ",slowD," days"]);
   var takeOn=wBox(false),takeD=wNum(7);
   wLine(f,[takeOn," take back every sahur they claimed in the last ",takeD," days"]);
-  var toOn=wBox(false),toH=wNum(6);
-  wLine(f,[toOn," time them out of the whole site for ",toH," hours"]);
+  var toOn=wBox(false),toH=wNum(6),toWhy=document.createElement("input");
+  toWhy.maxLength=200;toWhy.placeholder="optional words from tung";toWhy.style.cssText="flex:1;min-width:200px";
+  wLine(f,[toOn," time them out of the whole site for ",toH," hours — the lockout says sahur caught them — ",toWhy]);
   var warnOn=wBox(false);wLine(f,[warnOn," warn them as tung, in a DM:"]);
   var warnT=document.createElement("textarea");warnT.value="tung sees the hands that are not hands. claim with your own.";f.appendChild(warnT);
   var noteI=document.createElement("input");noteI.placeholder="a note for yourself — only this page sees it";f.appendChild(noteI);
@@ -9499,7 +9528,7 @@ function watchPunish(d){
     var rs=[];
     (body.warned?apost("/admin/talk/send",{user:d.id,text:warnT.value.trim()}):Promise.resolve(null)).then(function(r){
       rs.push(r);
-      return body.timeoutHours?apost("/admin/timeout",{id:d.id,until:Date.now()+body.timeoutHours*3600000}):null;
+      return body.timeoutHours?apost("/admin/timeout",{id:d.id,until:Date.now()+body.timeoutHours*3600000,kind:"sahur",why:toWhy.value.trim()}):null;
     }).then(function(r){
       rs.push(r);
       var bad=rs.filter(function(r){return r&&r.error;}).map(function(r){return r.error+(r.reason?" ("+r.reason+")":"");});
