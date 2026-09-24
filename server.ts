@@ -53,6 +53,7 @@
 //   POST /admin/raffle/entries {key, id}                  -> {ok, names}
 //   POST /admin/raffle/end    {key, id}                   -> {ok, raffle}  (roll it now)
 //   POST /admin/raffle/cancel {key, id}                   -> {ok, raffle}  (nobody wins)
+//   POST /admin/export  {key, cursor?, limit?}            -> {ok, entries:[{k,v}], cursor}  (the whole KV, paged)
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
 //   POST /duel/create   {token, game, bet, seats?}        -> {ok, duel, balance}
 //   POST /duel/cancel   {token, id}                       -> {ok, refunded, balance}
@@ -946,6 +947,27 @@ async function maybeWisdom() {
     from: "tung",
     gift: { id: giftId, amount: GIFT_AMOUNT },
   });
+}
+
+// ---------------------------------------------------------------------------
+// KV values as plain JSON, for /admin/export. Anything JSON cannot carry as it
+// is travels tagged — a counter as {"$u64": "12"}, bytes as base64 — and
+// scripts/kv-import.ts reads the tags back into the real thing.
+function kvEnc(x: unknown): unknown {
+  if (typeof x === "bigint") return { $bigint: x.toString() };
+  if (x instanceof Deno.KvU64) return { $u64: x.value.toString() };
+  if (x instanceof Uint8Array) return { $bytes: btoa(String.fromCharCode(...x)) };
+  if (x instanceof Date) return { $date: x.toISOString() };
+  if (typeof x === "number" && !Number.isFinite(x)) return { $num: String(x) };
+  if (x instanceof Map) return { $map: [...x.entries()].map(([k, v]) => [kvEnc(k), kvEnc(v)]) };
+  if (x instanceof Set) return { $set: [...x.values()].map(kvEnc) };
+  if (Array.isArray(x)) return x.map(kvEnc);
+  if (x && typeof x === "object") {
+    const o: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(x)) if (v !== undefined) o[k] = kvEnc(v);
+    return o;
+  }
+  return x;
 }
 
 // ---------------------------------------------------------------------------
@@ -4423,7 +4445,32 @@ function purseJson(p: Purse) {
 }
 
 const listenPort = Number(Deno.env.get("PORT") || "8000") || 8000;
-Deno.serve({ port: listenPort }, async (req, info) => {
+
+// Answers of a kilobyte or more go out gzipped when the client says it can take
+// that. A fresh room is 17 KB of JSON and 3.5 KB gzipped; a pit table's state is
+// 2.4 KB, polled every 1.2 s while seated, and 0.8 KB gzipped; the panel is
+// 118 KB and 31 KB. Nothing about what is sent, or how often, changes — only
+// how many bytes it takes on the wire, which is what the host bills. Small
+// answers (every idle poll is a few dozen bytes) are left as they are: gzip
+// would make them bigger.
+const GZIP_MIN = 1024;
+async function gzipped(req: Request, res: Response): Promise<Response> {
+  if (!res.body || req.method === "HEAD" || res.headers.has("content-encoding")) return res;
+  if (!/\bgzip\b/i.test(req.headers.get("accept-encoding") || "")) return res;
+  if (!/^(application\/json|text\/)/i.test(res.headers.get("content-type") || "")) return res;
+  const raw = new Uint8Array(await res.arrayBuffer());
+  const headers = new Headers(res.headers);
+  if (raw.byteLength < GZIP_MIN) return new Response(raw, { status: res.status, statusText: res.statusText, headers });
+  const gz = await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+  headers.set("content-encoding", "gzip");
+  headers.append("vary", "accept-encoding");
+  headers.delete("content-length");
+  return new Response(gz, { status: res.status, statusText: res.statusText, headers });
+}
+
+Deno.serve({ port: listenPort }, async (req, info) => gzipped(req, await handle(req, info)));
+
+async function handle(req: Request, info: Deno.ServeHandlerInfo<Deno.NetAddr>): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
@@ -6840,6 +6887,26 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     return json({ error: "not found" }, 404);
   }
 
+  // ---------- admin: export the whole database ----------
+  // Every entry, a page at a time, for moving the shrine to another host — the
+  // new Deno Deploy has no way to reach its KV from outside the app, so the app
+  // hands it over itself. Key-gated like everything here, and it is the lot:
+  // login keys included, so the file it makes is as private as the admin key.
+  // scripts/kv-export.ts pages through this into a file; scripts/kv-import.ts
+  // writes that file into any other Deno KV.
+  if (req.method === "POST" && path === "/admin/export") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const limit = Math.round(watchNum(b.limit, 1, 500, 400));
+    const cursor = typeof b.cursor === "string" && b.cursor ? b.cursor : undefined;
+    const it = kv.list({ prefix: [] }, { limit, cursor });
+    const entries: { k: unknown; v: unknown }[] = [];
+    for await (const e of it) entries.push({ k: kvEnc(e.key), v: kvEnc(e.value) });
+    // a short page is the last one
+    return json({ ok: true, entries, cursor: entries.length < limit ? "" : it.cursor });
+  }
+
   // ---------- admin: clear what deleted accounts left behind ----------
   // For accounts deleted before deleting took their words with it — the
   // "(gone)" rows. One pass over the rails, the reaction rows and the quote
@@ -7942,7 +8009,7 @@ Deno.serve({ port: listenPort }, async (req, info) => {
   return new Response("Shrine of Tung backend is alive", {
     headers: { "content-type": "text/plain", ...CORS },
   });
-});
+}
 
 const ADMIN_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

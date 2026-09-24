@@ -858,6 +858,55 @@ walks an all-in through its runout street by street and then waits out the hold
 on the table it ended on, and watches the middle of the table hold still through
 a street and move when the chips are swept in.
 
+## moving the backend, and what it costs to run
+
+The backend is `server.ts` and one Deno KV database; the site, the games and
+the shrine's code are all served from GitHub Pages and jsDelivr, never from it.
+Measured against a local copy, one open tab costs the backend a few dozen bytes
+a poll: about 20 requests a minute (the room every 4 s, the conversation list
+every 12 s), 0.03–0.2 MB an hour of bodies and roughly 0.5 MB with headers; a
+seat at a pit table polls its 2.4 KB state every 1.2 s. Every poll stops while
+the tab is hidden. Answers of a kilobyte or more go out gzipped when the client
+takes it (`gzipped()` in `server.ts`): a fresh room 17 KB → 3.5 KB, a table's
+state 2.4 KB → 0.8 KB, the panel 118 KB → 31 KB. What is sent and how often do
+not change.
+
+So the backend's own bandwidth is small; on a host that bills per request the
+number to watch is requests — each open tab makes roughly 1,200 an hour.
+
+**Taking the data with you.** The new Deno Deploy keeps an app's KV where only
+the app can reach it, so the app hands it over: `POST /admin/export` pages
+through every entry with the admin key, and two scripts do the rest.
+
+```
+# out of the running server, into a file (login keys included — keep it private)
+API=https://offline-learning.kanyewest50000.deno.net ADMIN_KEY=... \
+  deno run --allow-net --allow-env --allow-write scripts/kv-export.ts shrine-export.ndjson
+
+# into any other Deno KV — here a file on your own server
+deno run --allow-read --allow-write --unstable-kv scripts/kv-import.ts shrine-export.ndjson /srv/shrine/shrine.db
+```
+
+Values JSON cannot carry (the giveaway entry counters are `Deno.KvU64`) travel
+tagged and come back as themselves. KV does not say how long an entry had left,
+so what the server writes to expire gets its full lifetime again from the
+import. Import into a stopped or not-yet-started server.
+
+**Running it somewhere else.** Nothing in `server.ts` is Deno Deploy–specific:
+on any machine with Deno,
+
+```
+ADMIN_KEY=... SHRINE_KV_PATH=/srv/shrine/shrine.db PORT=8000 \
+  deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv server.ts
+```
+
+behind anything that terminates HTTPS (Caddy does it in two lines). Then point
+the clients at the new address — it is written in four places:
+`assets/js/shrine/config.js` (`SHRINE_API`), `embed/shrine.js` (the `API`
+default, or `data-api` on the script tag), `embed/chat.html` (`PROD_API`), and
+the test that pins it, `scripts/test-shrine-base.ts`. `scripts/test-kv-export.ts`
+checks the export, both scripts and the gzip.
+
 ## working on it
 
 ```
