@@ -38,7 +38,14 @@
 //   POST /admin/loanboost {key, id, extra}                -> {ok, boost}       (spent on one loan)
 //   POST /admin/setdebt {key, id, owed}                   -> {ok, owed}        (0 wipes it)
 //   GET  /veil?token=                                     -> {live, allowed, url?}
-//   POST /gift/claim    {token, id}                       -> {ok, amount, balance, by}
+//   POST /gift/claim    {token, id, cli?}                 -> {ok, amount, balance, by}
+//   POST /admin/watch/config {key, config?}               -> {ok, config, names, defaults} (sahur watch)
+//   POST /admin/watch/flags  {key}                        -> {ok, open, closed}  (the review queue)
+//   POST /admin/watch/scan   {key}                        -> {ok, looked, flagged}
+//   POST /admin/watch/user   {key, id}                    -> {ok, logs, nets, hits, penalty, flag, ...}
+//   POST /admin/watch/punish {key, id, ban?, reduce?, slow?, takeBack?, note?} -> {ok, penalty, taken, verdict}
+//   POST /admin/watch/dismiss {key, id, quietDays}        -> {ok, quietDays}
+//   POST /admin/watch/lift   {key, id}                    -> {ok}
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
 //   POST /duel/create   {token, game, bet, seats?}        -> {ok, duel, balance}
 //   POST /duel/cancel   {token, id}                       -> {ok, refunded, balance}
@@ -1558,6 +1565,314 @@ async function purgeGone(): Promise<{ accounts: number; conversations: number; l
   const conversations = await purgeDmsOf(dead);
   const lines = await purgeRoomOf(dead, deadNames);
   return { accounts: dead.size, conversations, lines };
+}
+
+// ---- sahur watch: catching autoclaimers -------------------------------------
+//
+// The faucet pays FAUCET_AMOUNT every FAUCET_INTERVAL, and tung's giveaways pay
+// whoever clicks first. A script can do both forever: claim the second the
+// cooldown ends, around the clock, and win every giveaway before a person has
+// read it. So every claim of either kind is written down — when, how long
+// after it became available, from which network (a salted hash, never the
+// address), and what the page could say about the click — and a set of rules
+// reads that log each time the member claims again.
+//
+// The rules are in this file, which is public. What they are set TO is not:
+// every number, and whether each rule is on at all, lives in KV and is changed
+// from the panel. Knowing that a rule exists does not tell anybody where its
+// line is, and getting under all of them at once means claiming like a person
+// — irregularly, not instantly, and not while asleep — which is the point.
+//
+// Nothing here runs on a poll. It runs when somebody claims (twelve times a
+// day at most for the faucet) and when the panel asks.
+//
+// KV:
+//   ["claimlog", uid, ts, rid]  -> ClaimLog   one claim, kept keepDays
+//   ["claimnet", net, ts, uid]  -> 1          which accounts claimed from a network
+//   ["watch", "config"]         -> WatchConfig
+//   ["watch", "flag", uid]      -> WatchFlag  the review queue
+//   ["claimpen", uid]           -> ClaimPenalty
+type ClaimCli = { tr?: number; vis?: number; foc?: number; idle?: number };
+type ClaimLog = {
+  ts: number; kind: "faucet" | "gift"; amt: number;
+  lag?: number;          // ms between becoming claimable and being claimed
+  net?: string; cli?: ClaimCli; gid?: string;
+};
+type WatchRules = {
+  volume: { on: boolean; count: number; hours: number };
+  quick: { on: boolean; count: number; of: number; seconds: number };
+  regular: { on: boolean; of: number; seconds: number };
+  nosleep: { on: boolean; hours: number; count: number; gapHours: number };
+  streak: { on: boolean; perDay: number; days: number };
+  noclick: { on: boolean; count: number; of: number };
+  hidden: { on: boolean; count: number; of: number };
+  still: { on: boolean; count: number; of: number; seconds: number };
+  giftfast: { on: boolean; count: number; of: number; ms: number };
+  giftmany: { on: boolean; count: number; hours: number };
+  sharednet: { on: boolean; accounts: number; hours: number };
+};
+type WatchConfig = { on: boolean; minRules: number; quietDays: number; keepDays: number; rules: WatchRules };
+type WatchHit = { rule: string; detail: string };
+type WatchFlag = {
+  uid: string; name: string; at: number; lastAt: number; hits: WatchHit[];
+  status: "open" | "closed"; closedAt?: number; verdict?: string; quietUntil?: number;
+};
+type ClaimPenalty = {
+  banUntil?: number; banGifts?: boolean;
+  reduceUntil?: number; reducePct?: number;
+  slowUntil?: number; slowX?: number;
+  at: number; note?: string;
+};
+// Only the starting point. The panel's saved config replaces all of it.
+const WATCH_DEFAULTS: WatchConfig = {
+  on: true, minRules: 1, quietDays: 3, keepDays: 30,
+  rules: {
+    volume: { on: true, count: 10, hours: 24 },
+    quick: { on: true, count: 8, of: 10, seconds: 90 },
+    regular: { on: true, of: 8, seconds: 180 },
+    nosleep: { on: true, hours: 30, count: 11, gapHours: 5 },
+    streak: { on: true, perDay: 9, days: 3 },
+    noclick: { on: true, count: 3, of: 5 },
+    hidden: { on: true, count: 4, of: 10 },
+    still: { on: true, count: 3, of: 5, seconds: 600 },
+    giftfast: { on: true, count: 3, of: 5, ms: 1500 },
+    giftmany: { on: true, count: 6, hours: 24 },
+    sharednet: { on: false, accounts: 3, hours: 24 },
+  },
+};
+// what each rule is called on the panel and in a flag
+const WATCH_NAMES: Record<keyof WatchRules, string> = {
+  volume: "too many claims", quick: "claims the instant it is ready", regular: "clockwork timing",
+  nosleep: "never sleeps", streak: "day after day", noclick: "no real click",
+  hidden: "claims from a hidden tab", still: "hands never move", giftfast: "snipes giveaways", giftmany: "wins too many giveaways",
+  sharednet: "shared network",
+};
+function watchNum(v: unknown, lo: number, hi: number, dflt: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
+}
+// Whatever the panel sends is clamped into shape; anything missing keeps its default.
+// deno-lint-ignore no-explicit-any
+function watchClean(raw: any): WatchConfig {
+  const d = WATCH_DEFAULTS, r = raw && typeof raw === "object" ? raw : {};
+  const rr = r.rules && typeof r.rules === "object" ? r.rules : {};
+  // deno-lint-ignore no-explicit-any
+  const rule = (k: keyof WatchRules, spec: Record<string, [number, number]>): any => {
+    const src = rr[k] && typeof rr[k] === "object" ? rr[k] : {};
+    // deno-lint-ignore no-explicit-any
+    const out: any = { on: src.on === undefined ? d.rules[k].on : src.on === true };
+    // deno-lint-ignore no-explicit-any
+    for (const [f, [lo, hi]] of Object.entries(spec)) out[f] = watchNum(src[f], lo, hi, (d.rules[k] as any)[f]);
+    return out;
+  };
+  return {
+    on: r.on === undefined ? d.on : r.on === true,
+    minRules: Math.round(watchNum(r.minRules, 1, 10, d.minRules)),
+    quietDays: watchNum(r.quietDays, 0, 90, d.quietDays),
+    keepDays: Math.round(watchNum(r.keepDays, 3, 90, d.keepDays)),
+    rules: {
+      volume: rule("volume", { count: [1, 500], hours: [1, 24 * 14] }),
+      quick: rule("quick", { count: [1, 100], of: [1, 100], seconds: [1, 7200] }),
+      regular: rule("regular", { of: [3, 100], seconds: [1, 7200] }),
+      nosleep: rule("nosleep", { hours: [6, 24 * 7], count: [2, 500], gapHours: [0.5, 48] }),
+      streak: rule("streak", { perDay: [1, 100], days: [1, 30] }),
+      noclick: rule("noclick", { count: [1, 100], of: [1, 100] }),
+      hidden: rule("hidden", { count: [1, 100], of: [1, 100] }),
+      still: rule("still", { count: [1, 100], of: [1, 100], seconds: [5, 86_400] }),
+      giftfast: rule("giftfast", { count: [1, 100], of: [1, 100], ms: [50, 60000] }),
+      giftmany: rule("giftmany", { count: [1, 500], hours: [1, 24 * 14] }),
+      sharednet: rule("sharednet", { accounts: [2, 100], hours: [1, 24 * 14] }),
+    },
+  };
+}
+// Read on every claim, so it is kept for half a minute per isolate; a save from
+// the panel lands in this isolate at once and in the others within that.
+let watchCache: { cfg: WatchConfig; at: number } | null = null;
+async function watchConfig(): Promise<WatchConfig> {
+  if (watchCache && Date.now() - watchCache.at < 30_000) return watchCache.cfg;
+  const e = await kv.get(["watch", "config"]);
+  const cfg = watchClean(e.value);
+  watchCache = { cfg, at: Date.now() };
+  return cfg;
+}
+async function claimPenalty(uid: string): Promise<ClaimPenalty | null> {
+  const e = await kv.get<ClaimPenalty>(["claimpen", uid]);
+  return e.value || null;
+}
+// the penalty as it stands right now: nothing that has run out
+function penaltyNow(p: ClaimPenalty | null, now = Date.now()) {
+  return {
+    banned: !!p && (Number(p.banUntil) || 0) > now,
+    banUntil: Number(p?.banUntil) || 0,
+    banGifts: p?.banGifts !== false,
+    reducePct: p && (Number(p.reduceUntil) || 0) > now ? watchNum(p.reducePct, 0, 100, 100) : 100,
+    reduceUntil: Number(p?.reduceUntil) || 0,
+    slowX: p && (Number(p.slowUntil) || 0) > now ? watchNum(p.slowX, 1, 50, 1) : 1,
+    slowUntil: Number(p?.slowUntil) || 0,
+  };
+}
+// A network, as a tag that can be compared between members and never read
+// back into an address.
+async function netTag(ip: string): Promise<string> {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("net|" + ADMIN_KEY + "|" + ip));
+  return [...new Uint8Array(buf)].slice(0, 5).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+// What the page said about the click, clamped: a claim straight from a script
+// sends nothing, and says so by that.
+// deno-lint-ignore no-explicit-any
+function cleanCli(c: any): ClaimCli | undefined {
+  if (!c || typeof c !== "object") return undefined;
+  return {
+    tr: c.tr === 1 ? 1 : 0, vis: c.vis === 1 ? 1 : 0, foc: c.foc === 1 ? 1 : 0,
+    idle: Math.round(watchNum(c.idle, 0, 86_400_000, 0)),
+  };
+}
+async function claimLogs(uid: string, limit = 150): Promise<ClaimLog[]> {
+  const out: ClaimLog[] = [];
+  for await (const e of kv.list<ClaimLog>({ prefix: ["claimlog", uid] }, { limit, reverse: true })) {
+    if (e.value) out.push(e.value);
+  }
+  return out.reverse(); // oldest first
+}
+// "1 claim", "12 claims"
+function many(n: number, word: string): string {
+  return n + " " + word + (n === 1 ? "" : "s");
+}
+function fmtGap(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 90) return s + "s";
+  if (s < 5400) return Math.round(s / 60) + "m";
+  return (Math.round(s / 360) / 10) + "h";
+}
+// Every enabled rule against one member's log. Pure: the panel calls it to
+// show what trips right now, and the claim routes call it to decide a flag.
+function watchEval(cfg: WatchConfig, logs: ClaimLog[], now: number, shared: number): WatchHit[] {
+  const R = cfg.rules, hits: WatchHit[] = [];
+  const hit = (rule: keyof WatchRules, detail: string) => hits.push({ rule, detail });
+  const faucet = logs.filter((l) => l.kind === "faucet");
+  const gifts = logs.filter((l) => l.kind === "gift");
+  const lastN = <T>(a: T[], n: number) => a.slice(Math.max(0, a.length - n));
+  if (R.volume.on) {
+    const n = faucet.filter((l) => l.ts > now - R.volume.hours * 3600_000).length;
+    if (n >= R.volume.count) hit("volume", many(n, "claim") + " in " + R.volume.hours + "h (flag at " + R.volume.count + ")");
+  }
+  if (R.quick.on) {
+    const seen = lastN(faucet.filter((l) => typeof l.lag === "number"), R.quick.of);
+    const n = seen.filter((l) => (l.lag as number) <= R.quick.seconds * 1000).length;
+    if (seen.length >= R.quick.count && n >= R.quick.count) {
+      hit("quick", n + " of the last " + seen.length + " claims within " + R.quick.seconds + "s of the cooldown ending");
+    }
+  }
+  if (R.regular.on && faucet.length >= R.regular.of + 1) {
+    const f = lastN(faucet, R.regular.of + 1);
+    const gaps = f.slice(1).map((l, i) => l.ts - f[i].ts);
+    const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    const sd = Math.sqrt(gaps.reduce((a, b) => a + (b - mean) * (b - mean), 0) / gaps.length);
+    if (sd <= R.regular.seconds * 1000) {
+      hit("regular", "the last " + gaps.length + " gaps were " + fmtGap(mean) + " give or take " + fmtGap(sd));
+    }
+  }
+  if (R.nosleep.on) {
+    const f = faucet.filter((l) => l.ts > now - R.nosleep.hours * 3600_000);
+    if (f.length >= R.nosleep.count && f[f.length - 1].ts - f[0].ts >= R.nosleep.hours * 3600_000 * 0.75) {
+      let longest = 0;
+      for (let i = 1; i < f.length; i++) longest = Math.max(longest, f[i].ts - f[i - 1].ts);
+      if (longest < R.nosleep.gapHours * 3600_000) {
+        hit("nosleep", "longest break in the last " + R.nosleep.hours + "h was " + fmtGap(longest) +
+          " (flag under " + R.nosleep.gapHours + "h)");
+      }
+    }
+  }
+  if (R.streak.on) {
+    let days = 0;
+    for (let d = 0; d < R.streak.days; d++) {
+      const hi = now - d * 86_400_000, lo = hi - 86_400_000;
+      if (faucet.filter((l) => l.ts > lo && l.ts <= hi).length >= R.streak.perDay) days++;
+      else break;
+    }
+    if (days >= R.streak.days) hit("streak", R.streak.perDay + "+ claims a day for " + many(days, "day") + " running");
+  }
+  const recent = (n: number) => lastN(logs, n);
+  if (R.noclick.on) {
+    const seen = recent(R.noclick.of);
+    const n = seen.filter((l) => !l.cli || l.cli.tr !== 1).length;
+    if (n >= R.noclick.count) hit("noclick", n + " of the last " + seen.length + " claims came without a real click");
+  }
+  if (R.hidden.on) {
+    const seen = recent(R.hidden.of);
+    const n = seen.filter((l) => l.cli && l.cli.vis === 0).length;
+    if (n >= R.hidden.count) hit("hidden", n + " of the last " + seen.length + " claims were made from a hidden tab");
+  }
+  if (R.still.on) {
+    // a real click, but nothing moved before it: a macro on a mouse nobody holds
+    const seen = recent(R.still.of);
+    const n = seen.filter((l) => l.cli && l.cli.tr === 1 && (Number(l.cli.idle) || 0) >= R.still.seconds * 1000).length;
+    if (n >= R.still.count) {
+      hit("still", n + " of the last " + seen.length + " claims were clicked with nothing moved for " +
+        fmtGap(R.still.seconds * 1000) + " before");
+    }
+  }
+  if (R.giftfast.on) {
+    const seen = lastN(gifts.filter((l) => typeof l.lag === "number"), R.giftfast.of);
+    const n = seen.filter((l) => (l.lag as number) <= R.giftfast.ms).length;
+    if (n >= R.giftfast.count) hit("giftfast", n + " of the last " + seen.length + " giveaways taken within " + R.giftfast.ms + "ms");
+  }
+  if (R.giftmany.on) {
+    const n = gifts.filter((l) => l.ts > now - R.giftmany.hours * 3600_000).length;
+    if (n >= R.giftmany.count) hit("giftmany", many(n, "giveaway") + " won in " + R.giftmany.hours + "h (flag at " + R.giftmany.count + ")");
+  }
+  if (R.sharednet.on && shared >= R.sharednet.accounts) {
+    hit("sharednet", shared + " accounts claimed from the same network in " + R.sharednet.hours + "h");
+  }
+  return hits;
+}
+// Who claimed from a network in the last so many hours, most recent first.
+async function sharedOn(net: string | undefined, hours: number, now: number): Promise<string[]> {
+  if (!net) return [];
+  const ids = new Set<string>();
+  for await (
+    const e of kv.list({ prefix: ["claimnet", net], start: ["claimnet", net, now - hours * 3600_000] }, { limit: 500, reverse: true })
+  ) ids.add(String(e.key[3]));
+  return [...ids];
+}
+// One member's log against the rules, and the review queue updated to match.
+// A verdict — punished or dismissed — starts the evidence again from that
+// moment, so what they were already judged for does not flag them a second
+// time; a dismissal also keeps them off the queue for quietDays.
+// Returns whether they are (now) flagged.
+async function watchJudge(u: { id: string; username: string }, cfg: WatchConfig, net?: string): Promise<boolean> {
+  const flagE = await kv.get<WatchFlag>(["watch", "flag", u.id]);
+  const f = flagE.value;
+  const now = Date.now();
+  if (f && f.status === "closed" && (Number(f.quietUntil) || 0) > now) return false;
+  let logs = await claimLogs(u.id);
+  if (f && f.status === "closed") logs = logs.filter((l) => l.ts > (Number(f.closedAt) || 0));
+  if (!logs.length) return !!f && f.status === "open";
+  const lastNet = net || logs[logs.length - 1].net;
+  const shared = cfg.rules.sharednet.on ? (await sharedOn(lastNet, cfg.rules.sharednet.hours, now)).length : 0;
+  const hits = watchEval(cfg, logs, now, shared);
+  if (hits.length < cfg.minRules) return !!f && f.status === "open";
+  const next: WatchFlag = f && f.status === "open"
+    ? { ...f, name: u.username, lastAt: now, hits }
+    : { uid: u.id, name: u.username, at: now, lastAt: now, hits, status: "open" };
+  await kv.set(["watch", "flag", u.id], next);
+  return true;
+}
+// One claim: write it down, then judge. Never allowed to break the claim it
+// follows.
+async function watchClaim(
+  u: { id: string; username: string }, entry: ClaimLog, ip: string,
+): Promise<void> {
+  try {
+    const cfg = await watchConfig();
+    const keep = cfg.keepDays * 86_400_000;
+    entry.net = await netTag(ip);
+    await kv.atomic()
+      .set(["claimlog", u.id, entry.ts, rid(4)], entry, { expireIn: keep })
+      .set(["claimnet", entry.net, entry.ts, u.id], 1, { expireIn: keep })
+      .commit();
+    if (cfg.on) await watchJudge(u, cfg, entry.net);
+  } catch (_e) { /* a claim is never refused because the watch could not look */ }
 }
 
 // Rate limits: 90 req/min per IP for *anonymous* traffic, plus per-token
@@ -4595,13 +4910,20 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // several. Racing for a giveaway is the point; doing it a thousand times a
     // second is not.
     if (!allow("gift:" + user.id, 20, 10_000)) return tooMany(10);
+    // a claim ban from the sahur watch covers giveaways unless it was set not
+    // to, and a reduced claim pays a reduced giveaway
+    const pen = penaltyNow(await claimPenalty(user.id));
+    if (pen.banned && pen.banGifts) return json({ error: "claim_banned", until: pen.banUntil }, 403);
 
     for (let attempt = 0; attempt < 8; attempt++) {
       const gift = await kv.get<Gift>(["gift", id]);
       if (!gift.value) return json({ error: "gone" }, 404);
       if (gift.value.claimedBy) return json({ error: "claimed", by: gift.value.claimedBy }, 409);
-      const amount = round2(Number(gift.value.amount) || 0);
-      if (!(amount > 0)) return json({ error: "gone" }, 404);
+      const full = round2(Number(gift.value.amount) || 0);
+      if (!(full > 0)) return json({ error: "gone" }, 404);
+      const amount = round2(full * pen.reducePct / 100);
+      // cut to nothing, they would only be taking it from somebody else
+      if (!(amount > 0)) return json({ error: "claim_banned", until: pen.reduceUntil }, 403);
 
       const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", user.id]);
       const rec = cur.value ?? { bal: 0, lastClaim: 0 };
@@ -4609,13 +4931,20 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       const nb = round2(base + amount);
       if (!Number.isFinite(nb)) return json({ error: "gone" }, 404);
 
+      const claimedAt = Date.now();
       const res = await kv.atomic()
         .check(gift)
         .check(cur)
-        .set(["gift", id], { ...gift.value, claimedBy: user.username, claimedAt: Date.now() }, { expireIn: TTL_MS })
+        .set(["gift", id], { ...gift.value, claimedBy: user.username, claimedAt }, { expireIn: TTL_MS })
         .set(["cas", user.id], { ...rec, bal: nb }, { expireIn: CAS_TTL })
         .commit();
       if (res.ok) {
+        // how fast from the giveaway appearing to being taken is what gives a
+        // script away: it read the room before a person could have
+        await watchClaim(user, {
+          ts: claimedAt, kind: "gift", amt: amount, lag: claimedAt - (Number(gift.value.ts) || claimedAt),
+          gid: id, cli: cleanCli(b.cli),
+        }, ip);
         // tell the room, so every open client retires the button at once
         await appendEvent({ type: "gift", id, by: user.username, amount });
         return json({ ok: true, amount, balance: nb, by: user.username });
@@ -5989,7 +6318,164 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const dead = new Set([id]);
     const conversations = await purgeDmsOf(dead);
     const lines = await purgeRoomOf(dead, new Set([lower]));
+    // and what the sahur watch kept on them
+    const watchKeys: Deno.KvKey[] = [["claimpen", id], ["watch", "flag", id]];
+    for await (const e of kv.list({ prefix: ["claimlog", id] })) watchKeys.push(e.key);
+    await kvDeleteAll(watchKeys);
     return json({ ok: true, deleted: true, conversations, lines });
+  }
+
+  // ---------- admin: the sahur watch ----------
+  // Settings, the review queue, one member's claims, and what to do about them.
+  // All admin-key, all POST so the key and the member id stay out of URLs.
+  if (req.method === "POST" && path.startsWith("/admin/watch/")) {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const now = Date.now();
+    const what = path.slice("/admin/watch/".length);
+
+    if (what === "config") {
+      if (b.config) {
+        const cfg = watchClean(b.config);
+        await kv.set(["watch", "config"], cfg);
+        watchCache = { cfg, at: now };
+        return json({ ok: true, config: cfg, names: WATCH_NAMES, defaults: WATCH_DEFAULTS });
+      }
+      return json({ ok: true, config: await watchConfig(), names: WATCH_NAMES, defaults: WATCH_DEFAULTS });
+    }
+
+    if (what === "flags") {
+      const open: WatchFlag[] = [], closed: WatchFlag[] = [];
+      for await (const e of kv.list<WatchFlag>({ prefix: ["watch", "flag"] })) {
+        if (!e.value) continue;
+        (e.value.status === "open" ? open : closed).push(e.value);
+      }
+      open.sort((x, y) => y.lastAt - x.lastAt);
+      closed.sort((x, y) => (Number(y.closedAt) || 0) - (Number(x.closedAt) || 0));
+      return json({ ok: true, open, closed: closed.slice(0, 40), names: WATCH_NAMES });
+    }
+
+    if (what === "scan") {
+      // Everyone, against the settings as they are now — for after changing them.
+      const cfg = await watchConfig();
+      let looked = 0, flagged = 0;
+      // deno-lint-ignore no-explicit-any
+      for await (const e of kv.list<any>({ prefix: ["app"] })) {
+        const a = e.value;
+        if (!a || a.status !== "approved") continue;
+        looked++;
+        if (await watchJudge({ id: a.id, username: a.username }, cfg)) flagged++;
+      }
+      return json({ ok: true, looked, flagged });
+    }
+
+    const id = clip(b.id, 32);
+    // deno-lint-ignore no-explicit-any
+    const app = id ? await kv.get<any>(["app", id]) : null;
+    if (!app || !app.value) return json({ error: "not found" }, 404);
+    const name = String(app.value.username);
+
+    if (what === "user") {
+      const cfg = await watchConfig();
+      const logs = await claimLogs(id, 600);
+      const nets: { net: string; claims: number; others: string[]; more: number }[] = [];
+      const seen = new Map<string, number>();
+      for (const l of logs) if (l.net) seen.set(l.net, (seen.get(l.net) || 0) + 1);
+      for (const [net, claims] of [...seen.entries()].slice(0, 10)) {
+        const ids = (await sharedOn(net, cfg.keepDays * 24, now)).filter((x) => x !== id);
+        // the most recent twenty by name, and how many more there were
+        const others: string[] = [];
+        for (const oid of ids.slice(0, 20)) {
+          // deno-lint-ignore no-explicit-any
+          const o = await kv.get<any>(["app", oid]);
+          others.push(o.value?.username || oid + " (gone)");
+        }
+        nets.push({ net, claims, others, more: Math.max(0, ids.length - 20) });
+      }
+      const lastNet = logs.length ? logs[logs.length - 1].net : undefined;
+      const shared = cfg.rules.sharednet.on ? (await sharedOn(lastNet, cfg.rules.sharednet.hours, now)).length : 0;
+      const pen = await claimPenalty(id);
+      const flag = (await kv.get<WatchFlag>(["watch", "flag", id])).value;
+      return json({
+        ok: true, id, name, logs, nets, penalty: pen, now: penaltyNow(pen, now),
+        flag, hits: watchEval(cfg, logs, now, shared), names: WATCH_NAMES,
+        faucet: { amount: FAUCET_AMOUNT, interval: FAUCET_INTERVAL },
+        balance: round2((await getCas(id)).bal),
+      });
+    }
+
+    if (what === "punish") {
+      const cfg = await watchConfig();
+      const cur = (await claimPenalty(id)) || { at: now };
+      const p: ClaimPenalty = { ...cur, at: now };
+      const done: string[] = [];
+      if (b.ban) {
+        const h = watchNum(b.ban.hours, 0.1, 24 * 365, 24);
+        p.banUntil = now + h * 3600_000;
+        p.banGifts = b.ban.gifts !== false;
+        done.push("barred from claiming for " + h + "h" + (p.banGifts ? " (giveaways too)" : ""));
+      }
+      if (b.reduce) {
+        const pct = watchNum(b.reduce.pct, 0, 99, 50), d = watchNum(b.reduce.days, 0.1, 365, 7);
+        p.reducePct = pct; p.reduceUntil = now + d * 86_400_000;
+        done.push("claims paid at " + pct + "% for " + many(d, "day"));
+      }
+      if (b.slow) {
+        const x = watchNum(b.slow.x, 1.1, 50, 2), d = watchNum(b.slow.days, 0.1, 365, 7);
+        p.slowX = x; p.slowUntil = now + d * 86_400_000;
+        done.push("cooldown ×" + x + " for " + many(d, "day"));
+      }
+      if (b.note) p.note = clip(b.note, 300);
+      const until = Math.max(Number(p.banUntil) || 0, Number(p.reduceUntil) || 0, Number(p.slowUntil) || 0);
+      if (until > now) await kv.set(["claimpen", id], p, { expireIn: until - now + 86_400_000 });
+      let taken = 0;
+      if (b.takeBack) {
+        // what the watch saw them claim in the window, back out of the balance —
+        // never below nothing
+        const d = watchNum(b.takeBack.days, 0.1, cfg.keepDays, 7);
+        const owed = round2((await claimLogs(id, 600))
+          .filter((l) => l.ts > now - d * 86_400_000).reduce((a, l) => a + (Number(l.amt) || 0), 0));
+        for (let i = 0; i < 8 && owed > 0; i++) {
+          const ce = await kv.get<{ bal: number; lastClaim: number }>(["cas", id]);
+          const rec = ce.value ?? { bal: 0, lastClaim: 0 };
+          const bal = Number.isFinite(rec.bal) ? rec.bal : 0;
+          taken = round2(Math.min(bal, owed));
+          const res = await kv.atomic().check(ce)
+            .set(["cas", id], { ...rec, bal: round2(bal - taken) }, { expireIn: CAS_TTL }).commit();
+          if (res.ok) break;
+          taken = 0;
+        }
+        done.push("took back " + taken + " of " + owed + " claimed in the last " + many(d, "day"));
+      }
+      if (b.timeoutHours) done.push("timed out for " + watchNum(b.timeoutHours, 0, 24 * 365, 0) + "h");
+      if (b.warned) done.push("warned as tung");
+      // the review closes on the verdict, and what they did before it is spent
+      const fE = await kv.get<WatchFlag>(["watch", "flag", id]);
+      const verdict = done.length ? done.join("; ") : "reviewed";
+      await kv.set(["watch", "flag", id], {
+        ...(fE.value || { uid: id, name, at: now, lastAt: now, hits: [] }),
+        name, status: "closed", closedAt: now, verdict,
+      } as WatchFlag);
+      return json({ ok: true, penalty: until > now ? p : null, taken, verdict });
+    }
+
+    if (what === "dismiss") {
+      const cfg = await watchConfig();
+      const q = watchNum(b.quietDays, 0, 90, cfg.quietDays);
+      const fE = await kv.get<WatchFlag>(["watch", "flag", id]);
+      await kv.set(["watch", "flag", id], {
+        ...(fE.value || { uid: id, name, at: now, lastAt: now, hits: [] }),
+        name, status: "closed", closedAt: now, verdict: "dismissed — not a bot", quietUntil: now + q * 86_400_000,
+      } as WatchFlag);
+      return json({ ok: true, quietDays: q });
+    }
+
+    if (what === "lift") {
+      await kv.delete(["claimpen", id]);
+      return json({ ok: true });
+    }
+    return json({ error: "not found" }, 404);
   }
 
   // ---------- admin: clear what deleted accounts left behind ----------
@@ -6132,6 +6618,11 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // Its index is bookkeeping, not entries anybody made, so it is not counted.
     await kv.delete(["pendn"]);
     for await (const e of kv.list({ prefix: ["pendq"] })) await kv.delete(e.key);
+    // nobody is left to review or punish, so the sahur watch's notes on them
+    // go too; its settings stay
+    for (const prefix of [["claimlog"], ["claimnet"], ["claimpen"], ["watch", "flag"]]) {
+      for await (const e of kv.list({ prefix })) await kv.delete(e.key);
+    }
     // every account is gone now, and what they wrote goes with them
     const left = await purgeGone();
     return json({ ok: true, cleared: n, conversations: left.conversations, lines: left.lines });
@@ -6147,11 +6638,18 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     // that the balance below has to already know about
     const round = await liveComp(u.id);
     const c = await getCas(u.id);
-    const next = c.lastClaim + FAUCET_INTERVAL;
+    // the faucet as it stands for THIS member, penalties included, so the page
+    // shows the amount and the clock that /cas/claim will actually use
+    const pen = penaltyNow(await claimPenalty(u.id));
+    const interval = FAUCET_INTERVAL * pen.slowX;
+    const next = c.lastClaim + interval;
     return json({
       username: u.username, balance: round2(c.bal),
-      canClaim: Date.now() >= next, nextClaim: c.lastClaim ? next : 0,
-      faucetAmount: FAUCET_AMOUNT, faucetInterval: FAUCET_INTERVAL,
+      canClaim: !pen.banned && Date.now() >= next, nextClaim: c.lastClaim ? next : 0,
+      faucetAmount: round2(FAUCET_AMOUNT * pen.reducePct / 100), faucetInterval: interval,
+      ...(pen.banned ? { claimBan: pen.banUntil } : {}),
+      ...(pen.reducePct < 100 ? { reduced: { pct: pen.reducePct, until: pen.reduceUntil } } : {}),
+      ...(pen.slowX > 1 ? { slowed: { x: pen.slowX, until: pen.slowUntil } } : {}),
       round: round ? duelView(round, u.id) : null,
     });
   }
@@ -6162,12 +6660,18 @@ Deno.serve({ port: listenPort }, async (req, info) => {
     const b: any = await req.json().catch(() => ({}));
     const u = await casUser(b.token);
     if (!u) return json({ error: "unauthorized" }, 401);
+    // a penalty from the sahur watch: barred outright, paid less, or made to
+    // wait longer — see the watch section above /cas/me
+    const pen = penaltyNow(await claimPenalty(u.id));
+    if (pen.banned) return json({ error: "claim_banned", until: pen.banUntil }, 403);
+    const interval = FAUCET_INTERVAL * pen.slowX;
+    const amount = round2(FAUCET_AMOUNT * pen.reducePct / 100);
     // guard the faucet clock atomically so a double-click can't double-claim
     for (;;) {
       const cur = await kv.get<{ bal: number; lastClaim: number }>(["cas", u.id]);
       const rec = cur.value ?? { bal: 0, lastClaim: 0 };
       const now = Date.now();
-      const next = rec.lastClaim + FAUCET_INTERVAL;
+      const next = rec.lastClaim + interval;
       if (rec.lastClaim && now < next) return json({ error: "cooldown", nextClaim: next }, 429);
       // The bank takes its half off the top while a debt stands — but only ever
       // as much as is still owed, so the last claim of a loan hands back the
@@ -6176,8 +6680,8 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       // also paying the debt down, or the other way about.
       const loanE = await kv.get<Loan>(["loan", u.id]);
       const owed = loanE.value && Number(loanE.value.owed) > 0 ? round2(Number(loanE.value.owed)) : 0;
-      const take = owed > 0 ? Math.min(round2(FAUCET_AMOUNT * LOAN_GARNISH), owed) : 0;
-      const gain = round2(FAUCET_AMOUNT - take);
+      const take = owed > 0 ? Math.min(round2(amount * LOAN_GARNISH), owed) : 0;
+      const gain = round2(amount - take);
       const left = round2(owed - take);
       const nb = round2(rec.bal + gain);
       let op = kv.atomic().check(cur).check(loanE)
@@ -6189,10 +6693,16 @@ Deno.serve({ port: listenPort }, async (req, info) => {
       }
       const res = await op.commit();
       if (res.ok) {
+        await watchClaim(u, {
+          ts: now, kind: "faucet", amt: gain,
+          // how long it sat claimable before this; the first claim ever has no clock
+          ...(rec.lastClaim ? { lag: now - next } : {}),
+          cli: cleanCli(b.cli),
+        }, ip);
         return json({
-          ok: true, balance: nb, claimed: gain, faucet: FAUCET_AMOUNT,
+          ok: true, balance: nb, claimed: gain, faucet: amount,
           garnished: take, owed: left > 0 ? left : 0, cleared: take > 0 && left <= 0,
-          nextClaim: now + FAUCET_INTERVAL,
+          nextClaim: now + interval,
         });
       }
     }
@@ -7112,6 +7622,47 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .tmsg .twhen{display:block;font-size:10px;opacity:.8;margin-bottom:3px}
 .app h3 .when{margin-left:8px;font-size:11px;font-weight:500;color:#c8823c;letter-spacing:0;text-transform:none}
 .danger p{color:#e9d9c2;line-height:1.45}
+.content.roomy{max-width:1180px}
+.wtabs{display:flex;gap:6px;margin:0 0 16px}
+.wtabs button{background:#241505;color:#e9d9c2;border:1px solid #3a2410}
+.wtabs button.on{background:#c8823c;color:#1d1206;border-color:#c8823c}
+.wflag{cursor:pointer}
+.wflag:hover{border-color:#8a5a28}
+.wflag.sel{border-color:#c8823c}
+.whits{margin:6px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px}
+.whits li{font-size:13px;color:#e9d9c2}
+.whits b{color:#ffb3b3;font-weight:700}
+.wchip{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:5px;font-size:11px;font-weight:700;vertical-align:1px}
+.wchip.open{background:#5a1f1f;color:#ffb3b3}
+.wchip.closed{background:#1f3a24;color:#b7e4bf}
+.wchip.pen{background:#4a3410;color:#f2c063}
+.wstats{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:10px 0 14px}
+.wstat{background:#1d1206;border:1px solid #3a2410;border-radius:10px;padding:8px 10px}
+.wstat b{display:block;font-size:18px;color:#f5efe0;font-variant-numeric:tabular-nums}
+.wstat span{font-size:11px;color:#c8823c}
+.wtl{margin:6px 0 14px}
+.wtlrow{display:flex;align-items:center;gap:10px;height:20px}
+.wtlday{flex:0 0 92px;font-size:11px;color:#c8823c;text-align:right}
+.wtlbar{position:relative;flex:1;height:12px;background:#1d1206;border:1px solid #3a2410;border-radius:6px}
+.wtlbar i{position:absolute;top:1px;width:8px;height:8px;margin-left:-4px;border-radius:50%;background:#f2c063}
+.wtlbar i.g{background:#7fb2ff}
+.wtlhours{display:flex;justify-content:space-between;margin:2px 0 0 102px;font-size:10px;color:#8a6a3a}
+.wtable{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.wtable th{text-align:left;color:#c8823c;font-weight:600;padding:6px 8px;border-bottom:1px solid #3a2410;position:sticky;top:0;background:#241505}
+.wtable td{padding:5px 8px;border-bottom:1px solid #2b1a0a;color:#e9d9c2;white-space:nowrap}
+.wtable td.bad{color:#ffb3b3}
+.wtable td.good{color:#b7e4bf}
+.wlogwrap{max-height:420px;overflow:auto;border:1px solid #3a2410;border-radius:10px}
+.wpun{display:flex;flex-direction:column;gap:8px}
+.wpun label,.wrule{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:#e9d9c2}
+.wpun input[type=number],.wrule input[type=number]{flex:0 0 76px;width:76px;padding:6px 8px}
+.wpun input[type=checkbox],.wrule input[type=checkbox]{flex:0 0 auto;width:16px;height:16px}
+.wpun textarea{min-height:52px}
+.wrule{padding:10px 12px;background:#1d1206;border:1px solid #3a2410;border-radius:10px}
+.wrule .wrname{flex:0 0 190px;font-weight:700;color:#f5efe0}
+.wrules{display:flex;flex-direction:column;gap:8px}
+.wsplit{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wmuted{color:#8a6a3a;font-size:12px}
 .content.wide{max-width:none;height:calc(100vh - 53px);display:flex;flex-direction:column;box-sizing:border-box;overflow:hidden}
 .content.wide .keybar{flex:0 0 auto}
 #pane-talk.on{flex:1;display:flex;flex-direction:column;min-height:0}
@@ -7160,6 +7711,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn on" data-pane="pending">Approve / deny <span class="count" id="count-pending"></span></button>
 <button type="button" class="navbtn" data-pane="users">Manage users <span class="count" id="count-users"></span></button>
 <button type="button" class="navbtn" data-pane="balances">Casino balances <span class="count" id="count-balances"></span></button>
+<button type="button" class="navbtn" data-pane="watch">Sahur watch <span class="count" id="count-watch"></span></button>
 <button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
 <button type="button" class="navbtn" data-pane="chat">Chat log <span class="count" id="count-chat"></span></button>
 <button type="button" class="navbtn" data-pane="dms">Direct messages <span class="count" id="count-dms"></span></button>
@@ -7245,6 +7797,21 @@ Setting a debt writes it straight to the ledger with no interest added, and <b>0
 <p class="hint">The global half of the veil. "Coming Soon" shows the holding page to everyone; "Live" opens it — but only for members you have also approved individually, on the web-veil line of their card under Manage users. Takes effect immediately — no redeploy.</p>
 <div id="veilbox"><div class="empty">enter your admin key and hit load.</div></div>
 </section>
+<section class="pane" id="pane-watch">
+<h2>Sahur watch</h2>
+<p class="hint">Catches people botting the free sahurs &mdash; the faucet and tung's giveaways. Every claim is logged with when it came, how long after it became available, how the click was made and which network it came from. The rules below read that log each time somebody claims, and anyone they catch lands in <b>review</b>. The rules and every number in them live in the database and are only set here, so reading the site's code on GitHub does not tell anybody where the lines are.</p>
+<div class="wtabs"><button type="button" data-wt="review" class="on">review <span id="wqCount"></span></button><button type="button" data-wt="lookup">look someone up</button><button type="button" data-wt="rules">detection rules</button></div>
+<div id="wt-review">
+<div id="wflags"><div class="empty">load to see who has been caught.</div></div>
+</div>
+<div id="wt-lookup" style="display:none">
+<div class="row" style="margin-bottom:14px"><select id="wWho"><option value="">load first, then pick a member&hellip;</option></select><button class="load" id="wLook" type="button">show their claims</button></div>
+</div>
+<div id="wt-rules" style="display:none">
+<div id="wrules"><div class="empty">load to see the rules.</div></div>
+</div>
+<div id="wdetail"></div>
+</section>
 <section class="pane danger" id="pane-danger">
 <h2>Wipe data</h2>
 <p>Delete every application (pending and approved). Usernames and tokens are wiped; everyone must re-apply, and what they said goes with them &mdash; their chat messages and every DM. Casino balances and shop items are not cleared by this.</p>
@@ -7277,7 +7844,7 @@ var balancesDefault=10;   /* the house loan cap, as the server reports it */
    before the key was rotated must not be allowed to overwrite it — every
    pane would come back "forbidden" on a key the door had just accepted. */
 try{if(!keyEl.value){var qk=new URLSearchParams(location.search).get("key");if(qk)keyEl.value=qk;else{var k=localStorage.getItem("shrine-admin-key");if(k)keyEl.value=k;}}}catch(e){}
-function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();refreshVeil();}
+function loadAll(){refresh();refreshUsers();refreshBalances();refreshShop();refreshVeil();watchFlags();}
 document.getElementById("load").onclick=loadAll;
 document.getElementById("dumpChat").onclick=dumpChat;
 document.getElementById("clearChat").onclick=function(){
@@ -7348,6 +7915,8 @@ function showPane(id){
   for(var j=0;j<btns.length;j++) btns[j].classList.toggle("on", btns[j].getAttribute("data-pane")===id);
   var content=document.querySelector(".content");
   if(content)content.classList.toggle("wide", id==="talk");
+  if(content)content.classList.toggle("roomy", id==="watch");
+  if(id==="watch")watchOpen();
   if(id==="talk")talkOpen();else talkStop();
 }
 var navBtns=document.querySelectorAll(".navbtn");
@@ -7891,6 +8460,7 @@ function dmFillUsers(){
   (usersCache||[]).forEach(function(u){dmOption(dmWho,u.id,u.username);});
   if(prev)dmWho.value=prev;
   talkFillUsers();
+  watchFillUsers();
 }
 function dmSetPeers(msg){
   if(!dmPeer)return;
@@ -8181,4 +8751,319 @@ if(talkWho)talkWho.onchange=function(){
   talkOpenUser(id,label?label.textContent:"");
 };
 if(talkform)talkform.addEventListener("submit",function(ev){ev.preventDefault();talkSend();});
+/* ---------------------------------------------------------------------------
+   Sahur watch.
+
+   The review queue (who the rules caught, and what they saw), one member's
+   claims laid out so a script stands out at a glance — a person's week has
+   holes in it where they slept, a script's does not — and what to do about
+   it. The rules and their numbers are edited here and kept server-side. */
+var wflagsEl=document.getElementById("wflags"),wrulesEl=document.getElementById("wrules");
+var wdetail=document.getElementById("wdetail"),wWho=document.getElementById("wWho");
+var WATCH={names:{},flags:null,cfg:null,defaults:null,sel:null};
+function wEl(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+function wWhen(t){return t?new Date(t).toLocaleString():"";}
+function wAgo(ms){var s=Math.round(Math.abs(ms)/1000);if(s<90)return s+"s";if(s<5400)return Math.round(s/60)+"m";if(s<172800)return (Math.round(s/360)/10)+"h";return Math.round(s/86400)+"d";}
+function wNum(v){var i=document.createElement("input");i.type="number";i.step="any";i.min="0";i.value=v;return i;}
+function wBox(on){var b=document.createElement("input");b.type="checkbox";b.checked=!!on;return b;}
+function wLine(parent,parts){var l=document.createElement("label");parts.forEach(function(p){l.appendChild(typeof p==="string"?document.createTextNode(p):p);});parent.appendChild(l);return l;}
+function wMsg(parent,t){parent.innerHTML="";parent.appendChild(wEl("div","empty",t));}
+function watchTab(t){
+  ["review","lookup","rules"].forEach(function(k){document.getElementById("wt-"+k).style.display=k===t?"":"none";});
+  var bs=document.querySelectorAll(".wtabs button");
+  for(var i=0;i<bs.length;i++)bs[i].classList.toggle("on",bs[i].getAttribute("data-wt")===t);
+  wdetail.style.display=t==="rules"?"none":"";
+  if(t==="rules")watchRules();
+}
+(function(){var bs=document.querySelectorAll(".wtabs button");for(var i=0;i<bs.length;i++)bs[i].onclick=function(){watchTab(this.getAttribute("data-wt"));};})();
+function watchOpen(){watchFlags();if(!WATCH.cfg)watchConfigLoad(null);}
+function watchFillUsers(){
+  if(!wWho)return;var prev=wWho.value;wWho.innerHTML="";
+  dmOption(wWho,"",usersCache?"pick a member…":"load first, then pick a member…");
+  (usersCache||[]).forEach(function(u){dmOption(wWho,u.id,u.username);});
+  if(prev)wWho.value=prev;
+}
+document.getElementById("wLook").onclick=function(){if(wWho.value)watchUser(wWho.value);};
+if(wWho)wWho.onchange=function(){if(wWho.value)watchUser(wWho.value);};
+
+/* ---- the review queue ---- */
+function watchFlags(){
+  if(!keyEl.value.trim())return;
+  apost("/admin/watch/flags",{}).then(function(d){
+    if(d.error){wMsg(wflagsEl,d.error+" — check your key.");setCount("watch","");return;}
+    WATCH.names=d.names||WATCH.names;WATCH.flags=d;
+    setCount("watch",d.open.length||"");
+    var qc=document.getElementById("wqCount");if(qc)qc.textContent=d.open.length?"("+d.open.length+")":"";
+    paintFlags();
+  }).catch(function(){wMsg(wflagsEl,"network error.");});
+}
+function hitList(hits){
+  var ul=wEl("ul","whits");
+  (hits||[]).forEach(function(h){var li=wEl("li");li.appendChild(wEl("b",null,(WATCH.names[h.rule]||h.rule)+": "));li.appendChild(document.createTextNode(h.detail));ul.appendChild(li);});
+  return ul;
+}
+function flagCard(f,open){
+  var c=wEl("div","app wflag"+(WATCH.sel===f.uid?" sel":""));
+  var h=wEl("h3",null,f.name);
+  h.appendChild(wEl("span","wchip "+(open?"open":"closed"),open?"waiting for review":"decided"));
+  h.appendChild(wEl("span","when",open
+    ?"caught "+wWhen(f.at)+(f.lastAt&&f.lastAt!==f.at?" · still tripping "+wWhen(f.lastAt):"")
+    :wWhen(f.closedAt)));
+  c.appendChild(h);
+  if(open)c.appendChild(hitList(f.hits));else c.appendChild(wEl("small",null,f.verdict||""));
+  c.onclick=function(){watchUser(f.uid);};
+  return c;
+}
+function paintFlags(){
+  var d=WATCH.flags;if(!d)return;wflagsEl.innerHTML="";
+  if(!d.open.length)wflagsEl.appendChild(wEl("div","empty","nobody is waiting for review."));
+  d.open.forEach(function(f){wflagsEl.appendChild(flagCard(f,true));});
+  if(d.closed.length){
+    var h=wEl("h3",null,"recent verdicts");h.style.cssText="margin:18px 0 8px;font-size:14px;color:#c8823c";wflagsEl.appendChild(h);
+    d.closed.slice(0,12).forEach(function(f){wflagsEl.appendChild(flagCard(f,false));});
+  }
+}
+
+/* ---- one member ---- */
+function watchUser(id){
+  WATCH.sel=id;paintFlags();
+  wMsg(wdetail,"loading their claims…");
+  apost("/admin/watch/user",{id:id}).then(function(d){
+    if(d.error){wMsg(wdetail,d.error);return;}
+    WATCH.names=d.names||WATCH.names;paintDetail(d);
+    try{wdetail.scrollIntoView({behavior:"smooth",block:"start"});}catch(e){}
+  }).catch(function(){wMsg(wdetail,"network error.");});
+}
+function paintDetail(d){
+  wdetail.innerHTML="";
+  var now=Date.now(),logs=d.logs||[],day=86400000;
+  var fau=logs.filter(function(l){return l.kind==="faucet";}),gif=logs.filter(function(l){return l.kind==="gift";});
+  var card=wEl("div","app"),h=wEl("h3",null,d.name);
+  if(d.flag&&d.flag.status==="open")h.appendChild(wEl("span","wchip open","waiting for review"));
+  var penal=d.now.banned||d.now.reducePct<100||d.now.slowX>1;
+  if(penal)h.appendChild(wEl("span","wchip pen","under a penalty"));
+  h.appendChild(wEl("span","when","balance "+d.balance+" sahurs"));
+  card.appendChild(h);
+  var lags=fau.filter(function(l){return typeof l.lag==="number";}).map(function(l){return l.lag;}).sort(function(a,b){return a-b;});
+  var glags=gif.filter(function(l){return typeof l.lag==="number";}).map(function(l){return l.lag;});
+  var stats=[
+    [fau.filter(function(l){return l.ts>now-day;}).length,"faucet claims, 24h"],
+    [fau.filter(function(l){return l.ts>now-7*day;}).length,"faucet claims, 7 days"],
+    [Math.round(logs.filter(function(l){return l.ts>now-7*day;}).reduce(function(a,l){return a+(Number(l.amt)||0);},0)*100)/100,"sahurs claimed, 7 days"],
+    [gif.filter(function(l){return l.ts>now-7*day;}).length,"giveaways won, 7 days"],
+    [lags.length?wAgo(lags[Math.floor(lags.length/2)]):"—","typical wait after ready"],
+    [glags.length?Math.min.apply(null,glags)+"ms":"—","fastest giveaway"]
+  ];
+  var st=wEl("div","wstats");
+  stats.forEach(function(p){var b=wEl("div","wstat");b.appendChild(wEl("b",null,String(p[0])));b.appendChild(wEl("span",null,p[1]));st.appendChild(b);});
+  card.appendChild(st);
+  card.appendChild(wEl("small",null,d.hits.length?"what the rules see in everything logged, right now:":"nothing trips the rules on everything logged, right now."));
+  if(d.hits.length)card.appendChild(hitList(d.hits));
+  var bits=[];
+  if(d.now.banned)bits.push("barred from claiming until "+wWhen(d.now.banUntil)+(d.now.banGifts?" (giveaways too)":" (faucet only)"));
+  if(d.now.reducePct<100)bits.push("claims pay "+d.now.reducePct+"% until "+wWhen(d.now.reduceUntil));
+  if(d.now.slowX>1)bits.push("cooldown ×"+d.now.slowX+" until "+wWhen(d.now.slowUntil));
+  var pen=wEl("div","row");pen.style.marginTop="10px";
+  pen.appendChild(wEl("span","wmuted",bits.length?"penalty: "+bits.join("; ")+(d.penalty&&d.penalty.note?" — "+d.penalty.note:""):"no penalty on them."));
+  if(bits.length){
+    var lift=wEl("button","no","lift the penalty");lift.type="button";
+    lift.onclick=function(){if(!confirm("Lift every claim penalty on "+d.name+"?"))return;apost("/admin/watch/lift",{id:d.id}).then(function(){watchUser(d.id);});};
+    pen.appendChild(lift);
+  }
+  card.appendChild(pen);
+  wdetail.appendChild(card);
+  wdetail.appendChild(watchTimeline(logs));
+  wdetail.appendChild(watchPunish(d));
+  wdetail.appendChild(watchNets(d));
+  wdetail.appendChild(watchLog(d));
+}
+/* a week, one row a day, a dot for every claim at the hour it was made */
+function watchTimeline(logs){
+  var c=wEl("div","app");c.appendChild(wEl("h3",null,"the last 7 days, hour by hour"));
+  c.appendChild(wEl("small",null,"gold: faucet · blue: giveaways · hover a dot for the details. a person's week has gaps where they slept; a script's does not."));
+  var tl=wEl("div","wtl"),d0=new Date();d0.setHours(0,0,0,0);
+  for(var i=0;i<7;i++){
+    var start=d0.getTime()-i*86400000,end=start+86400000,row=wEl("div","wtlrow");
+    row.appendChild(wEl("span","wtlday",i===0?"today":new Date(start).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})));
+    var bar=wEl("div","wtlbar");
+    logs.forEach(function(l){
+      if(l.ts<start||l.ts>=end)return;
+      var dot=wEl("i",l.kind==="gift"?"g":null);dot.style.left=((l.ts-start)/86400000*100)+"%";
+      dot.title=new Date(l.ts).toLocaleTimeString()+" · "+(l.kind==="gift"?"giveaway":"faucet")+
+        (typeof l.lag==="number"?" · "+(l.kind==="gift"?l.lag+"ms after it appeared":wAgo(l.lag)+" after it was ready"):"");
+      bar.appendChild(dot);
+    });
+    row.appendChild(bar);tl.appendChild(row);
+  }
+  var hrs=wEl("div","wtlhours");["00","03","06","09","12","15","18","21","24"].forEach(function(x){hrs.appendChild(wEl("span",null,x));});
+  tl.appendChild(hrs);c.appendChild(tl);return c;
+}
+function watchNets(d){
+  var c=wEl("div","app");c.appendChild(wEl("h3",null,"networks they claimed from"));
+  if(!d.nets.length){c.appendChild(wEl("small",null,"no claims logged yet."));return c;}
+  d.nets.forEach(function(n){
+    var r=wEl("p");r.style.margin="4px 0";
+    r.textContent="network "+n.net+" — "+n.claims+" of their claims"+(n.others.length?" · also claimed from by: "+n.others.join(", ")+(n.more?" and "+n.more+" more":""):" · nobody else claimed from it");
+    c.appendChild(r);
+  });
+  c.appendChild(wEl("small",null,"a network is a scrambled tag, never an address. a school puts many people on one network, so several names here is not proof on its own."));
+  return c;
+}
+/* every claim, newest first, with the numbers the rules read */
+function watchLog(d){
+  var c=wEl("div","app");c.appendChild(wEl("h3",null,"every claim they made ("+d.logs.length+")"));
+  if(!d.logs.length){c.appendChild(wEl("small",null,"nothing logged. claims are kept for as many days as the rules say."));return c;}
+  var qs=(WATCH.cfg?WATCH.cfg.rules.quick.seconds:90)*1000,gm=WATCH.cfg?WATCH.cfg.rules.giftfast.ms:1500;
+  var sm=(WATCH.cfg&&WATCH.cfg.rules.still?WATCH.cfg.rules.still.seconds:600)*1000;
+  var wrap=wEl("div","wlogwrap"),t=wEl("table","wtable"),thead=document.createElement("thead"),hd=wEl("tr");
+  ["when","what","got","after ready","since last","click","tab","still before","network"].forEach(function(x){hd.appendChild(wEl("th",null,x));});
+  thead.appendChild(hd);t.appendChild(thead);
+  var tb=document.createElement("tbody"),lastF=null,rows=[];
+  d.logs.forEach(function(l){var gap=null;if(l.kind==="faucet"){if(lastF)gap=l.ts-lastF;lastF=l.ts;}rows.push([l,gap]);});
+  rows.reverse().forEach(function(p){
+    var l=p[0],gap=p[1],cli=l.cli,tr=wEl("tr"),lag=typeof l.lag==="number";
+    tr.appendChild(wEl("td",null,wWhen(l.ts)));
+    tr.appendChild(wEl("td",null,l.kind==="gift"?"giveaway":"faucet"));
+    tr.appendChild(wEl("td",null,String(l.amt)));
+    tr.appendChild(wEl("td",lag&&(l.kind==="gift"?l.lag<=gm:l.lag<=qs)?"bad":null,lag?(l.kind==="gift"?l.lag+"ms":wAgo(l.lag)):"—"));
+    tr.appendChild(wEl("td",null,gap===null?"—":wAgo(gap)));
+    tr.appendChild(wEl("td",cli&&cli.tr===1?"good":"bad",cli?(cli.tr===1?"real":"scripted"):"none sent"));
+    tr.appendChild(wEl("td",cli&&cli.vis===0?"bad":null,cli?(cli.vis===1?"visible":"hidden"):"—"));
+    tr.appendChild(wEl("td",cli&&typeof cli.idle==="number"&&cli.idle>=sm?"bad":null,cli&&typeof cli.idle==="number"?wAgo(cli.idle):"—"));
+    tr.appendChild(wEl("td",null,l.net||"—"));
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);wrap.appendChild(t);c.appendChild(wrap);return c;
+}
+/* the verdict. the claim penalties are the watch's own; the site timeout and
+   the warning go through the routes those already have */
+function watchPunish(d){
+  var c=wEl("div","app");c.appendChild(wEl("h3",null,"what to do about "+d.name));
+  var f=wEl("div","wpun");
+  var banOn=wBox(true),banH=wNum(24),banG=wBox(true);
+  wLine(f,[banOn," bar them from claiming for ",banH," hours — ",banG," giveaways too"]);
+  var redOn=wBox(false),redP=wNum(50),redD=wNum(7);
+  wLine(f,[redOn," pay their claims at ",redP," % for ",redD," days"]);
+  var slowOn=wBox(false),slowX=wNum(2),slowD=wNum(7);
+  wLine(f,[slowOn," make them wait ×",slowX," as long between faucet claims, for ",slowD," days"]);
+  var takeOn=wBox(false),takeD=wNum(7);
+  wLine(f,[takeOn," take back every sahur they claimed in the last ",takeD," days"]);
+  var toOn=wBox(false),toH=wNum(6);
+  wLine(f,[toOn," time them out of the whole site for ",toH," hours"]);
+  var warnOn=wBox(false);wLine(f,[warnOn," warn them as tung, in a DM:"]);
+  var warnT=document.createElement("textarea");warnT.value="tung sees the hands that are not hands. claim with your own.";f.appendChild(warnT);
+  var noteI=document.createElement("input");noteI.placeholder="a note for yourself — only this page sees it";f.appendChild(noteI);
+  var acts=wEl("div","row"),go=wEl("button","no","punish"),dis=wEl("button","ok","not a bot — dismiss"),qd=wNum(WATCH.cfg?WATCH.cfg.quietDays:3);
+  go.type="button";dis.type="button";
+  acts.appendChild(go);acts.appendChild(dis);acts.appendChild(document.createTextNode(" and leave them alone for "));acts.appendChild(qd);acts.appendChild(document.createTextNode(" days"));
+  var out=wEl("small");out.style.cssText="display:block;margin-top:8px";
+  f.appendChild(acts);f.appendChild(out);c.appendChild(f);
+  go.onclick=function(){
+    var body={id:d.id,note:noteI.value.trim()};
+    if(banOn.checked)body.ban={hours:Number(banH.value),gifts:banG.checked};
+    if(redOn.checked)body.reduce={pct:Number(redP.value),days:Number(redD.value)};
+    if(slowOn.checked)body.slow={x:Number(slowX.value),days:Number(slowD.value)};
+    if(takeOn.checked)body.takeBack={days:Number(takeD.value)};
+    if(toOn.checked)body.timeoutHours=Number(toH.value);
+    if(warnOn.checked&&warnT.value.trim())body.warned=true;
+    if(!body.ban&&!body.reduce&&!body.slow&&!body.takeBack&&!body.timeoutHours&&!body.warned){out.textContent="tick at least one thing to do — or dismiss them.";return;}
+    if(!confirm("Punish "+d.name+"?"))return;
+    go.disabled=true;out.textContent="applying…";
+    /* the warning goes before the timeout: tung cannot DM somebody the site
+       has already shut out */
+    var rs=[];
+    (body.warned?apost("/admin/talk/send",{user:d.id,text:warnT.value.trim()}):Promise.resolve(null)).then(function(r){
+      rs.push(r);
+      return body.timeoutHours?apost("/admin/timeout",{id:d.id,until:Date.now()+body.timeoutHours*3600000}):null;
+    }).then(function(r){
+      rs.push(r);
+      var bad=rs.filter(function(r){return r&&r.error;}).map(function(r){return r.error+(r.reason?" ("+r.reason+")":"");});
+      if(bad.length)body.note=(body.note?body.note+" — ":"")+"some of it did not go through: "+bad.join(", ");
+      return apost("/admin/watch/punish",body);
+    }).then(function(r){
+      go.disabled=false;
+      if(r.error){out.textContent=r.error;return;}
+      watchFlags();watchUser(d.id);
+    }).catch(function(){go.disabled=false;out.textContent="network error.";});
+  };
+  dis.onclick=function(){
+    apost("/admin/watch/dismiss",{id:d.id,quietDays:Number(qd.value)}).then(function(r){
+      if(r.error){out.textContent=r.error;return;}watchFlags();watchUser(d.id);
+    });
+  };
+  return c;
+}
+
+/* ---- the rules ---- */
+var WRULE_ORDER=["volume","quick","regular","nosleep","streak","noclick","hidden","still","giftfast","giftmany","sharednet"];
+var WRULE_TEXT={
+  volume:"{count} or more faucet claims within {hours} hours",
+  quick:"{count} of the last {of} faucet claims came within {seconds} seconds of the cooldown ending",
+  regular:"the gaps between the last {of} faucet claims vary by less than {seconds} seconds",
+  nosleep:"across the last {hours} hours, with {count} or more faucet claims, the longest break is under {gapHours} hours",
+  streak:"{perDay} or more faucet claims a day, {days} days running",
+  noclick:"{count} of the last {of} claims came without a real click from the page",
+  hidden:"{count} of the last {of} claims came from a tab nobody was looking at",
+  still:"{count} of the last {of} claims were real clicks with no mouse, key or touch in the {seconds} seconds before",
+  giftfast:"{count} of the last {of} giveaways were taken within {ms} ms of appearing",
+  giftmany:"{count} or more giveaways won within {hours} hours",
+  sharednet:"{accounts} or more accounts claim from one network within {hours} hours (a school is one network: keep it high or off)"
+};
+function watchConfigLoad(then){
+  apost("/admin/watch/config",{}).then(function(d){
+    if(d.error){if(then)wMsg(wrulesEl,d.error+" — check your key.");return;}
+    WATCH.cfg=d.config;WATCH.defaults=d.defaults;WATCH.names=d.names||WATCH.names;
+    if(then)then(d.config);
+  }).catch(function(){if(then)wMsg(wrulesEl,"network error.");});
+}
+function watchRules(){if(!keyEl.value.trim()){wMsg(wrulesEl,"enter your admin key first.");return;}watchConfigLoad(function(c){paintRules(c,"");});}
+function paintRules(cfg,msg){
+  wrulesEl.innerHTML="";
+  var g=wEl("div","app"),f=wEl("div","wpun");g.appendChild(wEl("h3",null,"how the watch behaves"));
+  var on=wBox(cfg.on),minR=wNum(cfg.minRules),quiet=wNum(cfg.quietDays),keep=wNum(cfg.keepDays);
+  wLine(f,[on," the watch is on — claims are logged either way"]);
+  wLine(f,["put somebody in review when ",minR," or more rules trip at once"]);
+  wLine(f,["after a dismissal, leave them alone for ",quiet," days"]);
+  wLine(f,["keep claim logs for ",keep," days"]);
+  g.appendChild(f);wrulesEl.appendChild(g);
+  var box=wEl("div","app"),list=wEl("div","wrules"),inputs={};
+  box.appendChild(wEl("h3",null,"the rules — flag somebody when…"));
+  WRULE_ORDER.forEach(function(k){
+    var r=cfg.rules[k],row=wEl("div","wrule"),cb=wBox(r.on),ins={on:cb};
+    row.appendChild(cb);row.appendChild(wEl("span","wrname",WATCH.names[k]||k));
+    /* doubled backslashes: this page is a template literal, which eats single ones */
+    WRULE_TEXT[k].split(/(\\{\\w+\\})/).forEach(function(part){
+      var m=/^\\{(\\w+)\\}$/.exec(part);
+      if(m){var i=wNum(r[m[1]]);ins[m[1]]=i;row.appendChild(i);}else if(part)row.appendChild(document.createTextNode(part));
+    });
+    inputs[k]=ins;list.appendChild(row);
+  });
+  box.appendChild(list);wrulesEl.appendChild(box);
+  var acts=wEl("div","row"),save=wEl("button","load","save the rules"),reset=wEl("button",null,"back to the starting numbers"),scan=wEl("button",null,"check everyone against these now");
+  [save,reset,scan].forEach(function(b){b.type="button";acts.appendChild(b);});
+  reset.style.cssText="background:#241505;color:#e9d9c2;border:1px solid #3a2410";scan.style.cssText=reset.style.cssText;
+  var out=wEl("small",null,msg||"");out.style.cssText="display:block;margin-top:8px";
+  wrulesEl.appendChild(acts);wrulesEl.appendChild(out);
+  function collect(){
+    var c={on:on.checked,minRules:Number(minR.value),quietDays:Number(quiet.value),keepDays:Number(keep.value),rules:{}};
+    WRULE_ORDER.forEach(function(k){var o={};Object.keys(inputs[k]).forEach(function(fk){o[fk]=fk==="on"?inputs[k][fk].checked:Number(inputs[k][fk].value);});c.rules[k]=o;});
+    return c;
+  }
+  save.onclick=function(){
+    out.textContent="saving…";
+    apost("/admin/watch/config",{config:collect()}).then(function(d){
+      if(d.error){out.textContent=d.error;return;}
+      WATCH.cfg=d.config;paintRules(d.config,"saved. new claims are judged by these from now on; “check everyone” applies them to what is already logged.");
+    }).catch(function(){out.textContent="network error.";});
+  };
+  reset.onclick=function(){if(WATCH.defaults)paintRules(WATCH.defaults,"the starting numbers are filled in — save to use them.");};
+  scan.onclick=function(){
+    if(!confirm("Check every member's logged claims against the saved rules now?"))return;
+    out.textContent="checking everyone…";
+    apost("/admin/watch/scan",{}).then(function(d){
+      if(d.error){out.textContent=d.error;return;}
+      out.textContent="looked at "+d.looked+" members; "+d.flagged+" "+(d.flagged===1?"is":"are")+" waiting for review.";watchFlags();
+    }).catch(function(){out.textContent="network error.";});
+  };
+}
 </script></body></html>`;

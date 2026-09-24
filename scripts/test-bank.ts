@@ -36,7 +36,10 @@ must(/\.check\(loanE\)\.check\(cur\)[\s\S]{0,400}?\.set\(\["loan", u\.id\][\s\S]
   "a loan and the sahurs it hands over must be written in one commit");
 must(/const loanE = await kv\.get<Loan>\(\["loan", u\.id\]\);[\s\S]{0,1200}?kv\.atomic\(\)\.check\(cur\)\.check\(loanE\)/.test(src),
   "a claim must read and write the debt in the same commit as the balance");
-must(/const take = owed > 0 \? Math\.min\(round2\(FAUCET_AMOUNT \* LOAN_GARNISH\), owed\) : 0;/.test(src),
+// half of what this claim actually pays: the faucet, or less for a member the
+// sahur watch has cut
+must(/const take = owed > 0 \? Math\.min\(round2\(amount \* LOAN_GARNISH\), owed\) : 0;/.test(src) &&
+  src.includes("const amount = round2(FAUCET_AMOUNT * pen.reducePct / 100);"),
   "the garnish must never take more than is still owed");
 must(/return Math\.ceil\(amount \* \(1 \+ LOAN_INTEREST\) \* 100 - 1e-9\) \/ 100;/.test(src),
   "interest must round up (so a small loan is not free) but through an epsilon, " +

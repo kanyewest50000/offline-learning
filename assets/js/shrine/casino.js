@@ -696,18 +696,33 @@
     v.appendChild(altar);
     var r=res(v);
 
-    var me={canClaim:false,nextClaim:0,faucetAmount:10};
+    var me={canClaim:false,nextClaim:0,faucetAmount:10,interval:7200000,banUntil:0,reduced:null,slowed:null};
+    /* the whole-hours way of saying an interval: "2 hours", "3.5 hours" */
+    function hrs(ms){var h=Math.round(ms/360000)/10;return h+(h===1?" hour":" hours");}
+    /* what tung's displeasure costs, said under the button so nobody has to
+       wonder why the number went down or the wait went up */
+    function penaltyNote(){
+      var bits=[];
+      if(me.reduced)bits.push("your claims pay "+me.reduced.pct+"% until "+new Date(me.reduced.until).toLocaleString());
+      if(me.slowed)bits.push("you wait "+hrs(me.interval)+" between claims until "+new Date(me.slowed.until).toLocaleString());
+      return bits.length?" tung is displeased: "+bits.join(", and ")+".":"";
+    }
     function paintClaim(){
       var now=Date.now();
+      if(me.banUntil>now){
+        claim.disabled=true;claim.textContent="the altar is closed to you";
+        sub.textContent="tung has barred your hands from his altar until "+new Date(me.banUntil).toLocaleString()+".";
+        return;
+      }
       if(me.canClaim||!me.nextClaim||now>=me.nextClaim){
         claim.disabled=false;claim.textContent="claim "+(me.faucetAmount||10)+" sahurs";
-        sub.textContent="free sahurs, on the house. every 2 hours.";clearTimer();
+        sub.textContent=(me.slowed?"free sahurs, on the house. every "+hrs(me.interval)+".":"free sahurs, on the house. every 2 hours.")+penaltyNote();clearTimer();
       }else{
         claim.disabled=true;
         var s=Math.max(0,Math.floor((me.nextClaim-now)/1000));
         var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;
         claim.textContent="next claim in "+h+"h "+(m<10?"0":"")+m+"m "+(ss<10?"0":"")+ss+"s";
-        sub.textContent="tung already blessed you. he does not pour twice in two hours. sit.";
+        sub.textContent=(me.slowed?"tung already blessed you. he does not pour twice in "+hrs(me.interval)+". sit.":"tung already blessed you. he does not pour twice in two hours. sit.")+penaltyNote();
       }
     }
     claim.disabled=true;claim.textContent="consulting the shrine...";
@@ -719,12 +734,17 @@
       if(!d||d.error){showGate();return;}
       setBal(d.balance);
       me.canClaim=d.canClaim;me.nextClaim=d.nextClaim;me.faucetAmount=d.faucetAmount||10;
+      me.interval=d.faucetInterval||7200000;me.banUntil=d.claimBan||0;
+      me.reduced=d.reduced||null;me.slowed=d.slowed||null;
       paintClaim();clearTimer();claimTimer=setInterval(paintClaim,1000);
     }).catch(netGate);
 
-    claim.onclick=function(){
+    claim.onclick=function(ev){
       claim.disabled=true;
-      jpost("/cas/claim",{}).then(function(d){if(refused(d)){refusedGate();return;}
+      /* how the click was made rides along for the sahur watch */
+      var cli=window.__claimProof?window.__claimProof(ev):undefined;
+      jpost("/cas/claim",{cli:cli}).then(function(d){if(refused(d)){refusedGate();return;}
+        if(d&&d.error==="claim_banned"){me.banUntil=d.until||0;paintClaim();return;}
         if(d&&d.ok){
           setBal(d.balance);me.canClaim=false;me.nextClaim=d.nextClaim;
           /* the bank helps itself to half on the way past while a debt stands,

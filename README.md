@@ -1070,6 +1070,74 @@ racing cannot both lean on it. The same pane shows what each member currently
 owes and can write that debt straight to the ledger — no interest is added by
 the correction, and zero wipes it.
 
+## the sahur watch
+
+Free sahurs invite scripts: claim the faucet the second its two hours are up,
+around the clock, and take every one of tung's giveaways before a person could
+have read the line. The **Sahur watch** pane of `/admin` is where those get
+caught.
+
+Every claim — faucet or giveaway — is written down (`["claimlog", uid, ts, rid]`,
+kept `keepDays`): when, what it paid, how long it had been claimable (for a
+giveaway, how long since tung posted it), a tag for the network it came from,
+and what the page could say about the click. The network tag is a SHA-256 of the
+address salted with the admin key, cut to ten hex characters: two claims from
+the same place match, and nobody can turn it back into an address. The page's
+part (`window.__claimProof` in `chat.js`, used by the giveaway button and the
+casino's altar) is whether the click was a real one (`isTrusted`), whether the
+tab was visible and focused, and how long mouse, keys and touch had sat still
+before the click (the click itself does not count, so a macro clicking a mouse
+nobody has moved for an hour shows exactly that). A script that posts to `/cas/claim` or `/gift/claim` directly sends
+none of it, and a proof that is not exactly right is clamped to "no".
+
+Eleven rules read that log each time the member claims: too many claims in a
+window, claiming within seconds of the cooldown ending, gaps between claims
+that barely vary (clockwork), no long break across a day (never sleeps),
+several busy days running, claims with no real click, claims from a hidden tab,
+real clicks with nothing moving before them (hands never move), giveaways
+taken within milliseconds, too many giveaways won, and several
+accounts on one network (off by default — a school is one network). The rules
+are in `server.ts`, which is public; **what they are set to is not**. Every
+number, whether each rule is on, how many must trip at once before somebody is
+flagged, how long a dismissal keeps them off the queue and how long logs are
+kept all live in KV (`["watch", "config"]`) and are changed on the pane's
+**detection rules** tab. Reading the code tells somebody which rules exist, not
+where any line is, and slipping under all of them means claiming like a person.
+**check everyone against these now** re-reads every member's log after a change.
+
+Whoever trips enough rules lands in **review**, with what tripped and why.
+Opening them — or looking anybody up by name — shows their numbers, the last
+seven days as an hour-by-hour dot chart (a person's week has nights in it; a
+script's does not), the networks they claimed from and who else did, and every
+claim in a table with the numbers the rules read, the suspicious ones
+highlighted. Then a verdict, any mix of:
+
+- **bar them from claiming** for so many hours — the faucet, and giveaways
+  unless that box is unticked;
+- **pay their claims at** some percent for so many days (7 by default) — the
+  faucet and giveaways both; at 0% a giveaway is refused rather than won for
+  nothing, so it stays up for somebody else;
+- **make them wait** a multiple of the two hours between faucet claims;
+- **take back** everything the log shows they claimed in the last so many days,
+  never below zero;
+- **time them out** of the whole site, through the same timeout as Manage users;
+- **warn them as tung** in a DM — sent before the timeout, which would shut
+  tung's DM out.
+
+The casino shows a punished member what is happening to them under the altar's
+button — the reduced amount, the longer wait, or "the altar is closed to you"
+with the date it opens. A verdict closes the review, and the claims it was
+given for are spent: only claims after it can flag them again. **not a bot —
+dismiss** closes it too and keeps them off the queue for a few days. A penalty
+can be lifted early from their card; deleting the account takes its log, flag
+and penalty with it, and wiping every account from **Wipe data** clears the lot.
+
+Nothing here polls. The rules run inside the claim request (twelve faucet
+claims a day at most, per member) and when the pane asks, and a failure inside
+the watch never refuses the claim it follows. One thing to know when reading a
+flag: a page opened before this shipped sends no click proof, so an old tab
+left open reads as "no real click" until it is reloaded. `scripts/test-sahur-watch.ts`.
+
 ## settings and skins
 
 A boxed gear in the top-left of the main menu opens the settings page: the

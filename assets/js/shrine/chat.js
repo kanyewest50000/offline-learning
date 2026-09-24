@@ -33,6 +33,17 @@
     /* LOCKED: a timeout or a ban, as {reason, until}, or null. PLAYS: the tabs
        this page opened, so a lockout can close what is already running. */
     'var LOCKED=null,lockTick=null,PLAYS=[];' +
+    /* What a claim can say about how it was made: a real click, on a tab
+       somebody is looking at, and how long mouse, keys and touch sat still
+       before it. It travels with every sahur claim (the faucet in the casino
+       uses this too) and the server keeps it in the claim log the sahur watch
+       reads. A script that posts claims directly sends none of it. */
+    'var LAST_INPUT=0;' +
+    /* moving toward the button, a key, a scroll, a touch: a pointerdown is not
+       counted, so a click never resets its own clock — a macro clicking a
+       mouse that has not moved in an hour says so */
+    '["pointermove","keydown","wheel","touchstart"].forEach(function(t){document.addEventListener(t,function(){LAST_INPUT=Date.now();},{passive:true,capture:true});});' +
+    'window.__claimProof=function(ev){return{tr:ev&&ev.isTrusted?1:0,vis:document.visibilityState==="visible"?1:0,foc:document.hasFocus&&document.hasFocus()?1:0,idle:LAST_INPUT?Math.min(86400000,Date.now()-LAST_INPUT):86400000};};' +
     'if(typeof SHRINE_BOOT_TOKEN==="string"&&SHRINE_BOOT_TOKEN){try{if(!localStorage.getItem(TKEY))localStorage.setItem(TKEY,SHRINE_BOOT_TOKEN);}catch(e){}}' +
     'var gate=document.getElementById("gate");' +
     'var applyView=document.getElementById("applyView");' +
@@ -414,12 +425,13 @@
     'function retireGift(id,by,mine){var g=GIFTS[id];if(!g)return;g.btn.disabled=true;g.btn.classList.add("taken");' +
     'g.btn.textContent=mine?("you took "+g.amount+" sahurs"):"taken";' +
     'g.note.textContent=mine?"tung noticed.":(by?("claimed by "+by):"claimed");}' +
-    'function claimGift(id){var g=GIFTS[id];if(!g||!TOKEN)return;' +
+    'function claimGift(id,ev){var g=GIFTS[id];if(!g||!TOKEN)return;' +
     'g.btn.disabled=true;g.btn.textContent="reaching\u2026";g.note.textContent="";' +
-    'apiPost("/gift/claim",{token:TOKEN,id:id}).then(function(r){' +
-    'if(r&&r.ok){retireGift(id,r.by,true);return;}' +
+    'apiPost("/gift/claim",{token:TOKEN,id:id,cli:window.__claimProof(ev)}).then(function(r){' +
+    'if(r&&r.ok){if(typeof r.amount==="number")g.amount=r.amount;retireGift(id,r.by,true);return;}' +
     'if(r&&r.error==="claimed"){retireGift(id,r.by,false);return;}' +
     'if(r&&r.error==="gone"){retireGift(id,null,false);g.note.textContent="nothing is there. it never was.";return;}' +
+    'if(r&&r.error==="claim_banned"){g.btn.disabled=true;g.btn.textContent="not for you";g.note.textContent="tung has closed his hands to you until "+new Date(r.until).toLocaleString()+".";return;}' +
     'g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";' +
     'g.note.textContent=(r&&r.error==="blocked")?"not you.":"the shrine did not answer. try again.";' +
     '}).catch(function(){g.btn.disabled=false;g.btn.textContent="claim "+g.amount+" sahurs";g.note.textContent="the shrine did not answer. try again.";});}' +
@@ -462,7 +474,7 @@
     'var gb=document.createElement("button");gb.type="button";gb.className="giftbtn";gb.textContent="claim "+m.gift.amount+" sahurs";' +
     'var gn=document.createElement("span");gn.className="giftnote";' +
     'GIFTS[m.gift.id]={btn:gb,note:gn,amount:m.gift.amount};' +
-    'gb.addEventListener("click",function(ev){ev.stopPropagation();claimGift(m.gift.id);});' +
+    'gb.addEventListener("click",function(ev){ev.stopPropagation();claimGift(m.gift.id,ev);});' +
     'gw.appendChild(gb);gw.appendChild(gn);row.appendChild(gw);}' +
     'var rc=document.createElement("div");rc.className="reacts";row.appendChild(rc);' +
     'MSGS[m.id]={reactEl:rc,counts:{},mine:{},meta:meta,row:row};' +
