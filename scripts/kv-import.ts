@@ -34,6 +34,7 @@ const TTL: Record<string, number> = {
   duel: DAY, duelof: DAY, duelopen: DAY,
   raffle: 14 * DAY, raffle_in: 14 * DAY, raffle_paid: 14 * DAY, raffleq: 14 * DAY, rafflen: 14 * DAY,
   claimlog: 30 * DAY, claimnet: 30 * DAY,
+  tiplog: 90 * DAY, tiplogu: 90 * DAY,
 };
 
 // the tags kvEnc() in server.ts writes, back into the real thing

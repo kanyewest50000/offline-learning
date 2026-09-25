@@ -1050,7 +1050,12 @@ closed now.
 * **Tips and giveaways.** `/tip` writes two balances and is the one route a
   member can aim at somebody else's record; `/gift/claim` races eight times for
   a giveaway that only one person can win. Both are clocked well above what a
-  person does.
+  person does. Every tip that goes through is written to a log in the same
+  commit as the two balances — so a retried one (same `tipId`) is logged once,
+  and a refused one never — and the panel's **Sahur transfers** pane reads it:
+  everybody's, newest first, or one member's sends and receipts with what they
+  add up to (`POST /admin/tips`, kept 90 days). Credits from the panel are not
+  transfers and are not in it.
 * **Table talk** is clocked twice: five lines in five seconds against a burst,
   and 120 an hour across isolates, because a line is two writes and a read on
   the next poll of every other client at the table.

@@ -54,6 +54,7 @@
 //   POST /admin/raffle/end    {key, id}                   -> {ok, raffle}  (roll it now)
 //   POST /admin/raffle/cancel {key, id}                   -> {ok, raffle}  (nobody wins)
 //   POST /admin/export  {key, cursor?, limit?}            -> {ok, entries:[{k,v}], cursor}  (the whole KV, paged)
+//   POST /admin/tips    {key, user?, cursor?, limit?}     -> {ok, tips, cursor, sent?, got?}  (member-to-member sends)
 //   GET  /duel/list?token=                                -> {open:[...], mine, balance}
 //   POST /duel/create   {token, game, bet, seats?}        -> {ok, duel, balance}
 //   POST /duel/cancel   {token, id}                       -> {ok, refunded, balance}
@@ -296,11 +297,27 @@ async function findApprovedByUsername(username: string): Promise<any | null> {
 // so a concurrent double-spend cannot invent sahurs, and a crash mid-transfer cannot
 // debit without credit. Optional tipId adds an idempotency lock so retries cannot
 // double-pay. Returns new balances, "insufficient", or null for bad amount.
+// Every sahur one member sends another, written down in the commit that moves
+// it — so a send that happened is always logged, a retried one (same tipId) is
+// never logged twice, and nothing else writes here. The panel's "Sahur
+// transfers" pane reads it: all of it newest first, or one member's side of it
+// through the per-member index. Credits from the panel are not transfers and do
+// not appear.
+//   ["tiplog", ts, rid]         -> TipLog
+//   ["tiplogu", uid, ts, rid]   -> TipLog   (once under the sender, once under the receiver)
+type TipLog = {
+  ts: number; amount: number;
+  from: string; fromId: string; to: string; toId: string;
+  fromAfter: number; toAfter: number;
+};
+const TIPLOG_TTL = 90 * 24 * 60 * 60 * 1000;
+
 async function transferBalance(
   fromId: string,
   toId: string,
   amount: number,
   tipId?: string,
+  names?: { from: string; to: string },
 ): Promise<{ from: number; to: number; replay?: boolean } | "insufficient" | null> {
   if (!Number.isFinite(amount) || amount <= 0) return null;
   if (fromId === toId) return null;
@@ -336,6 +353,16 @@ async function transferBalance(
       op = op.check(lock).set(["tiplock", tipId], {
         from: fromId, to: toId, amount, ts: Date.now(),
       }, { expireIn: TIP_LOCK_TTL });
+    }
+    if (names) {
+      const ts = Date.now(), r = rid(4);
+      const rec: TipLog = {
+        ts, amount, from: names.from, fromId, to: names.to, toId,
+        fromAfter: Math.max(0, fromNb), toAfter: Math.max(0, toNb),
+      };
+      op = op.set(["tiplog", ts, r], rec, { expireIn: TIPLOG_TTL })
+        .set(["tiplogu", fromId, ts, r], rec, { expireIn: TIPLOG_TTL })
+        .set(["tiplogu", toId, ts, r], rec, { expireIn: TIPLOG_TTL });
     }
     const res = await op.commit();
     if (res.ok) return { from: Math.max(0, fromNb), to: Math.max(0, toNb) };
@@ -6895,6 +6922,32 @@ async function handle(req: Request, info: Deno.ServeHandlerInfo<Deno.NetAddr>): 
     return json({ error: "not found" }, 404);
   }
 
+  // ---------- admin: sahur transfers between members ----------
+  // Newest first, a page at a time: everybody's, or — given a member — only the
+  // ones they sent or received, with what they sent and received in the page.
+  if (req.method === "POST" && path === "/admin/tips") {
+    // deno-lint-ignore no-explicit-any
+    const b: any = await req.json().catch(() => ({}));
+    if (!ADMIN_KEY || b.key !== ADMIN_KEY) return json({ error: "forbidden" }, 403);
+    const limit = Math.round(watchNum(b.limit, 1, 500, 100));
+    const cursor = typeof b.cursor === "string" && b.cursor ? b.cursor : undefined;
+    const user = clip(b.user, 32);
+    const it = kv.list<TipLog>({ prefix: user ? ["tiplogu", user] : ["tiplog"] }, { limit, reverse: true, cursor });
+    const tips: TipLog[] = [];
+    for await (const e of it) if (e.value) tips.push(e.value);
+    let sent = 0, got = 0, nSent = 0, nGot = 0;
+    if (user) {
+      for (const t of tips) {
+        if (t.fromId === user) { sent += t.amount; nSent++; }
+        if (t.toId === user) { got += t.amount; nGot++; }
+      }
+    }
+    return json({
+      ok: true, tips, cursor: tips.length < limit ? "" : it.cursor,
+      ...(user ? { sent: round2(sent), got: round2(got), nSent, nGot } : {}),
+    });
+  }
+
   // ---------- admin: export the whole database ----------
   // Every entry, a page at a time, for moving the shrine to another host — the
   // new Deno Deploy has no way to reach its KV from outside the app, so the app
@@ -7395,7 +7448,7 @@ async function handle(req: Request, info: Deno.ServeHandlerInfo<Deno.NetAddr>): 
     const app = await findApprovedByUsername(toName);
     if (!app) return json({ error: "not_found" }, 404);
     if (app.id === u.id) return json({ error: "self" }, 400);
-    const moved = await transferBalance(u.id, app.id, amount, tipId || undefined);
+    const moved = await transferBalance(u.id, app.id, amount, tipId || undefined, { from: u.username, to: app.username });
     if (moved === "insufficient") return json({ error: "insufficient" }, 402);
     if (!moved) return json({ error: "invalid" }, 400);
     return json({
@@ -8077,6 +8130,13 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .app h3 .when{margin-left:8px;font-size:11px;font-weight:500;color:#c8823c;letter-spacing:0;text-transform:none}
 .danger p{color:#e9d9c2;line-height:1.45}
 .content.roomy{max-width:1180px}
+.tiptable{width:100%;border-collapse:collapse;font-size:13px}
+.tiptable th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.04em;color:#c8823c;padding:6px 8px;border-bottom:1px solid #3a2410}
+.tiptable td{padding:6px 8px;border-bottom:1px solid #241505;color:#e9d9c2;white-space:nowrap}
+.tiptable td.amt{color:#f2c063;font-weight:700;text-align:right}
+.tiptable td.out{color:#e0908a}
+.tiptable td.in{color:#b7e4bf}
+.tiptable td.who{cursor:pointer;text-decoration:underline dotted}
 .rfform textarea{margin:4px 0 12px}
 .rflab{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:#c8823c;letter-spacing:.02em}
 .rflab small{font-weight:500}
@@ -8190,6 +8250,7 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 <button type="button" class="navbtn on" data-pane="pending">Approve / deny <span class="count" id="count-pending"></span></button>
 <button type="button" class="navbtn" data-pane="users">Manage users <span class="count" id="count-users"></span></button>
 <button type="button" class="navbtn" data-pane="balances">Casino balances <span class="count" id="count-balances"></span></button>
+<button type="button" class="navbtn" data-pane="tips">Sahur transfers</button>
 <button type="button" class="navbtn" data-pane="watch">Sahur watch <span class="count" id="count-watch"></span></button>
 <button type="button" class="navbtn" data-pane="shop">Shop items <span class="count" id="count-shop"></span></button>
 <button type="button" class="navbtn" data-pane="chat">Chat log <span class="count" id="count-chat"></span></button>
@@ -8225,6 +8286,14 @@ Each member also has a <b>debt</b> to the Bank of Tung and a <b>loan cap</b> &md
 Setting a debt writes it straight to the ledger with no interest added, and <b>0</b> wipes it. Leave the cap blank for the house default; set it to <b>0</b> to shut the bank to them.</p>
 <input class="search" id="search-balances" placeholder="search player balances…" autocomplete="off">
 <div id="balances"><div class="empty">load to see player balances.</div></div>
+</section>
+<section class="pane" id="pane-tips">
+<h2>Sahur transfers</h2>
+<p class="hint">Every time one member sends sahurs to another, newest first — who, to whom, how much, and what each was left holding after it. Credits you make from Casino balances are not transfers and are not listed. Kept 90 days. Pick a member to see only what they sent and received.</p>
+<div class="row" style="margin-bottom:12px"><select id="tipWho"><option value="">everybody</option></select><button class="load" id="tipLoad" type="button">show</button></div>
+<div id="tipSum" class="rfnote" style="margin-bottom:8px"></div>
+<div id="tiplist"><div class="empty">enter your admin key and open this pane.</div></div>
+<div class="row" style="margin-top:10px"><button type="button" id="tipMore" style="display:none;background:#241505;color:#e9d9c2;border:1px solid #3a2410">load older</button></div>
 </section>
 <section class="pane" id="pane-shop">
 <h2>Shop items</h2>
@@ -8415,8 +8484,9 @@ function showPane(id){
   for(var j=0;j<btns.length;j++) btns[j].classList.toggle("on", btns[j].getAttribute("data-pane")===id);
   var content=document.querySelector(".content");
   if(content)content.classList.toggle("wide", id==="talk");
-  if(content)content.classList.toggle("roomy", id==="watch"||id==="raffles");
+  if(content)content.classList.toggle("roomy", id==="watch"||id==="raffles"||id==="tips");
   if(id==="watch")watchOpen();
+  if(id==="tips")tipLoad(true);
   if(id==="raffles")rfOpen();else rfStop();
   if(id==="talk")talkOpen();else talkStop();
 }
@@ -8993,6 +9063,7 @@ function dmFillUsers(){
   if(prev)dmWho.value=prev;
   talkFillUsers();
   watchFillUsers();
+  tipFillUsers();
 }
 function dmSetPeers(msg){
   if(!dmPeer)return;
@@ -9826,4 +9897,62 @@ document.getElementById("rfPost").onclick=function(){
     document.getElementById("rfText").value="";rfLoad();
   }).catch(function(){btn.disabled=false;msg.textContent="network error.";});
 };
+/* ---------------------------------------------------------------------------
+   Sahur transfers.
+
+   Member-to-member sends, newest first, a hundred at a time. Read when the
+   pane opens and when asked; it does not poll. Clicking a name shows only
+   that member's sends and receipts. */
+var tipWho=document.getElementById("tipWho"),tipList=document.getElementById("tiplist");
+var tipSum=document.getElementById("tipSum"),tipMoreBtn=document.getElementById("tipMore");
+var TIP={cursor:"",rows:[],user:""};
+function tipFillUsers(){
+  if(!tipWho)return;var prev=tipWho.value;tipWho.innerHTML="";
+  dmOption(tipWho,"","everybody");
+  (usersCache||[]).forEach(function(u){dmOption(tipWho,u.id,u.username);});
+  if(prev)tipWho.value=prev;
+}
+function tipLoad(reset){
+  if(!keyEl.value.trim()){tipList.innerHTML='<div class="empty">enter your admin key first.</div>';return;}
+  if(reset){TIP={cursor:"",rows:[],user:tipWho.value};tipList.innerHTML='<div class="empty">loading\u2026</div>';tipSum.textContent="";}
+  apost("/admin/tips",{user:TIP.user,cursor:TIP.cursor,limit:100}).then(function(d){
+    if(d.error){tipList.innerHTML="";tipList.appendChild(wEl("div","empty",d.error+" \u2014 check your key."));return;}
+    TIP.rows=TIP.rows.concat(d.tips||[]);TIP.cursor=d.cursor||"";
+    if(TIP.user&&reset){
+      var nm=tipWho.options[tipWho.selectedIndex]?tipWho.options[tipWho.selectedIndex].textContent:"";
+      TIP.sum={name:nm,sent:0,got:0,nSent:0,nGot:0};
+    }
+    if(TIP.user&&TIP.sum){(d.tips||[]).forEach(function(t){if(t.fromId===TIP.user){TIP.sum.sent+=t.amount;TIP.sum.nSent++;}if(t.toId===TIP.user){TIP.sum.got+=t.amount;TIP.sum.nGot++;}});}
+    tipPaint();
+  }).catch(function(){tipList.innerHTML='<div class="empty">network error.</div>';});
+}
+function tipPaint(){
+  tipList.innerHTML="";tipMoreBtn.style.display=TIP.cursor?"":"none";
+  if(TIP.user&&TIP.sum){
+    var r2=function(x){return Math.round(x*100)/100;};
+    tipSum.textContent=TIP.sum.name+" sent "+r2(TIP.sum.sent)+" sahurs in "+TIP.sum.nSent+" transfer"+(TIP.sum.nSent===1?"":"s")+
+      " and received "+r2(TIP.sum.got)+" in "+TIP.sum.nGot+(TIP.cursor?" (in what is loaded so far)":"")+".";
+  }else tipSum.textContent=TIP.rows.length?TIP.rows.length+" transfer"+(TIP.rows.length===1?"":"s")+(TIP.cursor?" loaded so far":"")+".":"";
+  if(!TIP.rows.length){tipList.appendChild(wEl("div","empty",TIP.user?"no transfers to or from them in the last 90 days.":"nobody has sent anybody sahurs in the last 90 days."));return;}
+  var t=wEl("table","tiptable"),hd=wEl("tr");
+  ["when","from","","to","sahurs","sender left with","receiver left with"].forEach(function(x){hd.appendChild(wEl("th",null,x));});
+  var th=document.createElement("thead");th.appendChild(hd);t.appendChild(th);
+  var tb=document.createElement("tbody");
+  TIP.rows.forEach(function(r){
+    var tr=wEl("tr");
+    tr.appendChild(wEl("td",null,new Date(r.ts).toLocaleString()));
+    var f=wEl("td","who"+(TIP.user&&r.fromId===TIP.user?" out":""),r.from);f.title="only "+r.from;f.onclick=function(){tipWho.value=r.fromId;if(tipWho.value===r.fromId)tipLoad(true);};
+    tr.appendChild(f);tr.appendChild(wEl("td",null,"\u2192"));
+    var to=wEl("td","who"+(TIP.user&&r.toId===TIP.user?" in":""),r.to);to.title="only "+r.to;to.onclick=function(){tipWho.value=r.toId;if(tipWho.value===r.toId)tipLoad(true);};
+    tr.appendChild(to);
+    tr.appendChild(wEl("td","amt",String(r.amount)));
+    tr.appendChild(wEl("td",null,String(r.fromAfter)));
+    tr.appendChild(wEl("td",null,String(r.toAfter)));
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);var wrap=wEl("div","wlogwrap");wrap.appendChild(t);tipList.appendChild(wrap);
+}
+document.getElementById("tipLoad").onclick=function(){tipLoad(true);};
+if(tipWho)tipWho.onchange=function(){tipLoad(true);};
+tipMoreBtn.onclick=function(){tipLoad(false);};
 </script></body></html>`;

@@ -198,5 +198,36 @@ if (second.body.fromBalance !== 15) fail("tipId replay must not debit again: " +
 const bobAfter = await j("/cas/me?token=" + encodeURIComponent(bob.token));
 if (bobAfter.body.balance !== 5) fail("bob should have exactly 5 after replay, got " + bobAfter.body.balance);
 
-console.log("PASS tip API: auth, profile, self, invalid, not_found, insufficient, success, concurrent, tipId replay");
+// --- the panel's log of member-to-member sends ---
+const tipsOf = async (user?: string) =>
+  (await j("/admin/tips", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key: ADMIN, ...(user ? { user } : {}) }),
+  })).body;
+if ((await j("/admin/tips", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: "nope" }) })).status !== 403) {
+  fail("the transfer log must be key-gated");
+}
+const alog = await tipsOf(alice.id);
+if (!alog.ok || !Array.isArray(alog.tips)) fail("the transfer log did not load: " + JSON.stringify(alog));
+const idem = alog.tips.filter((t: { amount: number; fromAfter: number }) => t.amount === 5 && t.fromAfter === 15);
+if (idem.length !== 1) fail("a replayed tipId must be logged once, not twice: " + JSON.stringify(idem));
+const lt = idem[0];
+if (lt.from !== alice.username || lt.to !== bob.username || lt.fromId !== alice.id || lt.toId !== bob.id || lt.toAfter !== 5) {
+  fail("the log line must name both ends and what each held after: " + JSON.stringify(lt));
+}
+if (alog.tips.some((t: { fromId: string; toId: string }) => t.fromId !== alice.id && t.toId !== alice.id)) {
+  fail("a member's view must hold only their own sends and receipts");
+}
+if (!(alog.sent > 0) || alog.nSent < 1) fail("the member's view must total what they sent: " + JSON.stringify(alog).slice(0, 200));
+const blog = await tipsOf(bob.id);
+if (!blog.tips.some((t: { ts: number; toId: string }) => t.ts === lt.ts && t.toId === bob.id)) fail("the receiver's view must hold it too");
+const all = await tipsOf();
+if (!all.tips.some((t: { ts: number; fromId: string }) => t.ts === lt.ts && t.fromId === alice.id)) fail("and so must everybody's");
+const failedBefore = all.tips.length;
+// a refused send is not a transfer
+await setBal(alice.id, 0);
+await j("/tip", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: alice.token, to: bob.username, amount: 5 }) });
+if ((await tipsOf()).tips.length !== failedBefore) fail("a refused send must not be logged");
+
+console.log("PASS tip API: auth, profile, self, invalid, not_found, insufficient, success, concurrent, tipId replay, and the panel's transfer log");
 console.log("alice=" + alice.username + " bob=" + bob.username);
