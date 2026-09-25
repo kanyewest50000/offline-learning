@@ -138,7 +138,13 @@
        full casino header (back / title / balance / shop) once inside the casino. */
     'function topShow(v){if(LOCKED)v="shrine";chooseEl.style.display=v==="choose"?"flex":"none";shrineEl.style.display=v==="shrine"?"flex":"none";playEl.style.display=v==="play"?"flex":"none";casinoEl.style.display=v==="casino"?"flex":"none";originalsEl.style.display=v==="originals"?"flex":"none";veilEl.style.display=v==="veil"?"flex":"none";settingsEl.style.display=v==="settings"?"flex":"none";' +
     /* casino is a chooser destination; the header swaps identity once you are in it */
-    'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";if(v!=="originals")hideOrigPlay();}' +
+    'var inCas=v==="casino";hdrShrine.style.display=inCas?"none":"flex";hdrCasino.style.display=inCas?"flex":"none";if(v!=="originals")hideOrigPlay();' +
+    /* the room fills in under every view, and a hidden log cannot be scrolled,
+       so every line that landed while it was out of sight left it at the top.
+       showing it is when it goes to the newest line — again a frame later, once
+       anything that sizes itself on layout has */
+    'if(v==="shrine")logToEnd();}' +
+    'function logToEnd(){if(!log)return;log.scrollTop=log.scrollHeight;try{requestAnimationFrame(function(){log.scrollTop=log.scrollHeight;});}catch(e){}}' +
     /* the holding page wears one of two faces: the veil is shut, or the veil is
        open and you are not on tung's list. same page, different words. */
     'var VEIL_SHUT=["Coming Soon","the veil is thin. the path is not yet for you.","tung walks it already. he will open the gate when the hour is his."];' +

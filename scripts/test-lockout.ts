@@ -84,6 +84,10 @@ must(chat.includes("function closePlays(){for(var i=0;i<PLAYS.length;i++){try{if
   "and closed");
 // what it refuses while it is up
 must(chat.includes('function topShow(v){if(LOCKED)v="shrine";'), "no other view may be shown while locked");
+// the room fills in under every view while its log is hidden, where it cannot
+// be scrolled, so showing it is when it goes to the newest line
+must(chat.includes('if(v==="shrine")logToEnd();}') && chat.includes("function logToEnd(){if(!log)return;log.scrollTop=log.scrollHeight;"),
+  "the room must open at its newest line, not the top");
 must(chat.includes("function openPlay(g){' +\n    'if(LOCKED)return;") || /function openPlay\(g\)\{' \+\s*'if\(LOCKED\)return;/.test(chat),
   "no game may be opened while locked");
 must(chat.includes('if(!APPROVED||LOCKED)return;topShow("casino");'), "nor the casino");
