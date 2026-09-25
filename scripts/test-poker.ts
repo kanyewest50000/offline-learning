@@ -375,7 +375,10 @@ async function tournament(seats: number, profile: string, seen: Seen): Promise<v
   const stackTotal = (st: { poker: { stack: number } }) => st.poker.stack * seats;
   let hands = 0, acts = 0, shownHand = -1, riverHand = -1;
   for (;;) {
-    must(acts++ < 4000, "a " + seats + "-seat tournament never finished");
+    // every look at the table counts, and a 5-seat game of random play has
+    // taken close to 4,000 before the blinds climbed high enough to end it —
+    // the cap is there to catch a table that never ends, not a long one
+    must(acts++ < 15000, "a " + seats + "-seat tournament never finished");
     // whoever is to act, ask them
     const st = await call("/duel/state?token=" + players[0].token + "&id=" + id);
     must(st.ok || st.duel, "lost the table: " + JSON.stringify(st).slice(0, 160));

@@ -214,7 +214,9 @@ moves forward, so a stale poll cannot un-read anything. A conversation ages out
 after a month of silence.
 
 Any member can **block** any other, from the header of the conversation
-itself. A block is a fact about the pair rather than an entry on somebody's
+itself — but not tung: his conversation has no block button, `/dm/block`
+refuses him, and no block holds against his conversation, including any set
+before that rule existed. A block is a fact about the pair rather than an entry on somebody's
 list, so it lives under the same sorted key the conversation does and costs the
 one read that was already being made. It shuts the conversation both ways:
 neither writes, neither reads. A block that only stopped them writing would
@@ -369,7 +371,8 @@ is one nobody else is allowed to hold — but not the room's gold proclamation
 bar or the **the shrine** chip: "the shrine" is what the public room is called,
 and on a private conversation it made his DM read as the room itself. In the
 panel his lines sit on the right, as the sender's, and theirs on the left. A
-chat ban or their block still shuts it. `scripts/test-admin-talk.ts`.
+chat ban still shuts it; a block cannot — he is not somebody a member can shut
+the door on. `scripts/test-admin-talk.ts`.
 
 **general chat** is pinned above his conversations: the room itself, from his
 seat. Everybody's lines sit on the left under their names and his on the

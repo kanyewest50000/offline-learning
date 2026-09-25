@@ -167,11 +167,24 @@ must(banned.status === 403 && banned.body.error === "closed" && banned.body.reas
   "a chat ban must shut this too: " + JSON.stringify(banned.body));
 must(!!(await post("/admin/chatban", { key: ADMIN, id: P.id, chatBanned: false })).body?.ok, "unban failed");
 
-// and a block, from their side
+// and he cannot be blocked: the route refuses, his line still lands, and the
+// conversation never reads as shut from either side
 const blk = await post("/dm/block", { token: P.token, to: "tung", blocked: true });
-must(blk.body?.blocked === true, "the block did not take: " + JSON.stringify(blk.body));
-const blocked = await post("/admin/talk/send", { key: ADMIN, user: P.id, text: "hello again" });
-must(blocked.status === 403 && blocked.body.error === "blocked", "their block must stop him: " + JSON.stringify(blocked.body));
+must(blk.status === 403 && blk.body?.error === "tung" && blk.body.blocked === false,
+  "blocking tung must be refused: " + JSON.stringify(blk.body));
+const still = await post("/admin/talk/send", { key: ADMIN, user: P.id, text: "hello again" });
+must(still.body?.ok === true, "his line must still go through: " + JSON.stringify(still.body));
+const pw = await withTung(P.token);
+must(pw.body?.ok && !pw.body.closed && (pw.body.msgs as { text: string }[]).some((m) => m.text === "hello again"),
+  "and P still reads it, with nothing shut: " + JSON.stringify(pw.body).slice(0, 300));
+must((await convs(P.token)).find((c) => c.tung) && !(await convs(P.token)).find((c) => c.tung && (c as { closed?: boolean }).closed),
+  "his row on P's rail is not closed");
+must((await post("/dm/send", { token: P.token, to: "tung", text: "fine" })).body?.ok === true, "and P can still write to him");
+// the page has no block button in his conversation
+const shrineSrc = await readShrine();
+must(shrineSrc.includes('if(!DM||DM.tung){convBlock.style.display="none";return;}'), "his conversation has no block button");
+must(src.includes('if (a === TUNG_DM_ID || b === TUNG_DM_ID) return { lo: false, hi: false };'),
+  "no block — including one set before this rule — holds against his conversation");
 
 // ---- general chat: the room from his seat ----
 must(src.includes('id="talkRoom"') && src.includes("function talkOpenRoom(){"), "general chat is pinned on his rail");
@@ -200,6 +213,6 @@ must((await j("/admin/chat?since=1")).status === 403, "and none of it without th
 console.log(
   "talk to da people: a line from the panel arrives in the member's own menu as a DM " +
     "from tung, drawn as a DM rather than as the room, a reply comes back, reading his " +
-    "inbox does not clear their badge, and a chat ban or a block still shuts it; general chat reads the room " +
+    "inbox does not clear their badge, a chat ban still shuts it and a block cannot; general chat reads the room " +
     "past a cursor and speaks in it as him",
 );

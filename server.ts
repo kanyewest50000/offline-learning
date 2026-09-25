@@ -1520,6 +1520,10 @@ type DmBlock = { lo: boolean; hi: boolean };
 // which flag is whose, decided the same way convOf() decides the key
 function dmSide(me: string, them: string): "lo" | "hi" { return me < them ? "lo" : "hi"; }
 async function dmBlockOf(a: string, b: string): Promise<DmBlock> {
+  // tung is not somebody a member can shut the door on: no block holds against
+  // his conversation, including any set before this rule was, so his DMs and
+  // the panel's replies always go through
+  if (a === TUNG_DM_ID || b === TUNG_DM_ID) return { lo: false, hi: false };
   const e = await kv.get<DmBlock>(["dmblock", convOf(a, b)]);
   return { lo: !!e.value?.lo, hi: !!e.value?.hi };
 }
@@ -4965,6 +4969,7 @@ async function handle(req: Request, info: Deno.ServeHandlerInfo<Deno.NetAddr>): 
     const other = await dmOther(b.to);
     if (!other) return json({ error: "not_found" }, 404);
     if (other.id === u.id) return json({ error: "yourself" }, 400);
+    if (other.id === TUNG_DM_ID) return json({ error: "tung", blocked: false }, 403);
     const on = b.blocked !== false;
     const next = await dmSetBlock(u.id, other.id, on);
     return json({
@@ -5998,8 +6003,11 @@ async function handle(req: Request, info: Deno.ServeHandlerInfo<Deno.NetAddr>): 
     // after the cursor it already holds — usually nothing, or a line or two —
     // rather than the whole log again on every pass. Deletions ride along as
     // ids so the lines it is already showing can be marked.
-    const since = Number(url.searchParams.get("since") || "0") || 0;
-    if (since > 0) {
+    // any since — 0 included, which is where an empty log leaves a reader —
+    // is a catch-up read; no since at all is the whole log
+    const sinceQ = url.searchParams.get("since");
+    const since = Math.max(0, Number(sinceQ) || 0);
+    if (sinceQ !== null) {
       const messages: unknown[] = [], dels: string[] = [];
       let cursor = since;
       // deno-lint-ignore no-explicit-any

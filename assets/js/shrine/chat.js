@@ -691,7 +691,8 @@
     'var DMSHUT={on:false,mine:false,them:false};' +
     'function dmPaintBlock(){' +
     'if(!convBlock)return;' +
-    'if(!DM){convBlock.style.display="none";return;}' +
+    /* tung cannot be blocked, so his conversation has no button for it */
+    'if(!DM||DM.tung){convBlock.style.display="none";return;}' +
     'convBlock.style.display="inline-block";' +
     'if(DMSHUT.on&&!DMSHUT.mine){convBlock.style.display="none";return;}' +
     'convBlock.textContent=DMSHUT.on?"unblock":"block";' +
@@ -717,7 +718,7 @@
     'if(input){input.disabled=!!on;if(DM)input.placeholder=on?why:"message "+DM.name+"\u2026";}' +
     'dmPaintBlock();}' +
     'function dmToggleBlock(){' +
-    'if(!DM||!TOKEN)return;' +
+    'if(!DM||!TOKEN||DM.tung)return;' +
     'var conv=DM,want=!DMSHUT.on;' +
     'if(want&&!confirm("block "+conv.name+"? neither of you will be able to write to the other, and they will see that you blocked them. you can undo this."))return;' +
     'convBlock.disabled=true;' +
