@@ -1257,11 +1257,17 @@
       jpost("/cas/roulette",wager({bet:Number(bet.value),kind:SEL.kind,value:SEL.value})).then(function(d){if(refused(d)){refusedGate();return;}
         if(d.error){go.disabled=false;roundSaw(d);bad(r,d.error);return;}
         var idx=WHEEL.indexOf(d.spin);
-        // wheel forward so the winning pocket ends at the top, under the ball
-        rot += 360*turns + (((-idx*step - rot) % 360) + 360) % 360;
+        /* where on the rim this one comes to rest — anywhere, not always the
+           top. the wheel carries the winning pocket round to that spot and the
+           ball, orbiting the other way, stops over it (the pocket is still the
+           server's; only where it happens to stop on screen is chosen here) */
+        var land=Math.random()*360;
+        // wheel forward so the winning pocket ends at the landing spot
+        rot += 360*turns + ((((land - idx*step) - rot) % 360) + 360) % 360;
         g.style.transform="rotate("+rot+"deg)";
-        // ball orbits the other way, then hops between pockets as it drops in
-        brot -= 360*bturns;
+        // ball orbits the other way, ends over the same spot, then hops between
+        // pockets as it drops in
+        brot -= 360*bturns + (((brot - land) % 360) + 360) % 360;
         ballG.classList.remove("dropping");
         void ballG.getBoundingClientRect();
         ballG.classList.add("dropping");

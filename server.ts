@@ -8062,7 +8062,11 @@ button{padding:10px 14px;border:none;border-radius:8px;font-weight:600;cursor:po
 .empty{color:#c8823c;padding:20px 0}
 .uname{flex:1;min-width:120px}
 .tin{flex:0 1 220px;min-width:150px}
-.twhy{min-width:120px}
+.twhy{min-width:220px}
+.thrs{flex:0 0 90px;min-width:0}
+.tlab{flex:0 0 auto;color:#c8823c}
+.twhy{flex:1 1 260px}
+.tprev{display:block;margin:2px 0 6px;color:#e9d9c2;font-style:italic}
 .tsah{display:flex;align-items:center;gap:6px;font-size:13px;color:#e9d9c2;white-space:nowrap;cursor:pointer}
 .app small.rev{color:#e0908a}
 .thread{margin:12px 0 0;display:flex;flex-direction:column;gap:6px}
@@ -8600,23 +8604,44 @@ function renderUsers(){
     del.onclick=function(){deleteUser(u.id,u.username);};
     row.appendChild(inp);row.appendChild(save);row.appendChild(rev);row.appendChild(ban);row.appendChild(del);
     el.appendChild(row);
+    /* a timeout, and what they read while it lasts — the same two things the
+       sahur watch's timeout gives: the words typed here sit under the lockout's
+       own line as "tung says: ...", and "farming sahurs" makes the whole screen
+       sahur's catch. the line under it shows exactly what they will see. */
+    var live=u.timeoutUntil&&u.timeoutUntil>Date.now();
     var trow=document.createElement("div");trow.className="row";
     var dt=document.createElement("input");dt.type="datetime-local";dt.className="tin";
-    if(u.timeoutUntil&&u.timeoutUntil>Date.now())dt.value=toLocalInput(u.timeoutUntil);
-    /* the reason is theirs to read on the lockout; "farming sahurs" makes it
-       sahur's catch, with his own words over the top of it */
-    var why=document.createElement("input");why.className="uname twhy";why.maxLength=200;why.placeholder="reason (they will read it)";
-    var live=u.timeoutUntil&&u.timeoutUntil>Date.now();
+    if(live)dt.value=toLocalInput(u.timeoutUntil);
+    var hrs=document.createElement("input");hrs.type="number";hrs.min="0";hrs.step="any";hrs.className="thrs";hrs.placeholder="hours";
+    var apply=document.createElement("button");apply.className="no";apply.textContent="time out";
+    var clr=document.createElement("button");clr.className="load";clr.textContent="clear timeout";
+    clr.onclick=function(){setTimeoutUntil(u.id,0);};
+    var tl1=document.createElement("small");tl1.className="tlab";tl1.textContent="time out until";
+    var tl2=document.createElement("small");tl2.className="tlab";tl2.textContent="or for";
+    var tl3=document.createElement("small");tl3.className="tlab";tl3.textContent="hours";
+    trow.appendChild(tl1);trow.appendChild(dt);trow.appendChild(tl2);trow.appendChild(hrs);trow.appendChild(tl3);trow.appendChild(apply);trow.appendChild(clr);
+    el.appendChild(trow);
+    var wrow=document.createElement("div");wrow.className="row";
+    var wl=document.createElement("small");wl.className="tlab";wl.textContent="message on their lockout";
+    var why=document.createElement("input");why.className="uname twhy";why.maxLength=200;why.placeholder="optional words from tung";
     if(live)why.value=u.timeoutWhy||"";
     var sahL=document.createElement("label");sahL.className="tsah";sahL.title="the lockout says sahur caught them, in his own words";
     var sah=document.createElement("input");sah.type="checkbox";sah.checked=!!(live&&u.timeoutKind==="sahur");
     sahL.appendChild(sah);sahL.appendChild(document.createTextNode(" farming sahurs"));
-    var apply=document.createElement("button");apply.className="no";apply.textContent="time out until";
-    apply.onclick=function(){if(!dt.value){alert("pick a date/time first");return;}var ms=new Date(dt.value).getTime();if(!(ms>Date.now())){alert("pick a time in the future");return;}setTimeoutUntil(u.id,ms,why.value.trim(),sah.checked?"sahur":"");};
-    var clr=document.createElement("button");clr.className="load";clr.textContent="clear timeout";
-    clr.onclick=function(){setTimeoutUntil(u.id,0);};
-    trow.appendChild(dt);trow.appendChild(why);trow.appendChild(sahL);trow.appendChild(apply);trow.appendChild(clr);
-    el.appendChild(trow);
+    wrow.appendChild(wl);wrow.appendChild(why);wrow.appendChild(sahL);
+    el.appendChild(wrow);
+    var prev=document.createElement("small");prev.className="tprev";el.appendChild(prev);
+    function until(){var h=Number(hrs.value);if(h>0)return Date.now()+h*3600000;return dt.value?new Date(dt.value).getTime():0;}
+    function paintPrev(){
+      var w=why.value.trim(),t=until();
+      prev.textContent="they will see: \u201c"+(sah.checked?"sahur caught you":"you are timed out")+"\u201d \u2014 "+
+        (sah.checked?"a line from sahur about hands and altars":"the whole shrine is shut to you until it lifts")+
+        (w?" \u2014 tung says: \u201c"+w+"\u201d":"")+(t>Date.now()?" \u2014 until "+new Date(t).toLocaleString():"");
+    }
+    hrs.oninput=function(){var h=Number(hrs.value);if(h>0)dt.value=toLocalInput(Date.now()+h*3600000);paintPrev();};
+    dt.oninput=function(){hrs.value="";paintPrev();};
+    why.oninput=paintPrev;sah.onchange=paintPrev;paintPrev();
+    apply.onclick=function(){var ms=until();if(!ms){alert("pick a date/time, or a number of hours");return;}if(!(ms>Date.now())){alert("pick a time in the future");return;}setTimeoutUntil(u.id,ms,why.value.trim(),sah.checked?"sahur":"");};
     // the narrow ban: shuts the room and leaves the rest of the shrine alone.
     // deliberately its own row and its own wording so it is never mistaken for
     // the full ban sitting one row above it.
